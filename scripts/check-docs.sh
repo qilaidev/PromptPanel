@@ -110,6 +110,10 @@ required_files=(
     "docs/search-metadata.schema.jsonld"
     "docs/文档与代码同步矩阵.md"
     "docs/接手维护指南.md"
+    "openspec/specs/project-documentation/spec.md"
+    "openspec/changes/complete-project-docs/proposal.md"
+    "openspec/changes/complete-project-docs/tasks.md"
+    "openspec/changes/complete-project-docs/specs/project-documentation/spec.md"
 )
 
 info "Checking required public documentation files"
@@ -173,6 +177,12 @@ check_contains "docs/开发规范.md" "./scripts/check-docs.sh"
 check_contains "docs/文档与代码同步矩阵.md" "./scripts/check-docs.sh"
 check_contains ".github/workflows/macos-release-readiness.yml" "scripts/check-docs.sh"
 check_contains "scripts/release-readiness.sh" "scripts/check-docs.sh"
+check_contains "docs/README.md" "../openspec/specs/project-documentation/spec.md"
+check_contains "docs/README.md" "../openspec/changes/complete-project-docs/proposal.md"
+check_contains "docs/开发规范.md" "openspec/changes/<change-id>"
+check_contains "docs/接手维护指南.md" "openspec/changes/"
+check_contains "openspec/specs/project-documentation/spec.md" "Maintainer Documentation Coverage"
+check_contains "openspec/changes/complete-project-docs/tasks.md" 'Update `docs/README.md`'
 
 if [[ -x /usr/libexec/PlistBuddy ]]; then
     app_short_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Sources/PromptPanel/Resources/Info.plist)"

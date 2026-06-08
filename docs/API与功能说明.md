@@ -1,6 +1,6 @@
 # PromptPanel API 与功能说明
 
-更新时间：`2026-05-21`
+更新时间：`2026-06-09`
 
 PromptPanel 当前没有 HTTP API、云端 API 或公开 SDK。这里的“API”指项目对维护者和贡献者暴露的稳定契约：用户功能契约、内部服务接口、数据库结构、脚本入口、环境变量和搜索行为。
 
@@ -15,7 +15,7 @@ PromptPanel 当前没有 HTTP API、云端 API 或公开 SDK。这里的“API�
 | 执行词条 | 回车或点击词条后，内容进入目标输入框。 | 剪贴板写入是硬保证；自动粘贴是尽力而为。 |
 | 仅复制 | `Command-C` 可复制选中词条并关闭面板。 | 不应触发自动粘贴，不应改变词条正文。 |
 | 面板固定 | 图钉按钮或 `Command-P` 切换固定状态。 | 固定面板时目标 app 跟踪仍要可靠，避免粘贴回 PromptPanel。 |
-| 词库导入导出 | 设置页维护区支持 JSON / Markdown 导入导出。 | JSON 用于无损迁移；Markdown 用于审阅和轻量迁移；导入前必须自动创建本地备份。 |
+| 词库导入导出 | 设置页维护区支持 JSON / Markdown 导入导出。 | JSON 用于无损迁移；Markdown 用于审阅和轻量迁移；导入写库前必须自动创建本地备份；写入阶段必须保持单事务，失败整体回滚。 |
 | 运行健康 | 主窗口展示最近执行状态和运行诊断。 | 执行日志不能保存词条正文。 |
 | 备份恢复 | 启动备份、恢复脚本和恢复演练保护本地 SQLite。 | migration 失败不能自动擦库；损坏库隔离和 migration 失败是不同事件。 |
 
@@ -40,6 +40,7 @@ AppDelegate / AppState
 | `ExecuteService` | `Sources/PromptPanel/Core/Services/ExecuteService.swift` | 编排执行链路：剪贴板、关闭面板、恢复目标 app、权限检查、自动粘贴、日志。 |
 | `PermissionService` | `Sources/PromptPanel/Core/Services/PermissionService.swift` | 读取并引导辅助功能权限。 |
 | `StorageMaintenanceService` | `Sources/PromptPanel/Core/Services/StorageMaintenanceService.swift` | 启动备份、备份保留、日志保留、恢复入口辅助。 |
+| `LibraryTransferService` | `Sources/PromptPanel/Core/Services/LibraryTransferService.swift` | JSON / Markdown 词库导入导出；解析校验后、写库前创建手动备份，导入写入必须在单个 SQLite 事务内完成。 |
 | `QuickPanelViewModel` | `Sources/PromptPanel/Features/Panel/QuickPanelViewModel.swift` | 面板状态、搜索调度、项目切换、快捷键动作和执行入口。 |
 | `MainWindowViewModel` | `Sources/PromptPanel/Features/MainWindow/MainWindowViewModel.swift` | 内容库、项目维护、词条编辑、设置和运行健康入口。 |
 
@@ -114,6 +115,31 @@ FTS 查询规则：
 - 每个 token 会转换成 FTS5 prefix query，例如 `review bug` -> `"review"* "bug"*`。
 - 查询中第一个 `#tag` 会从 FTS 查询中移除，并在结果上按 `Entry.tags` 二次过滤。
 - 搜索结果限制为 100 条，防止面板一次加载过多结果。
+
+## 4.1 词库导入契约
+
+导入入口：
+
+```swift
+LibraryTransferService.importJSON(from:)
+LibraryTransferService.importMarkdown(from:)
+ProjectRepository.writeInTransaction(_:)
+```
+
+导入顺序：
+
+1. 读取、解析并校验导入文件。
+2. 创建手动备份，作为后续写库风险的恢复边界。
+3. 在同一个 SQLite 写事务里映射项目、upsert 项目、upsert 词条。
+4. 任一写入失败时回滚全部本次写入。
+5. 返回导入摘要，由调用方刷新主窗口状态、计数和运行健康。
+
+约束：
+
+- 默认项目导入时映射到本机默认项目，不创建第二个默认项目。
+- 词条标题和标签在写入前归一化。
+- 写库前备份是恢复边界，不属于写事务。
+- 不允许绕过 `LibraryTransferService` 直接在 UI 或 ViewModel 中逐条写入导入数据。
 
 ## 5. 脚本接口
 

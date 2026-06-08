@@ -1,6 +1,6 @@
 # PromptPanel Documentation
 
-Updated: `2026-05-07`
+Updated: `2026-06-09`
 
 This documentation set is now part of the public open-source repository. It is intended to let a new maintainer understand, build, verify, release, troubleshoot, and extend PromptPanel without relying on private handoff notes.
 
@@ -26,6 +26,8 @@ global hotkey -> quick panel -> search -> execute -> clipboard guarantee -> auto
 | [Maintainer handoff guide](./接手维护指南.md) | First-day maintainer workflow, code map, validation, release, troubleshooting, and extension rules. |
 | [Docs/code sync matrix](./文档与代码同步矩阵.md) | Which docs to update for each code, script, config, release, or UI baseline change. |
 | `scripts/check-docs.sh` | Executable documentation gate for required pages, stale wording, search metadata, AI index coverage, and local link integrity. |
+| [OpenSpec documentation spec](../openspec/specs/project-documentation/spec.md) | Current SDD baseline for the documentation system and handoff requirements. |
+| [OpenSpec change: complete project docs](../openspec/changes/complete-project-docs/proposal.md) | Change record for the documentation-system consolidation work. |
 | [Release and recovery](./生产发布与恢复手册.md) | Release-readiness flow, backup/restore boundary, signing, notarization, and recovery drill. |
 | [Roadmap and contribution guide](./路线图与贡献指南.md) | Scoped roadmap, non-goals, issue/PR flow, and validation matrix. |
 | [Regression checklist](./回归清单.md) | Pre-release behavior and compatibility checks. |
@@ -57,6 +59,7 @@ Chinese-language handoff docs are intentionally kept because the original produc
 - Source root: `Sources/PromptPanel`.
 - Tests: `Tests/PromptPanelTests`.
 - UI source of truth: `frontend-draft/`.
+- SDD source of truth for documentation-system work: `openspec/specs/project-documentation/spec.md` plus active/archived change records under `openspec/changes/`.
 - Build and release scripts: `scripts/`.
 - CI: `.github/workflows/macos-release-readiness.yml`.
 - Docs gate: `scripts/check-docs.sh`, also run by `scripts/release-readiness.sh` and CI.
@@ -64,6 +67,8 @@ Chinese-language handoff docs are intentionally kept because the original produc
 - Logs: `~/Library/Logs/PromptPanel/`.
 - Core guarantee: selected content is written to clipboard before automatic paste is attempted.
 - Accessibility permission is required only for automatic paste, not for clipboard fallback.
+- JSON library import is transactional: project and entry writes must either all succeed or all roll back after the write-before backup is created.
+- Quick panel ranking follows the same stable ordering contract as repository browsing: pin, manual `sortOrder`, recency, usage, current project, update time, id.
 
 ## Documentation Sync Rules
 
@@ -79,6 +84,8 @@ Update docs in the same pull request when these areas change:
 | Development workflow, tests, dependency policy, or PR expectations | [Development standards](./开发规范.md), [Contributing](../.github/CONTRIBUTING.md), [Roadmap and contribution guide](./路线图与贡献指南.md) |
 | Product positioning, target users, non-goals, or SEO/AI-search wording | [Root README](../README.md), [Chinese README](../README.zh-CN.md), [FAQ](./FAQ.md), [AI search and discoverability](./ai-search-discoverability.md), [llms.txt](../llms.txt), [llms-full.txt](./ai-search/llms-full.txt), [codemeta.json](../codemeta.json), [Schema.org JSON-LD](./search-metadata.schema.jsonld) |
 | Documentation structure, handoff workflow, or sync policy | [Maintainer handoff guide](./接手维护指南.md), [Docs/code sync matrix](./文档与代码同步矩阵.md), [Development standards](./开发规范.md), this index |
+
+For development tasks, add or update an OpenSpec change before implementation when the change affects architecture, runtime behavior, data contracts, release/operations, or the maintained documentation baseline. Emergency production mitigation can be documented after the stopgap, but the change record and affected docs must still be backfilled.
 
 After any code, script, CI, packaging, config, or UI-baseline change, run:
 
