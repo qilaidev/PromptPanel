@@ -10,6 +10,10 @@ final class ProjectRepository: @unchecked Sendable {
         self.dbQueue = dbQueue
     }
 
+    func writeInTransaction<T>(_ updates: (Database) throws -> T) throws -> T {
+        try dbQueue.write(updates)
+    }
+
     // MARK: - Read
 
     /// Fetch all projects, ordered by: default project first, then by name.

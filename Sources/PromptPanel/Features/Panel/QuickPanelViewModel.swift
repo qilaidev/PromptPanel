@@ -334,32 +334,31 @@ final class QuickPanelViewModel: ObservableObject {
         statusTone = tone
     }
 
-    /// Order panel results to match the library's default "按使用" ranking:
-    /// pinned first, then by `useCount` DESC so the level/color tiers visible
-    /// in the library appear in the same order in the panel. Recency and
-    /// current-project priority break ties so equally-used entries still
-    /// surface the most recently touched and the user's active project first.
+    /// Order panel results by the same stable keys as the repository so shortcut
+    /// numbers do not drift between browsing, searching, and project switching.
     nonisolated static func applyPanelRankingSort(_ entries: [Entry], currentProjectId: String) -> [Entry] {
         entries.sorted { lhs, rhs in
             if lhs.isPinned != rhs.isPinned {
                 return lhs.isPinned
             }
+            if lhs.sortOrder != rhs.sortOrder {
+                return lhs.sortOrder > rhs.sortOrder
+            }
+            let lhsLastUsedAt = lhs.lastUsedAt ?? .distantPast
+            let rhsLastUsedAt = rhs.lastUsedAt ?? .distantPast
+            if lhsLastUsedAt != rhsLastUsedAt {
+                return lhsLastUsedAt > rhsLastUsedAt
+            }
             if lhs.useCount != rhs.useCount {
                 return lhs.useCount > rhs.useCount
-            }
-            let lhsDate = lhs.lastUsedAt ?? lhs.updatedAt
-            let rhsDate = rhs.lastUsedAt ?? rhs.updatedAt
-            if lhsDate != rhsDate {
-                return lhsDate > rhsDate
             }
             let lhsCurrent = lhs.projectId == currentProjectId
             let rhsCurrent = rhs.projectId == currentProjectId
             if lhsCurrent != rhsCurrent {
                 return lhsCurrent
             }
-            let titleComparison = lhs.title.localizedCaseInsensitiveCompare(rhs.title)
-            if titleComparison != .orderedSame {
-                return titleComparison == .orderedAscending
+            if lhs.updatedAt != rhs.updatedAt {
+                return lhs.updatedAt > rhs.updatedAt
             }
             return lhs.id < rhs.id
         }

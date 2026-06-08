@@ -1118,6 +1118,37 @@ final class PromptPanelTests: XCTestCase {
         XCTAssertEqual(pasteDispatcher.attemptCount, 1)
     }
 
+    func testQuickPanelRankingRespectsManualSortOrderBeforeUsage() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let highUsageEntry = Entry(
+            id: "high-usage",
+            projectId: "project-current",
+            title: "High Usage",
+            content: "x",
+            sortOrder: 0,
+            useCount: 99,
+            lastUsedAt: now,
+            updatedAt: now
+        )
+        let manualTopEntry = Entry(
+            id: "manual-top",
+            projectId: "project-current",
+            title: "Manual Top",
+            content: "x",
+            sortOrder: 10,
+            useCount: 1,
+            lastUsedAt: now.addingTimeInterval(-60),
+            updatedAt: now.addingTimeInterval(-60)
+        )
+
+        let sorted = QuickPanelViewModel.applyPanelRankingSort(
+            [highUsageEntry, manualTopEntry],
+            currentProjectId: "project-current"
+        )
+
+        XCTAssertEqual(sorted.map(\.id), [manualTopEntry.id, highUsageEntry.id])
+    }
+
     @MainActor
     func testQuickPanelDoesNotUnlockExecutionWhenSearchFieldFocusFails() throws {
         let databaseManager = try makeDatabaseManager()
@@ -1714,6 +1745,58 @@ final class PromptPanelTests: XCTestCase {
         XCTAssertEqual(importedEntry.title, entry.title)
         XCTAssertEqual(importedEntry.projectId, project.id)
         XCTAssertEqual(importedEntry.tags, ["release", "notes"])
+    }
+
+    func testLibraryJSONImportRollsBackPartialWritesWhenEntryInsertFails() throws {
+        let targetDatabase = try makeDatabaseManager()
+        let targetProjects = ProjectRepository(dbQueue: targetDatabase.dbQueue)
+        let targetEntries = EntryRepository(dbQueue: targetDatabase.dbQueue)
+        let targetLogs = LogRepository(dbQueue: targetDatabase.dbQueue)
+        let targetMaintenance = StorageMaintenanceService(
+            dbQueue: targetDatabase.dbQueue,
+            logRepository: targetLogs,
+            databaseURL: targetDatabase.databaseURL
+        )
+        let targetService = LibraryTransferService(
+            projectRepository: targetProjects,
+            entryRepository: targetEntries,
+            storageMaintenanceService: targetMaintenance
+        )
+        try targetDatabase.dbQueue.write { db in
+            try db.execute(sql: """
+                CREATE TRIGGER fail_test_entry_import
+                BEFORE INSERT ON entries
+                WHEN new.id = 'entry-fail'
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced import failure');
+                END
+                """)
+        }
+
+        let importedProject = Project(id: "project-rollback", name: "Rollback Project")
+        let failingEntry = Entry(
+            id: "entry-fail",
+            projectId: importedProject.id,
+            title: "Should Fail",
+            content: "This insert is blocked by the test trigger."
+        )
+        let payload = PromptPanelLibraryExport(
+            formatVersion: PromptPanelLibraryExport.currentFormatVersion,
+            exportedAt: Date(),
+            projects: [importedProject],
+            entries: [failingEntry]
+        )
+        let importURL = try makeTemporaryDatabaseURL()
+            .deletingLastPathComponent()
+            .appendingPathComponent("rollback-import.json")
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(payload).write(to: importURL)
+
+        XCTAssertThrowsError(try targetService.importJSON(from: importURL))
+
+        XCTAssertNil(try targetProjects.fetchById(importedProject.id))
+        XCTAssertNil(try targetEntries.fetchById(failingEntry.id))
     }
 
     func testLibraryMarkdownExportImportRoundTripsPromptContent() throws {

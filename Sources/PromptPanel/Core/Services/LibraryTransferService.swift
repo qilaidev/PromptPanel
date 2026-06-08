@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 
 struct LibraryTransferSummary: Equatable {
     var backupURL: URL?
@@ -110,57 +111,63 @@ final class LibraryTransferService: @unchecked Sendable {
 
         let backupURL = try storageMaintenanceService.createManualBackup()
         var summary = LibraryTransferSummary(backupURL: backupURL)
-        let localProjects = try projectRepository.fetchAll()
-        let localDefaultProject = localProjects.first(where: \.isDefault)
-        var projectById = Dictionary(uniqueKeysWithValues: localProjects.map { ($0.id, $0) })
-        var projectIdMap: [String: String] = [:]
+        try projectRepository.writeInTransaction { db in
+            let localProjects = try Project
+                .order(Project.Columns.isDefault.desc, Project.Columns.name.asc)
+                .fetchAll(db)
+            let localDefaultProject = localProjects.first(where: \.isDefault)
+            var projectById = Dictionary(uniqueKeysWithValues: localProjects.map { ($0.id, $0) })
+            var projectIdMap: [String: String] = [:]
 
-        for importedProject in payload.projects {
-            let name = normalizedName(importedProject.name, fallback: Constants.defaultProjectName)
-            if importedProject.isDefault, let localDefaultProject {
-                projectIdMap[importedProject.id] = localDefaultProject.id
-                continue
-            }
-
-            if let existing = projectById[importedProject.id] {
-                projectIdMap[importedProject.id] = existing.id
-                guard !existing.isDefault else {
+            for importedProject in payload.projects {
+                let name = normalizedName(importedProject.name, fallback: Constants.defaultProjectName)
+                if importedProject.isDefault, let localDefaultProject {
+                    projectIdMap[importedProject.id] = localDefaultProject.id
                     continue
                 }
-                var updated = importedProject
-                updated.name = name
-                updated.isDefault = false
-                try projectRepository.update(updated)
-                projectById[updated.id] = updated
-                summary.projectsUpdated += 1
-            } else {
-                var created = importedProject
-                created.name = name
-                created.isDefault = false
-                try projectRepository.create(created)
-                projectById[created.id] = created
-                projectIdMap[importedProject.id] = created.id
-                summary.projectsCreated += 1
+
+                if let existing = projectById[importedProject.id] {
+                    projectIdMap[importedProject.id] = existing.id
+                    guard !existing.isDefault else {
+                        continue
+                    }
+                    var updated = importedProject
+                    updated.name = name
+                    updated.isDefault = false
+                    updated.updatedAt = Date()
+                    try updated.update(db)
+                    projectById[updated.id] = updated
+                    summary.projectsUpdated += 1
+                } else {
+                    var created = importedProject
+                    created.name = name
+                    created.isDefault = false
+                    try created.insert(db)
+                    projectById[created.id] = created
+                    projectIdMap[importedProject.id] = created.id
+                    summary.projectsCreated += 1
+                }
             }
-        }
 
-        let fallbackProjectId = localDefaultProject?.id ?? projectById.values.sorted { $0.name < $1.name }.first?.id
-        for importedEntry in payload.entries {
-            guard let targetProjectId = projectIdMap[importedEntry.projectId] ?? projectById[importedEntry.projectId]?.id ?? fallbackProjectId else {
-                continue
-            }
+            let fallbackProjectId = localDefaultProject?.id ?? projectById.values.sorted { $0.name < $1.name }.first?.id
+            for importedEntry in payload.entries {
+                guard let targetProjectId = projectIdMap[importedEntry.projectId] ?? projectById[importedEntry.projectId]?.id ?? fallbackProjectId else {
+                    continue
+                }
 
-            var entry = importedEntry
-            entry.projectId = targetProjectId
-            entry.title = normalizedName(entry.title, fallback: "Untitled Prompt")
-            entry.tags = Entry.normalizeTags(entry.tags)
+                var entry = importedEntry
+                entry.projectId = targetProjectId
+                entry.title = normalizedName(entry.title, fallback: "Untitled Prompt")
+                entry.tags = Entry.normalizeTags(entry.tags)
 
-            if try entryRepository.fetchById(entry.id) != nil {
-                try entryRepository.update(entry)
-                summary.entriesUpdated += 1
-            } else {
-                try entryRepository.create(entry)
-                summary.entriesCreated += 1
+                if try Entry.fetchOne(db, key: entry.id) != nil {
+                    entry.updatedAt = Date()
+                    try entry.update(db)
+                    summary.entriesUpdated += 1
+                } else {
+                    try entry.insert(db)
+                    summary.entriesCreated += 1
+                }
             }
         }
 
