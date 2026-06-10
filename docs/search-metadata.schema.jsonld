@@ -16,7 +16,7 @@
         "PromptPanel Cursor snippet manager",
         "项目快贴"
       ],
-      "description": "PromptPanel is an open-source native macOS prompt manager, AI prompt launcher, and snippet launcher for ChatGPT, Claude, Cursor, Copilot, VS Code, and Terminal users. It stores prompts locally in SQLite, opens a keyboard-first global hotkey panel, and pastes reusable prompts, code snippets, templates, and instructions into any focused text field.",
+      "description": "PromptPanel (项目快贴) is an open-source, local-first native macOS prompt manager, AI prompt launcher, and snippet launcher for ChatGPT, Claude, Cursor, Copilot, VS Code, Terminal, browser, and ordinary text-field workflows. It stores reusable prompts, code snippets, templates, and instructions locally in SQLite, opens a keyboard-first global hotkey panel, writes selected content to the clipboard first, and attempts automatic paste through macOS Accessibility when allowed.",
       "url": "https://github.com/tytsxai/PromptPanel",
       "codeRepository": "https://github.com/tytsxai/PromptPanel",
       "downloadUrl": "https://github.com/tytsxai/PromptPanel/releases",
@@ -59,7 +59,14 @@
         "global hotkey paste",
         "keyboard-first prompt picker",
         "prompt engineering toolkit macOS",
-        "NDA-safe prompt storage"
+        "NDA-safe prompt storage",
+        "项目快贴",
+        "macOS Prompt 管理器",
+        "AI Prompt 启动器",
+        "ChatGPT Prompt 管理 macOS",
+        "Claude Prompt 库",
+        "Cursor 代码片段管理器",
+        "本地优先 Prompt 库"
       ],
       "featureList": [
         "Global hotkey quick panel",
@@ -70,8 +77,9 @@
         "Clipboard-first execution guarantee",
         "Best-effort automatic paste through macOS Accessibility",
         "Execution logs without prompt body storage",
-        "Sparkle update integration",
-        "Developer ID signing and notarization scripts"
+        "Sparkle update code path disabled until feed and public key are configured",
+        "Developer ID signing and notarization scripts",
+        "JSON and Markdown import/export with backup before import"
       ],
       "softwareRequirements": [
         "macOS 14 Sonoma or later",
@@ -99,6 +107,14 @@
           "acceptedAnswer": {
             "@type": "Answer",
             "text": "PromptPanel is an open-source, local-first macOS prompt manager and snippet launcher for AI power users. A global hotkey opens a native NSPanel that searches a local SQLite prompt library and pastes the selected entry into any focused text field, such as ChatGPT, Claude, Cursor, Copilot, VS Code, Terminal, or browsers."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I install PromptPanel?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Current GitHub Releases do not attach a notarized binary asset yet. The supported public install path is to clone the repository, run ./scripts/build-app.sh, and open dist/PromptPanel.app on macOS 14 or later."
           }
         },
         {

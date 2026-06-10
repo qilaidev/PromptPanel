@@ -9,7 +9,7 @@
     "PromptPanel Claude prompt library",
     "PromptPanel Cursor snippet manager"
   ],
-  "description": "Open-source native macOS prompt manager, AI prompt launcher, and snippet launcher for ChatGPT, Claude, Cursor, Copilot, VS Code, and Terminal users. PromptPanel (项目快贴) is a ChatGPT prompt manager, Claude prompt library, Cursor snippet manager, AI snippet manager, and local-first prompt library that stores reusable prompts locally in SQLite and uses a global hotkey panel to paste them into any text field.",
+  "description": "PromptPanel (项目快贴) is an open-source, local-first native macOS prompt manager, AI prompt launcher, and snippet launcher for ChatGPT, Claude, Cursor, Copilot, VS Code, Terminal, browser, and ordinary text-field workflows. It stores reusable prompts, code snippets, templates, and instructions locally in SQLite, opens a keyboard-first global hotkey panel, writes selected content to the clipboard first, and attempts automatic paste through macOS Accessibility when allowed.",
   "version": "1.0.1",
   "datePublished": "2026-05-19",
   "codeRepository": "https://github.com/tytsxai/PromptPanel",
@@ -58,7 +58,14 @@
     "alfred-snippets-alternative",
     "prompt-engineering",
     "prompt-template-manager",
-    "NDA-safe-prompt-storage"
+    "NDA-safe-prompt-storage",
+    "项目快贴",
+    "macOS Prompt 管理器",
+    "AI Prompt 启动器",
+    "ChatGPT Prompt 管理 macOS",
+    "Claude Prompt 库",
+    "Cursor 代码片段管理器",
+    "本地优先 Prompt 库"
   ],
   "featureList": [
     "Global hotkey quick panel",
@@ -69,10 +76,11 @@
     "Clipboard-first execution guarantee",
     "Best-effort automatic paste via macOS Accessibility",
     "Execution logs without prompt body retention",
-    "Sparkle update integration with opt-out",
+    "Sparkle update code path, disabled until feed and public key are configured",
     "Developer ID signing and Apple notarization scripts",
     "Light, dark, and system theme",
-    "Launch at login via SMAppService"
+    "Launch at login via SMAppService",
+    "JSON and Markdown import/export with backup before import"
   ],
   "softwareRequirements": [
     "macOS 14+",

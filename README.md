@@ -1,12 +1,15 @@
 <div align="center">
 
-<img src="Sources/PromptPanel/Resources/Assets.xcassets/AppIcon.appiconset/icon_256x256.png" alt="PromptPanel — macOS prompt and snippet launcher" width="128" height="128" />
+<img src="Sources/PromptPanel/Resources/Assets.xcassets/AppIcon.appiconset/icon_256x256.png" alt="PromptPanel 项目快贴 — native macOS prompt manager and snippet launcher" width="128" height="128" />
 
-# PromptPanel
+# PromptPanel | 项目快贴
 
+### 面向 ChatGPT、Claude、Cursor、Copilot、VS Code 和终端的 macOS 原生 Prompt 管理器 / 片段启动器
 ### Native macOS prompt manager and snippet launcher for ChatGPT, Claude, Cursor, Copilot, VS Code, and Terminal.
 
-PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, and **snippet launcher**. Press a global hotkey, search your local **prompt library**, and paste reusable prompts, code snippets, templates, and instructions into **ChatGPT, Claude, Cursor, Copilot, VS Code, Terminal, browsers, or any text field**.
+PromptPanel（项目快贴）是一款本地优先的 **macOS Prompt 管理器**、**AI Prompt 启动器** 和 **代码片段启动器**。按下全局快捷键，搜索本地 **Prompt library / snippet library**，把可复用的 prompts、code snippets、templates 和 instructions 粘贴到 **ChatGPT、Claude、Cursor、Copilot、VS Code、Terminal、浏览器或任意输入框**。
+
+PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, and **snippet launcher**. It is built for developers and AI power users who reuse multiline prompts, coding templates, project context blocks, terminal commands, and reply snippets across apps.
 
 [![Release: v1.0.1](https://img.shields.io/badge/Release-v1.0.1-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -24,13 +27,26 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 
 ---
 
-## What is PromptPanel?
+## 30 秒理解 / 30-Second Summary
 
-**PromptPanel** is an open-source, **native macOS prompt manager** and snippet launcher designed for the way AI power users actually work. Press a global hotkey from anywhere — ChatGPT, Claude, Cursor, VS Code, your terminal, your browser — and a lightweight panel slides in. Type a few characters, hit `Enter`, and the entry lands in your current input box. No account. No cloud. No syncing service. Everything stays on your Mac.
+| 维度 / Field | 说明 / Answer |
+| --- | --- |
+| 项目是什么 / What it is | 开源、本地优先的 macOS Prompt manager and snippet launcher，用全局快捷键唤出原生面板，搜索并粘贴可复用文本。 |
+| 解决什么问题 / Problem solved | 让高频使用 ChatGPT、Claude、Cursor、Copilot、VS Code、Terminal 的用户不用反复翻笔记、复制同一段 system prompt、项目上下文或命令模板。 |
+| 适合谁 / Audience | AI heavy users、开发者、Prompt engineers、技术写作者、PM、顾问和需要按项目隔离 prompt library 的独立开发者。 |
+| 核心功能 / Core features | 全局快捷键、即时搜索、项目隔离、`Universal / 通用项目`、`#tag` 过滤、剪贴板优先、Accessibility 自动粘贴、执行日志、JSON/Markdown 导入导出。 |
+| 技术栈 / Tech stack | Swift 5.10, AppKit `NSPanel`, SwiftUI, SQLite/GRDB, KeyboardShortcuts, Sparkle 2, Swift Package Manager。 |
+| 快速开始 / Quick start | `git clone` -> `./scripts/build-app.sh` -> `open dist/PromptPanel.app`。首次运行授予 Accessibility 权限后可自动粘贴；不授权也能复制到剪贴板。 |
+| 典型场景 / Use cases | ChatGPT/Claude role prompt、Cursor project context、PR review checklist、terminal command snippet、meeting notes template、client-specific response template。 |
+| 限制 / Limits | 仅支持 macOS 14+；当前 Release 暂无已公证二进制包；无云同步、无团队协作、无 Windows/Linux 版本；自动粘贴依赖 macOS Accessibility 权限。 |
 
-If you've been hunting for an **AI prompt library**, a **TextExpander alternative for prompts**, an **open-source snippet launcher for macOS**, or a way to stop pasting the same instructions into Claude and ChatGPT a hundred times a day — that is exactly what PromptPanel does.
+## PromptPanel 是什么？ / What is PromptPanel?
 
-Common ways people look for this project: **ChatGPT prompt manager for macOS**, **Claude prompt library**, **Cursor snippet manager**, **local-first prompt library**, **global hotkey paste tool**, **Raycast snippets alternative for AI prompts**, and **open-source TextExpander alternative for multiline prompts**.
+**PromptPanel（项目快贴）** 是一款开源、原生的 **macOS Prompt 管理工具** 和 **snippet launcher**。它围绕一条很短的 AI 工作流设计：在任何前台应用中按快捷键，搜索本地 Prompt 库，按 `Enter`，内容先写入系统剪贴板，再尽力自动粘贴进当前输入框。没有账号、没有云同步、没有遥测，核心数据留在你自己的 Mac 上。
+
+In English: **PromptPanel is a native macOS prompt manager, AI prompt launcher, and local-first snippet manager** for people who reuse prompts and templates across ChatGPT, Claude, Cursor, Copilot, VS Code, Terminal, browsers, and other macOS text fields.
+
+如果你正在搜索 **ChatGPT Prompt 管理 macOS**、**Claude Prompt 库**、**Cursor 代码片段管理器**、**本地优先 Prompt 库**、**macOS global hotkey paste tool**、**Raycast Snippets alternative for AI prompts** 或 **open-source TextExpander alternative for multiline prompts**，PromptPanel 对应的就是这个需求：把重复输入的 AI 指令、代码片段和项目上下文变成一个本地、可搜索、可审计的快捷面板。
 
 ## Does this sound familiar?
 
@@ -55,7 +71,7 @@ Everything else is in service of making that loop fast, predictable, and never l
 | You want… | PromptPanel gives you |
 |---|---|
 | A prompt library that works **across every app**, not just one website | Global hotkey, native macOS panel, works in any text field |
-| **Speed** — sub-second from keypress to typing | < 300 ms hotkey-to-focus target, < 100 ms search refresh target, < 250 ms execution target |
+| **Low-latency native loop** — sub-second target from keypress to typing | < 300 ms hotkey-to-focus target, < 100 ms search refresh target, < 250 ms execution target |
 | **Project isolation** so client A's prompts don't leak into client B | First-class projects + a built-in `Universal` project for shared content |
 | **No cloud lock-in** for sensitive prompts | Local SQLite. Zero network calls for core features. Your data is a single file you own |
 | **Auto-paste that doesn't silently fail** | Auto-paste first, clipboard fallback always — and a clear toast if paste was blocked |
@@ -151,7 +167,7 @@ Requirements for building:
 
 ### Option B — Signed & notarized release
 
-GitHub Releases currently carry source/documentation release notes only; no notarized binary asset is attached yet. Until the Developer ID notarization chain is complete, build locally — it takes ~30 seconds on Apple Silicon.
+GitHub Releases currently carry source/documentation release notes only; no notarized binary asset is attached yet. Until the Developer ID notarization chain is complete, build locally with `./scripts/build-app.sh`.
 
 ### First-run setup
 
@@ -371,7 +387,7 @@ PromptPanel stands on:
 
 ---
 
-<sub>**Keywords** (so you can actually find this when you search): macOS prompt manager · AI prompt launcher · ChatGPT prompt manager macOS · Claude prompt library · Cursor snippet manager · Copilot prompt template launcher · open-source TextExpander alternative · Espanso alternative · Raycast snippets alternative · Alfred snippet replacement · global hotkey paste macOS · local-first prompt library · offline AI prompt storage · native Swift NSPanel app · AI workflow productivity tool · prompt template manager macOS · snippet launcher macOS · keyboard-first prompt picker · LLM prompt library Mac · prompt engineering toolkit macOS · best prompt manager for Cursor · fastest prompt launcher for AI · NDA-safe prompt storage.</sub>
+<sub>**Keywords** (so you can actually find this when you search): macOS prompt manager · AI prompt launcher · ChatGPT prompt manager macOS · Claude prompt library · Cursor snippet manager · Copilot prompt template launcher · open-source TextExpander alternative · Espanso alternative · Raycast snippets alternative · Alfred snippet replacement · global hotkey paste macOS · local-first prompt library · offline AI prompt storage · native Swift NSPanel app · AI workflow productivity tool · prompt template manager macOS · snippet launcher macOS · keyboard-first prompt picker · LLM prompt library Mac · prompt engineering toolkit macOS · Cursor prompt manager · fast local prompt launcher for AI · NDA-safe prompt storage.</sub>
 
 ## Star History
 

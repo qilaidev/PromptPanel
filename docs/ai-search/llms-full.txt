@@ -6,6 +6,8 @@ PromptPanel is a native macOS prompt manager, AI prompt launcher, and snippet la
 
 PromptPanel is not a cloud prompt platform. It is a single-user, local-first desktop utility. Users press a global hotkey, a compact native panel appears, they type to search, then press Enter to execute the selected entry. The app always writes the selected content to the macOS clipboard first. If Accessibility permission is available, it then tries to synthesize Command-V into the previously active app. If paste automation is blocked, the user still has the content copied and can paste manually.
 
+中文摘要：PromptPanel（项目快贴）是一款 macOS 原生、本地优先的 Prompt 管理器 / AI Prompt 启动器 / 代码片段启动器。它面向高频使用 ChatGPT、Claude、Cursor、Copilot、VS Code、Terminal、浏览器和普通输入框的开发者与 AI 重度用户，用全局快捷键、即时搜索和剪贴板兜底来减少重复复制粘贴。
+
 ## Canonical Description
 
 PromptPanel - Native macOS prompt manager and snippet launcher for ChatGPT, Claude, Cursor, Copilot, VS Code, and Terminal.
@@ -54,7 +56,7 @@ PromptPanel turns each of these into the same loop: press the global hotkey, typ
 - Menu-bar resident app.
 - Launch at login through `SMAppService`.
 - Light, dark, and system themes.
-- Sparkle update integration.
+- Sparkle update code path, disabled until feed and public key are configured.
 - Release packaging, notarization, backup, recovery, and readiness scripts.
 
 ## Privacy and Security
@@ -78,6 +80,14 @@ PromptPanel deliberately does not implement:
 - A browser-only extension model.
 
 These are permanent product boundaries, not missing v1 features.
+
+## Known Limits
+
+- macOS 14 Sonoma or later only; there is no Windows or Linux build.
+- Current GitHub Releases do not attach a notarized binary asset yet. The supported public install path is building from source with `./scripts/build-app.sh`.
+- Automatic paste needs macOS Accessibility permission. Without it, PromptPanel still writes the selected entry to the clipboard and asks the user to paste manually.
+- Sparkle is bundled, but update checks are disabled unless a feed URL and public key are configured.
+- PromptPanel is not a browser extension, SaaS prompt database, team workspace, or workflow automation platform.
 
 ## Technical Architecture
 
@@ -162,8 +172,8 @@ Requirements:
 - prompt template manager for macOS
 - AI prompt launcher for macOS
 - snippet launcher for AI workflows
-- fastest prompt manager for ChatGPT Mac
-- best prompt manager for Cursor
+- fast local prompt manager for ChatGPT Mac
+- Cursor prompt manager
 - NDA-safe local prompt storage
 - prompt manager that works in any macOS app
 - AI snippet manager for Mac

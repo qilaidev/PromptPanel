@@ -1,8 +1,8 @@
 # PromptPanel Documentation
 
-Updated: `2026-06-09`
+Updated: `2026-06-10`
 
-This documentation set is now part of the public open-source repository. It is intended to let a new maintainer understand, build, verify, release, troubleshoot, and extend PromptPanel without relying on private handoff notes.
+This documentation set is now part of the public open-source repository. It is intended to let a new maintainer understand, build, verify, release, troubleshoot, and extend PromptPanel without relying on private handoff notes. Public entry points use Chinese-first wording with English technical terms where useful, so both traditional search engines and AI answer engines can identify the project accurately.
 
 PromptPanel is a native, local-first macOS prompt manager and snippet launcher. The key workflow is:
 

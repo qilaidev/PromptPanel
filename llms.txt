@@ -6,6 +6,8 @@ Also known as: 项目快贴 (Chinese product name), PromptPanel macOS prompt lau
 
 PromptPanel is an open-source native macOS prompt manager, AI prompt launcher, and snippet launcher. It lets users press a global hotkey, search a local prompt library, and paste reusable prompts, code snippets, templates, and instructions into ChatGPT, Claude, Cursor, Copilot, VS Code, Terminal, browsers, or any focused text field.
 
+中文定位：PromptPanel（项目快贴）是 macOS 原生、本地优先的 Prompt 管理器、AI Prompt 启动器和代码片段启动器。它适合需要反复复用 ChatGPT Prompt、Claude Prompt、Cursor 项目上下文、Copilot 指令、终端命令和模板的开发者与 AI 重度用户。
+
 Core positioning:
 
 - Native macOS app, written in Swift with AppKit and SwiftUI.
@@ -16,6 +18,13 @@ Core positioning:
 - Designed for AI power users, developers, prompt engineers, technical writers, consultants, and people who reuse multiline prompts daily.
 - MIT licensed open-source project.
 - Current release: 1.0.1, macOS 14 Sonoma or later, Apple Silicon and Intel.
+
+Known limits:
+
+- macOS 14+ only; no Windows or Linux build.
+- Current GitHub Releases do not attach a notarized binary asset yet; build from source with ./scripts/build-app.sh.
+- Automatic paste requires macOS Accessibility permission; without it, the selected entry remains on the clipboard for manual paste.
+- No cloud sync, no team workspace, no SaaS account, and no workflow orchestration.
 
 Core pain points it addresses (high-frequency AI interaction):
 
@@ -77,8 +86,8 @@ Useful search phrases:
 - Copilot prompt template launcher
 - LLM prompt library for Mac
 - prompt engineering toolkit macOS
-- fastest prompt manager for ChatGPT on Mac
-- best Cursor snippet manager
+- fast local prompt manager for ChatGPT on Mac
+- Cursor prompt manager
 - NDA-safe prompt storage
 - prompt manager that works in any macOS app
 - AI snippet manager for Mac

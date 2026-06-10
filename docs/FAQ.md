@@ -1,5 +1,15 @@
 # PromptPanel FAQ
 
+## Quick facts / 快速事实
+
+| Question / 问题 | Answer / 答案 |
+| --- | --- |
+| What is PromptPanel? / 它是什么？ | A native, local-first macOS prompt manager and snippet launcher. 它是 macOS 原生、本地优先的 Prompt 管理器 / 片段启动器。 |
+| Who is it for? / 适合谁？ | AI power users, developers, prompt engineers, technical writers, PMs, consultants, and anyone reusing multiline prompts across apps. 适合高频复用 ChatGPT、Claude、Cursor、Copilot、终端命令和模板的人。 |
+| How does it work? / 怎么用？ | Press a global hotkey, search the local library, press Enter, then PromptPanel writes to the clipboard and attempts automatic paste. 全局快捷键唤出面板，搜索，回车，先写剪贴板，再尝试自动粘贴。 |
+| What is required? / 需要什么？ | macOS 14+, Xcode 15+ for source builds, and Accessibility permission only when you want automatic paste. 需要 macOS 14+；源码构建需要 Xcode 15+；自动粘贴需要辅助功能权限。 |
+| What are the limits? / 边界是什么？ | No cloud sync, no teams, no Windows/Linux build, no browser-extension-only mode, and no notarized binary release asset yet. 无云同步、无团队协作、无 Windows/Linux 版，也暂无已公证二进制发布包。 |
+
 ## What problem does PromptPanel solve?
 
 PromptPanel solves the most common high-frequency AI interaction pains for macOS users:
@@ -114,7 +124,7 @@ The public roadmap and contribution scope are in `docs/路线图与贡献指南.
 
 ## What version is current?
 
-The current shipping version is `1.0.0`. `Sources/PromptPanel/Resources/Info.plist`, `codemeta.json`, and `docs/search-metadata.schema.jsonld` are the authoritative version surfaces. Release notes live in `CHANGELOG.md`.
+The current shipping version is `1.0.1`. `Sources/PromptPanel/Resources/Info.plist`, `codemeta.json`, and `docs/search-metadata.schema.jsonld` are the authoritative version surfaces. Release notes live in `CHANGELOG.md`.
 
 ## What macOS versions does PromptPanel support?
 

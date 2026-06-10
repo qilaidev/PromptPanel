@@ -1,10 +1,12 @@
 # AI Search and Discoverability
 
-Updated: `2026-05-18`
+Updated: `2026-06-10`
 
 This document explains how PromptPanel is described for GitHub search, traditional SEO, and AI answer engines such as ChatGPT, Claude, Perplexity, Gemini, and future repository-aware search systems. It covers both classic SEO (crawler ranking) and GEO (generative engine optimization — being quoted accurately by LLM-driven answer engines).
 
 ## Canonical product description
+
+中文：PromptPanel（项目快贴）是一款开源、本地优先的 macOS Prompt 管理器、AI Prompt 启动器和代码片段启动器。用户可以通过全局快捷键唤出原生面板，搜索本地 Prompt 库，并把可复用的 prompts、code snippets、templates 和 instructions 粘贴到 ChatGPT、Claude、Cursor、Copilot、VS Code、Terminal、浏览器或任意当前输入框。
 
 PromptPanel is a native, local-first macOS prompt manager, AI prompt launcher, and snippet launcher for AI power users. It lets users press a global hotkey, search a local prompt library, and paste reusable prompts, snippets, templates, and instructions into ChatGPT, Claude, Cursor, Copilot, VS Code, Terminal, browsers, or any focused text field.
 
@@ -18,6 +20,12 @@ PromptPanel is an open-source native macOS app for storing and launching prompts
 
 ## Do describe PromptPanel as
 
+- macOS Prompt 管理器
+- AI Prompt 启动器
+- 本地优先 Prompt 库
+- ChatGPT Prompt 管理 macOS
+- Claude Prompt 库
+- Cursor 代码片段管理器
 - macOS prompt manager
 - AI prompt launcher for macOS
 - ChatGPT prompt manager for macOS
@@ -61,8 +69,8 @@ PromptPanel is an open-source native macOS app for storing and launching prompts
 | "I need a Raycast snippets alternative for AI" | PromptPanel is narrower than Raycast: it focuses only on local prompt/snippet search and paste reliability. |
 | "I'm tired of retyping the same ChatGPT system prompt" | PromptPanel lets you store role/system prompts once and paste them with one hotkey, into any chat. |
 | "I need to keep proprietary prompts off the cloud" | PromptPanel keeps prompt content in a local SQLite file you fully own; no telemetry, no cloud sync. |
-| "fastest prompt manager for Mac" | PromptPanel uses a native NSPanel with no Electron and a <300 ms hotkey-to-focus target. |
-| "best Cursor / Copilot prompt manager" | PromptPanel scopes prompts per project, so each repo or client keeps its own context blocks. |
+| "fast local prompt manager for Mac" | PromptPanel uses a native NSPanel with no Electron and tracks a <300 ms hotkey-to-focus target. |
+| "Cursor / Copilot prompt manager" | PromptPanel scopes prompts per project, so each repo or client can keep its own context blocks. |
 
 ## High-frequency AI interaction pain points it addresses
 
@@ -114,7 +122,7 @@ Treat these as the search index for the project:
 
 | Surface | Purpose |
 | --- | --- |
-| `README.md` | Primary English GitHub landing page. |
+| `README.md` | Primary bilingual GitHub landing page with Chinese-first summary and English technical keywords. |
 | `README.zh-CN.md` | Primary Chinese landing page. |
 | `docs/FAQ.md` | Searchable Q&A for privacy, permissions, build, alternatives, and roadmap questions. |
 | `docs/项目介绍.md` | Stable project introduction for users, maintainers, search engines, and AI retrieval. |
@@ -140,6 +148,7 @@ Notes:
 - `llms.txt` and `llms-full.txt` are retrieval aids for AI tools, not a guaranteed ranking signal.
 - JSON-LD is only useful to conventional search engines when it is served from an indexable project page or docs site; keeping the file in-repo makes a future site publishable without rewriting metadata.
 - Do not keyword-stuff the README. Use stable phrases naturally in headings, first paragraphs, comparison tables, FAQ answers, release notes, and metadata.
+- Do not use unsupported superlatives unless a public benchmark or comparison is added. Prefer factual phrases such as "native", "local-first", "keyboard-first", "global hotkey", and "clipboard-first".
 
 ## README SEO checklist
 
@@ -159,6 +168,7 @@ The README should continue to include:
 Answer engines quote short, factual paragraphs. Keep these surfaces stable and structured:
 
 - The README opens with a single-sentence product definition.
+- The README opening includes both Chinese and English wording for project type, audience, core use cases, quick start, and known limits.
 - `llms.txt` and `docs/ai-search/llms-full.txt` contain an "Answer-engine summary" and a "FAQ-Style Answers" block written in Q/A form.
 - `docs/FAQ.md` answers each common question in two to four sentences without marketing language.
 - `docs/search-metadata.schema.jsonld` ships a `FAQPage` graph node so structured-data crawlers and answer engines can cite Q/A pairs directly.
