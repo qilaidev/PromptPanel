@@ -214,6 +214,7 @@ final class EntryRepository: @unchecked Sendable {
                     """,
                 arguments: [Date(), Date(), id]
             )
+            try Self.requireChangedRow(in: db, entity: "Entry \(id)")
         }
         PPLogger.entry.info("Execution recorded for entry: \(id)")
     }
@@ -225,6 +226,7 @@ final class EntryRepository: @unchecked Sendable {
                 sql: "UPDATE entries SET sort_order = ?, updated_at = ? WHERE id = ?",
                 arguments: [sortOrder, Date(), id]
             )
+            try Self.requireChangedRow(in: db, entity: "Entry \(id)")
         }
     }
 
@@ -235,6 +237,7 @@ final class EntryRepository: @unchecked Sendable {
                 sql: "UPDATE entries SET is_pinned = NOT is_pinned, updated_at = ? WHERE id = ?",
                 arguments: [Date(), id]
             )
+            try Self.requireChangedRow(in: db, entity: "Entry \(id)")
         }
     }
 
@@ -245,8 +248,15 @@ final class EntryRepository: @unchecked Sendable {
                 sql: "UPDATE entries SET project_id = ?, updated_at = ? WHERE id = ?",
                 arguments: [projectId, Date(), entryId]
             )
+            try Self.requireChangedRow(in: db, entity: "Entry \(entryId)")
         }
         PPLogger.entry.info("Entry \(entryId) moved to project \(projectId)")
+    }
+
+    private static func requireChangedRow(in db: Database, entity: String) throws {
+        guard db.changesCount > 0 else {
+            throw RepositoryError.notFound(entity)
+        }
     }
 }
 

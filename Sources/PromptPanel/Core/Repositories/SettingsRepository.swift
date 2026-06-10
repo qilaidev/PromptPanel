@@ -24,8 +24,7 @@ final class SettingsRepository: @unchecked Sendable {
     /// Set a setting value.
     func set(_ key: String, value: String?) throws {
         try dbQueue.write { db in
-            let setting = AppSetting(key: key, value: value)
-            try setting.save(db)
+            try Self.persist(key, value: value, in: db)
         }
     }
 
@@ -76,8 +75,10 @@ final class SettingsRepository: @unchecked Sendable {
 
     func setPanelContentSize(_ size: NSSize) throws {
         let normalizedSize = normalizedPanelContentSize(size)
-        try set(Constants.SettingsKey.panelContentWidth, value: String(Int(normalizedSize.width.rounded())))
-        try set(Constants.SettingsKey.panelContentHeight, value: String(Int(normalizedSize.height.rounded())))
+        try dbQueue.write { db in
+            try Self.persist(Constants.SettingsKey.panelContentWidth, value: String(Int(normalizedSize.width.rounded())), in: db)
+            try Self.persist(Constants.SettingsKey.panelContentHeight, value: String(Int(normalizedSize.height.rounded())), in: db)
+        }
         PPLogger.panel.info("Panel content size set to: \(Int(normalizedSize.width))x\(Int(normalizedSize.height))")
     }
 
@@ -94,9 +95,16 @@ final class SettingsRepository: @unchecked Sendable {
     }
 
     func setPanelWindowOrigin(_ origin: NSPoint) throws {
-        try set(Constants.SettingsKey.panelWindowOriginX, value: String(Int(origin.x.rounded())))
-        try set(Constants.SettingsKey.panelWindowOriginY, value: String(Int(origin.y.rounded())))
+        try dbQueue.write { db in
+            try Self.persist(Constants.SettingsKey.panelWindowOriginX, value: String(Int(origin.x.rounded())), in: db)
+            try Self.persist(Constants.SettingsKey.panelWindowOriginY, value: String(Int(origin.y.rounded())), in: db)
+        }
         PPLogger.panel.info("Panel window origin set to: \(Int(origin.x)),\(Int(origin.y))")
+    }
+
+    private static func persist(_ key: String, value: String?, in db: Database) throws {
+        let setting = AppSetting(key: key, value: value)
+        try setting.save(db)
     }
 
     private func normalizedPanelContentSize(_ size: NSSize) -> NSSize {

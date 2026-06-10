@@ -214,6 +214,46 @@ final class PromptPanelTests: XCTestCase {
         XCTAssertEqual(try settingsRepository.getPanelWindowOrigin(), NSPoint(x: 321, y: 457))
     }
 
+    func testPanelContentSizeSettingRollsBackWhenSecondKeyFails() throws {
+        let databaseManager = try makeDatabaseManager()
+        let settingsRepository = SettingsRepository(dbQueue: databaseManager.dbQueue)
+
+        try databaseManager.dbQueue.write { db in
+            try db.execute(sql: """
+                CREATE TRIGGER fail_panel_height_setting
+                BEFORE INSERT ON app_settings
+                WHEN new.key = 'panel_content_height'
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced panel height failure');
+                END
+                """)
+        }
+
+        XCTAssertThrowsError(try settingsRepository.setPanelContentSize(NSSize(width: 820, height: 520)))
+        XCTAssertNil(try settingsRepository.get(Constants.SettingsKey.panelContentWidth))
+        XCTAssertNil(try settingsRepository.get(Constants.SettingsKey.panelContentHeight))
+    }
+
+    func testPanelWindowOriginSettingRollsBackWhenSecondKeyFails() throws {
+        let databaseManager = try makeDatabaseManager()
+        let settingsRepository = SettingsRepository(dbQueue: databaseManager.dbQueue)
+
+        try databaseManager.dbQueue.write { db in
+            try db.execute(sql: """
+                CREATE TRIGGER fail_panel_origin_y_setting
+                BEFORE INSERT ON app_settings
+                WHEN new.key = 'panel_window_origin_y'
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced panel origin failure');
+                END
+                """)
+        }
+
+        XCTAssertThrowsError(try settingsRepository.setPanelWindowOrigin(NSPoint(x: 321.4, y: 456.6)))
+        XCTAssertNil(try settingsRepository.get(Constants.SettingsKey.panelWindowOriginX))
+        XCTAssertNil(try settingsRepository.get(Constants.SettingsKey.panelWindowOriginY))
+    }
+
     func testMixedEntriesPreferCurrentProjectWhenSortKeysEqual() throws {
         let databaseManager = try makeDatabaseManager()
         let projectRepository = ProjectRepository(dbQueue: databaseManager.dbQueue)
@@ -394,6 +434,27 @@ final class PromptPanelTests: XCTestCase {
                 return XCTFail("Unexpected error: \(error)")
             }
             XCTAssertEqual(count, 1)
+        }
+    }
+
+    func testEntryRepositoryMutationsFailWhenEntryIsMissing() throws {
+        let databaseManager = try makeDatabaseManager()
+        let projectRepository = ProjectRepository(dbQueue: databaseManager.dbQueue)
+        let entryRepository = EntryRepository(dbQueue: databaseManager.dbQueue)
+        let defaultProject = try XCTUnwrap(projectRepository.fetchDefault())
+
+        for action in [
+            { try entryRepository.recordExecution(id: "missing-entry") },
+            { try entryRepository.updateSortOrder(id: "missing-entry", sortOrder: 10) },
+            { try entryRepository.togglePin(id: "missing-entry") },
+            { try entryRepository.moveToProject(entryId: "missing-entry", projectId: defaultProject.id) }
+        ] {
+            XCTAssertThrowsError(try action()) { error in
+                guard case RepositoryError.notFound(let entity) = error else {
+                    return XCTFail("Unexpected error: \(error)")
+                }
+                XCTAssertEqual(entity, "Entry missing-entry")
+            }
         }
     }
 
@@ -2024,6 +2085,56 @@ func panelWindowOriginSettingRoundTrips() throws {
 }
 
 @Test
+func panelContentSizeSettingRollsBackWhenSecondKeyFails() throws {
+    let databaseManager = try makeDatabaseManager()
+    let settingsRepository = SettingsRepository(dbQueue: databaseManager.dbQueue)
+
+    try databaseManager.dbQueue.write { db in
+        try db.execute(sql: """
+            CREATE TRIGGER fail_panel_height_setting
+            BEFORE INSERT ON app_settings
+            WHEN new.key = 'panel_content_height'
+            BEGIN
+                SELECT RAISE(ABORT, 'forced panel height failure');
+            END
+            """)
+    }
+
+    do {
+        try settingsRepository.setPanelContentSize(NSSize(width: 820, height: 520))
+        Issue.record("Expected panel content size persistence to fail.")
+    } catch {
+        #expect(try settingsRepository.get(Constants.SettingsKey.panelContentWidth) == nil)
+        #expect(try settingsRepository.get(Constants.SettingsKey.panelContentHeight) == nil)
+    }
+}
+
+@Test
+func panelWindowOriginSettingRollsBackWhenSecondKeyFails() throws {
+    let databaseManager = try makeDatabaseManager()
+    let settingsRepository = SettingsRepository(dbQueue: databaseManager.dbQueue)
+
+    try databaseManager.dbQueue.write { db in
+        try db.execute(sql: """
+            CREATE TRIGGER fail_panel_origin_y_setting
+            BEFORE INSERT ON app_settings
+            WHEN new.key = 'panel_window_origin_y'
+            BEGIN
+                SELECT RAISE(ABORT, 'forced panel origin failure');
+            END
+            """)
+    }
+
+    do {
+        try settingsRepository.setPanelWindowOrigin(NSPoint(x: 321.4, y: 456.6))
+        Issue.record("Expected panel origin persistence to fail.")
+    } catch {
+        #expect(try settingsRepository.get(Constants.SettingsKey.panelWindowOriginX) == nil)
+        #expect(try settingsRepository.get(Constants.SettingsKey.panelWindowOriginY) == nil)
+    }
+}
+
+@Test
 func mixedEntriesPreferCurrentProjectWhenSortKeysEqual() throws {
     let databaseManager = try makeDatabaseManager()
     let projectRepository = ProjectRepository(dbQueue: databaseManager.dbQueue)
@@ -2215,6 +2326,32 @@ func deletingNonEmptyProjectFailsWithEntryCount() throws {
             return
         }
         #expect(count == 1)
+    }
+}
+
+@Test
+func entryRepositoryMutationsFailWhenEntryIsMissing() throws {
+    let databaseManager = try makeDatabaseManager()
+    let projectRepository = ProjectRepository(dbQueue: databaseManager.dbQueue)
+    let entryRepository = EntryRepository(dbQueue: databaseManager.dbQueue)
+    let defaultProject = try #require(projectRepository.fetchDefault())
+
+    for action in [
+        { try entryRepository.recordExecution(id: "missing-entry") },
+        { try entryRepository.updateSortOrder(id: "missing-entry", sortOrder: 10) },
+        { try entryRepository.togglePin(id: "missing-entry") },
+        { try entryRepository.moveToProject(entryId: "missing-entry", projectId: defaultProject.id) }
+    ] {
+        do {
+            try action()
+            Issue.record("Expected missing entry mutation to fail.")
+        } catch {
+            guard case RepositoryError.notFound(let entity) = error else {
+                Issue.record("Unexpected error: \(error)")
+                return
+            }
+            #expect(entity == "Entry missing-entry")
+        }
     }
 }
 
