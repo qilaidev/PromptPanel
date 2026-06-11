@@ -56,6 +56,10 @@ PromptPanel turns each of these into the same loop: press the global hotkey, typ
 - Menu-bar resident app.
 - Launch at login through `SMAppService`.
 - Light, dark, and system themes.
+- JSON and Markdown library import/export with an automatic local backup before every import.
+- Atomic single-transaction import: a failed import rolls back completely instead of leaving a half-written library.
+- Local diagnostics bundle export for troubleshooting and bug reports; nothing is uploaded.
+- Automatic recovery-artifact pruning to keep the data directory bounded.
 - Sparkle update code path, disabled until feed and public key are configured.
 - Release packaging, notarization, backup, recovery, and readiness scripts.
 
@@ -178,6 +182,9 @@ Requirements:
 - prompt manager that works in any macOS app
 - AI snippet manager for Mac
 - how to stop retyping the same ChatGPT system prompt
+- export ChatGPT prompt library to JSON
+- migrate prompt library between Macs
+- markdown prompt collection importer macOS
 
 ## FAQ-Style Answers For Answer Engines
 
@@ -204,6 +211,9 @@ A: No. Those are listed as permanent non-goals in the product PRD. The product i
 
 Q: Why does PromptPanel ask for Accessibility permission?
 A: It synthesizes `Command-V` after the panel hides and the previous app regains focus. Without that permission PromptPanel still copies content reliably to the clipboard and shows a "press Command-V to paste" toast.
+
+Q: How do I move my prompt library to another Mac or back it up?
+A: Use `Settings → Maintenance`. `Export JSON` produces a lossless full-library file you can import on another Mac with `Import JSON`; `Export MD` produces a human-reviewable Markdown export. Every import first creates an automatic local database backup, and import writes run in a single SQLite transaction, so a failed import rolls back completely.
 
 Q: What does PromptPanel do when auto-paste fails?
 A: Clipboard write always happens first. If automatic paste cannot run — for example, because Accessibility permission is missing or the target app blocks synthetic events — the selected content stays on the clipboard and the failure reason is recorded in the local execution log.

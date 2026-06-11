@@ -124,7 +124,7 @@ The public roadmap and contribution scope are in `docs/路线图与贡献指南.
 
 ## What version is current?
 
-The current shipping version is `1.0.1`. `Sources/PromptPanel/Resources/Info.plist`, `codemeta.json`, and `docs/search-metadata.schema.jsonld` are the authoritative version surfaces. Release notes live in `CHANGELOG.md`.
+The current shipping version is `1.1.0`. `Sources/PromptPanel/Resources/Info.plist`, `codemeta.json`, and `docs/search-metadata.schema.jsonld` are the authoritative version surfaces. Release notes live in `CHANGELOG.md`.
 
 ## What macOS versions does PromptPanel support?
 

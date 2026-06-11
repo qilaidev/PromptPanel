@@ -10,8 +10,8 @@
     "PromptPanel Cursor snippet manager"
   ],
   "description": "PromptPanel (项目快贴) is an open-source, local-first native macOS prompt manager, AI prompt launcher, and snippet launcher for ChatGPT, Claude, Cursor, Copilot, VS Code, Terminal, browser, and ordinary text-field workflows. It stores reusable prompts, code snippets, templates, and instructions locally in SQLite, opens a keyboard-first global hotkey panel, writes selected content to the clipboard first, and attempts automatic paste through macOS Accessibility when allowed.",
-  "version": "1.0.1",
-  "datePublished": "2026-05-19",
+  "version": "1.1.0",
+  "datePublished": "2026-06-11",
   "codeRepository": "https://github.com/tytsxai/PromptPanel",
   "issueTracker": "https://github.com/tytsxai/PromptPanel/issues",
   "license": "https://spdx.org/licenses/MIT.html",
@@ -80,7 +80,10 @@
     "Developer ID signing and Apple notarization scripts",
     "Light, dark, and system theme",
     "Launch at login via SMAppService",
-    "JSON and Markdown import/export with backup before import"
+    "JSON and Markdown import/export with backup before import",
+    "Atomic single-transaction library import with full rollback on failure",
+    "Local diagnostics bundle export for troubleshooting",
+    "Automatic recovery-artifact pruning"
   ],
   "softwareRequirements": [
     "macOS 14+",

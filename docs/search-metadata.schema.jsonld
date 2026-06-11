@@ -28,8 +28,8 @@
       "operatingSystem": "macOS 14 or later",
       "runtimePlatform": "macOS",
       "programmingLanguage": "Swift",
-      "softwareVersion": "1.0.1",
-      "datePublished": "2026-05-19",
+      "softwareVersion": "1.1.0",
+      "datePublished": "2026-06-11",
       "screenshot": [
         "https://raw.githubusercontent.com/tytsxai/PromptPanel/main/frontend-draft/uploads/PromptPanel-panel-default.png",
         "https://raw.githubusercontent.com/tytsxai/PromptPanel/main/frontend-draft/uploads/PromptPanel-library.png",
@@ -79,7 +79,10 @@
         "Execution logs without prompt body storage",
         "Sparkle update code path disabled until feed and public key are configured",
         "Developer ID signing and notarization scripts",
-        "JSON and Markdown import/export with backup before import"
+        "JSON and Markdown import/export with backup before import",
+        "Atomic single-transaction library import with full rollback on failure",
+        "Local diagnostics bundle export for troubleshooting",
+        "Automatic recovery-artifact pruning"
       ],
       "softwareRequirements": [
         "macOS 14 Sonoma or later",
@@ -147,6 +150,14 @@
           "acceptedAnswer": {
             "@type": "Answer",
             "text": "PromptPanel is a narrower, AI-focused, local-first searchable panel. It does only one thing — search and paste reusable prompts and snippets through a global hotkey — and never requires an account, a paid tier, or a cloud service."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I move my PromptPanel prompt library to another Mac or back it up?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Use Settings → Maintenance. Export JSON produces a lossless full-library file that Import JSON restores on another Mac; Export MD produces a human-reviewable Markdown export. Every import first creates an automatic local database backup, and import writes run in a single SQLite transaction, so a failed import rolls back completely."
           }
         },
         {

@@ -6,6 +6,39 @@ The format is based on Keep a Changelog, and this project uses Conventional Comm
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-06-11
+
+First stable feature release after 1.0. Focus areas: lossless library migration, on-device diagnostics, and storage self-maintenance — all still local-first with no new network paths.
+
+### Added
+
+- **Library import/export** (`Settings → Maintenance`): `Export JSON` for lossless full-library transfer, `Export MD` for human-reviewable sharing, `Import JSON` / `Import MD` for migration from another PromptPanel install or a Markdown prompt collection. Every import automatically creates a local database backup first, and all import writes run inside a single SQLite transaction — a failed import rolls back completely instead of leaving a half-written library.
+- **Diagnostics export**: one click produces a local diagnostics bundle (app/system info, settings snapshot, recent logs, database health) for troubleshooting and bug reports. Nothing is uploaded; the bundle is a local file you choose to share.
+- **Recovery pruning**: automatic cleanup of stale recovery/backup artifacts via the storage maintenance service, keeping the data directory bounded.
+- Regression coverage for import rollback and quick-panel manual ordering.
+
+### Changed
+
+- Quick-panel window origin persistence is now debounced, reducing redundant settings writes while dragging the panel.
+- Settings window polish: clearer maintenance section layout and runtime-health presentation.
+- Hardened distribution path: entitlements aligned for release signing, update messaging consistent with the actually-disabled Sparkle state.
+
+### Fixed
+
+- Library import is now atomic — a mid-import failure no longer leaves partially imported projects or entries (single-transaction rollback).
+- Quick-panel local ranking now matches repository ordering for manual `sortOrder`, so the panel and library show the same order.
+- Repository consistency edge cases in entry and settings persistence.
+
+### Documentation
+
+- OpenSpec baseline established: `openspec/specs/project-documentation/spec.md` is the documentation-system spec, with reliability contracts recorded.
+- Library transfer workflow, consistency safeguards, and bilingual discoverability docs added.
+- Star History chart, `项目快贴` alias, and Chinese long-tail keywords surfaced in the READMEs for search and answer engines.
+
+### Security
+
+- No new network paths. Import/export and diagnostics export operate purely on local files; Sparkle remains bundled but disabled (no feed configured, no update probe dispatched).
+
 ## [1.0.1] - 2026-05-19
 
 ### Added
@@ -53,6 +86,7 @@ First public release. Aligns the `Info.plist`, `codemeta.json`, and `docs/search
 
 - No remote authentication, telemetry, or cloud sync paths are introduced. Prompt content remains local in SQLite; the only network traffic is the optional Sparkle update check.
 
-[Unreleased]: https://github.com/tytsxai/PromptPanel/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/tytsxai/PromptPanel/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/tytsxai/PromptPanel/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/tytsxai/PromptPanel/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/tytsxai/PromptPanel/releases/tag/v1.0.0
