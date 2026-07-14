@@ -123,7 +123,8 @@ Treat these as the search index for the project:
 | Surface | Purpose |
 | --- | --- |
 | `README.md` | Primary bilingual GitHub landing page with Chinese-first summary and English technical keywords. |
-| `README.zh-CN.md` | Primary Chinese landing page. |
+| `README.zh-CN.md` | Primary Chinese (Simplified) landing page. |
+| `README.zh-TW.md`, `README.ja.md`, `README.ko.md`, `README.es.md`, `README.fr.md`, `README.de.md` | Localized landing pages (Traditional Chinese, Japanese, Korean, Spanish, French, German) for international search and AI-answer discoverability. They mirror `README.md`'s structure, links, and canonical positioning; the language nav bar at the top of every README links all versions. |
 | `docs/FAQ.md` | Searchable Q&A for privacy, permissions, build, alternatives, and roadmap questions. |
 | `docs/项目介绍.md` | Stable project introduction for users, maintainers, search engines, and AI retrieval. |
 | `docs/API与功能说明.md` | Feature contract, internal service contracts, database schema, script interfaces, and search behavior. |
@@ -209,6 +210,7 @@ When the product positioning changes, update these files in the same pull reques
 
 - `README.md`
 - `README.zh-CN.md`
+- Localized READMEs: `README.zh-TW.md`, `README.ja.md`, `README.ko.md`, `README.es.md`, `README.fr.md`, `README.de.md` (keep positioning, features, limits, and the language nav bar in sync with `README.md`)
 - `docs/FAQ.md`
 - `llms.txt`
 - `docs/ai-search/llms-full.txt`
