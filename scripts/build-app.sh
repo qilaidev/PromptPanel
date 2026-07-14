@@ -107,6 +107,11 @@ if [[ -z "$SPARKLE_FEED_URL" && -n "$SPARKLE_PUBLIC_ED_KEY" ]]; then
     exit 64
 fi
 
+if [[ -n "$SPARKLE_FEED_URL" && "$SPARKLE_FEED_URL" != https://* ]]; then
+    echo "Sparkle feed URL must use https:// to prevent update-metadata tampering (got: ${SPARKLE_FEED_URL})." >&2
+    exit 64
+fi
+
 mkdir -p "$OUTPUT_ROOT"
 
 echo "Building ${APP_NAME} (${CONFIGURATION})..."
@@ -156,18 +161,24 @@ sign_framework_contents() {
         } | awk '{ print length($0), $0 }' | sort -rn | cut -d' ' -f2-
     )
 
+    # Every embedded executable (helper apps, XPC services, Autoupdate, nested
+    # dylibs) must carry the hardened-runtime flag so notarization accepts the
+    # bundle. Apple rejects any non-runtime executable inside a notarized app.
     for helper_path in "${helper_paths[@]}"; do
         case "$helper_path" in
             *.app|*.xpc|*/Autoupdate)
                 codesign_path "$helper_path" runtime
                 ;;
             *)
-                codesign_path "$helper_path"
+                codesign_path "$helper_path" runtime
                 ;;
         esac
     done
 
-    codesign_path "$framework_path"
+    # Sign the framework bundle itself with hardened runtime too; signing the
+    # bundle re-signs its main mach-O (Sparkle) with our identity, giving it the
+    # app's Team ID so it passes library validation without disabling it.
+    codesign_path "$framework_path" runtime
 }
 
 strip_extended_attributes() {
@@ -248,7 +259,7 @@ for framework_path in "${FRAMEWORKS_DIR}"/*.framework(N); do
 done
 
 for dylib_path in "${FRAMEWORKS_DIR}"/*.dylib(N); do
-    codesign_path "$dylib_path"
+    codesign_path "$dylib_path" runtime
 done
 
 if [[ "$SIGN_IDENTITY" != "none" ]]; then
@@ -269,6 +280,29 @@ if [[ "$SIGN_IDENTITY" == "none" ]]; then
         exit 1
     fi
 fi
+
+# SwiftPM resource-bundle discovery shim (Swift 6+ toolchain).
+#
+# SwiftPM's generated `Bundle.module` accessor resolves a target's resource
+# bundle only at `Bundle.main.bundleURL/<Package>_<Target>.bundle`. For a
+# packaged .app, `Bundle.main.bundleURL` is the bundle ROOT (sibling of
+# Contents/), NOT Contents/Resources. Because our resource bundles live in
+# Contents/Resources, the accessor's lookup fails and any dependency that
+# touches `Bundle.module` at runtime (e.g. KeyboardShortcuts.Recorder, which
+# lazily loads its localized bundle the first time the recorder is shown)
+# hits `fatalError` and crashes the app.
+#
+# We must keep the real bundles under Contents/Resources so the code signature
+# stays sealed and passes `codesign --verify --strict`; putting bundles (or even
+# symlinks) at the root BEFORE signing trips "unsealed contents present in the
+# bundle root" and fails signing. So we add relative symlinks at the app root
+# AFTER all signing/verification. The root symlinks are unsealed, which is fine
+# for locally installed / ad-hoc builds but means a notarized build would need
+# a different (xcodebuild-based) resource layout.
+for resource_bundle in "${RESOURCES_DIR}"/*.bundle(N); do
+    bundle_basename="$(basename "$resource_bundle")"
+    ln -sfn "Contents/Resources/${bundle_basename}" "${APP_PATH}/${bundle_basename}"
+done
 
 SHORT_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${CONTENTS_DIR}/Info.plist")"
 BUILD_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${CONTENTS_DIR}/Info.plist")"

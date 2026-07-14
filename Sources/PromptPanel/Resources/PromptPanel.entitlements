@@ -4,7 +4,23 @@
 <dict>
     <key>com.apple.security.app-sandbox</key>
     <false/>
-    <key>com.apple.security.cs.disable-library-validation</key>
-    <true/>
+    <!--
+      Library Validation is intentionally left ENABLED (do NOT add
+      com.apple.security.cs.disable-library-validation here).
+
+      Rationale: build-app.sh re-signs Sparkle.framework and every embedded
+      helper (Installer.xpc / Downloader.xpc / Autoupdate / Updater.app / any
+      nested dylib) with the SAME Developer ID identity as the main app, so all
+      loaded code shares one Team ID and passes hardened-runtime library
+      validation without the entitlement. Sparkle's own docs confirm the
+      entitlement is only needed for ad-hoc/development signing, not for
+      Developer ID distribution. Disabling library validation would needlessly
+      widen the dylib-injection attack surface (any validly-signed dylib from
+      any team could be loaded into the process).
+
+      The entitlement is only required for LOCAL ad-hoc builds forced to run
+      under hardened runtime; those are not distributed, and build-app.sh's
+      ad-hoc path does not enable hardened runtime, so it is unnecessary there.
+    -->
 </dict>
 </plist>
