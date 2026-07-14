@@ -28,8 +28,8 @@
       "operatingSystem": "macOS 14 or later",
       "runtimePlatform": "macOS",
       "programmingLanguage": "Swift",
-      "softwareVersion": "1.1.0",
-      "datePublished": "2026-06-11",
+      "softwareVersion": "1.1.1",
+      "datePublished": "2026-07-14",
       "screenshot": [
         "https://raw.githubusercontent.com/tytsxai/PromptPanel/main/frontend-draft/uploads/PromptPanel-panel-default.png",
         "https://raw.githubusercontent.com/tytsxai/PromptPanel/main/frontend-draft/uploads/PromptPanel-library.png",

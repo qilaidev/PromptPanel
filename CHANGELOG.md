@@ -6,11 +6,27 @@ The format is based on Keep a Changelog, and this project uses Conventional Comm
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-07-14
+
+Reliability, security-hardening, and documentation release. No end-user feature changes and no new default network paths: the app stays local-first, and the auto-update channel added here remains dormant unless a feed URL and signing key are configured at build time.
+
+### Added
+
+- **Auto-update release channel wired up**: `scripts/generate-appcast.sh` now generates and EdDSA-signs an `appcast.xml` from a directory of notarized release archives, completing the Sparkle update path (`build-app.sh` already injected the feed URL and public key, but nothing produced the feed clients poll). Daily automatic update checks are enabled (`SUEnableAutomaticChecks`, 24 h interval) while installs still prompt first — no silent install. The channel stays inert in default and source builds because no `SUFeedURL`/`SUPublicEDKey` is baked in unless passed to `build-app.sh` at package time.
+- **Localized READMEs** for Japanese, Korean, Traditional Chinese, Spanish, French, and German (in addition to English and Simplified Chinese).
+
+### Security
+
+- **Hardened-runtime library validation kept enabled**: removed `com.apple.security.cs.disable-library-validation` from the shipped entitlements. `build-app.sh` now re-signs `Sparkle.framework` and every embedded helper (Installer.xpc / Downloader.xpc / Autoupdate / Updater.app and nested dylibs) with the hardened runtime and the app's identity, so all loaded code shares one Team ID and passes library validation without the entitlement — closing an unnecessary dylib-injection surface. `release-readiness.sh` now asserts the entitlement is absent and verifies the bundle signature.
+- **HTTPS-only Sparkle feed** enforced in both `build-app.sh` and `release-readiness.sh`.
+- **Data directory permissions tightened**: the app-support and logs directories are now created with `0700`, so no other local account can read PromptPanel storage — matching the contract already enforced in `DatabaseManager` / `StorageMaintenanceService`.
+
 ### Fixed
 
 - **Diagnostics export could hang** when `ditto` emitted a large amount of stderr while packaging the diagnostics bundle: the process was awaited before its error pipe was drained, so a full pipe buffer (~64 KB) would deadlock `waitUntilExit()`. The pipe is now drained before waiting.
 - **Accessibility reset could hang** for the same reason: `PermissionService.resetAccessibilityApproval()` (the `tccutil reset` helper) now drains the process output before awaiting exit.
 - **Hardened two force-unwraps** that could crash the app: the FTS search statement arguments in `EntryRepository.search` are now built with typed `StatementArguments` instead of a force-unwrapped `[Any]` conversion, and `LogRepository.cleanup` no longer force-unwraps the retention cutoff date.
+- **Keyboard-shortcut recorder no longer crashes on first use**: app-root symlinks to `Contents/Resources/*.bundle` are added after signing so the Swift 6 `Bundle.module` accessor resolves resources.
 
 ## [1.1.0] - 2026-06-11
 
