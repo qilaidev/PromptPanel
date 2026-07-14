@@ -193,9 +193,12 @@ final class DiagnosticsExportService {
         let errorPipe = Pipe()
         process.standardError = errorPipe
         try process.run()
+        // Drain stderr before waiting: if ditto writes more than the pipe buffer
+        // (~64KB) it blocks on write, and waitUntilExit() would deadlock forever.
+        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else {
-            let message = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            let message = String(data: errorData, encoding: .utf8) ?? ""
             throw ExportError.zipFailed(exitCode: process.terminationStatus, message: message)
         }
     }

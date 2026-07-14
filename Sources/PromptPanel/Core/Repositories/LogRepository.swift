@@ -38,7 +38,8 @@ final class LogRepository: @unchecked Sendable {
 
     /// Clean up old logs (keep only last N days).
     func cleanup(olderThanDays days: Int = 30) throws {
-        let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date())!
+        let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date())
+            ?? Date().addingTimeInterval(-Double(days) * 86_400)
         try dbQueue.write { db in
             try db.execute(
                 sql: "DELETE FROM execution_logs WHERE created_at < ?",

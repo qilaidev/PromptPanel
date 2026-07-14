@@ -125,8 +125,8 @@ final class EntryRepository: @unchecked Sendable {
                     entries.id ASC
                 LIMIT 100
                 """
-            let rawArguments: [Any] = [currentProjectId as Any, currentProjectId as Any, escapedQuery as Any] + ids.map { $0 as Any }
-            let arguments = StatementArguments(rawArguments)!
+            var arguments: StatementArguments = [currentProjectId, currentProjectId, escapedQuery]
+            arguments += StatementArguments(ids)
             let rows = try Row.fetchAll(db, sql: sql, arguments: arguments)
             return try rows.map { try Entry(row: $0) }
         }

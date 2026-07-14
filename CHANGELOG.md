@@ -6,6 +6,12 @@ The format is based on Keep a Changelog, and this project uses Conventional Comm
 
 ## [Unreleased]
 
+### Fixed
+
+- **Diagnostics export could hang** when `ditto` emitted a large amount of stderr while packaging the diagnostics bundle: the process was awaited before its error pipe was drained, so a full pipe buffer (~64 KB) would deadlock `waitUntilExit()`. The pipe is now drained before waiting.
+- **Accessibility reset could hang** for the same reason: `PermissionService.resetAccessibilityApproval()` (the `tccutil reset` helper) now drains the process output before awaiting exit.
+- **Hardened two force-unwraps** that could crash the app: the FTS search statement arguments in `EntryRepository.search` are now built with typed `StatementArguments` instead of a force-unwrapped `[Any]` conversion, and `LogRepository.cleanup` no longer force-unwraps the retention cutoff date.
+
 ## [1.1.0] - 2026-06-11
 
 First stable feature release after 1.0. Focus areas: lossless library migration, on-device diagnostics, and storage self-maintenance — all still local-first with no new network paths.

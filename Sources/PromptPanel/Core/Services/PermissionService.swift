@@ -74,9 +74,11 @@ final class PermissionService: ObservableObject, AccessibilityPermissionProvidin
             return .launchFailed(error.localizedDescription)
         }
 
+        // Drain the pipe before waiting: if the tool writes more than the pipe
+        // buffer (~64KB) it blocks on write, and waitUntilExit() would deadlock.
+        let outputData = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
 
-        let outputData = pipe.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: outputData, encoding: .utf8) ?? ""
 
         guard process.terminationStatus == 0 else {
