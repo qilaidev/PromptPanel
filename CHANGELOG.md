@@ -6,6 +6,10 @@ The format is based on Keep a Changelog, and this project uses Conventional Comm
 
 ## [Unreleased]
 
+### Changed
+
+- **Simplified the framework-signing helper in `build-app.sh`**: collapsed a redundant `case` branch in `sign_framework_contents` whose two arms ran the identical `codesign_path "$helper_path" runtime` command. Every embedded executable already needs the hardened-runtime flag, so the branch carried no behavioural difference — only maintenance noise. No change to signing output.
+
 ## [1.1.1] - 2026-07-14
 
 Reliability, security-hardening, and documentation release. No end-user feature changes and no new default network paths: the app stays local-first, and the auto-update channel added here remains dormant unless a feed URL and signing key are configured at build time.

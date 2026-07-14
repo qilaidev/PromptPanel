@@ -162,22 +162,16 @@ sign_framework_contents() {
     )
 
     # Every embedded executable (helper apps, XPC services, Autoupdate, nested
-    # dylibs) must carry the hardened-runtime flag so notarization accepts the
-    # bundle. Apple rejects any non-runtime executable inside a notarized app.
+    # dylibs) and the framework bundle itself must carry the hardened-runtime
+    # flag: Apple rejects any non-runtime executable inside a notarized app, and
+    # signing each with the app's identity gives it the app's Team ID so the
+    # framework passes hardened-runtime library validation without disabling it.
+    # Helpers are signed deepest-first (paths pre-sorted by length) so nested
+    # code is sealed before the bundle that contains it.
     for helper_path in "${helper_paths[@]}"; do
-        case "$helper_path" in
-            *.app|*.xpc|*/Autoupdate)
-                codesign_path "$helper_path" runtime
-                ;;
-            *)
-                codesign_path "$helper_path" runtime
-                ;;
-        esac
+        codesign_path "$helper_path" runtime
     done
 
-    # Sign the framework bundle itself with hardened runtime too; signing the
-    # bundle re-signs its main mach-O (Sparkle) with our identity, giving it the
-    # app's Team ID so it passes library validation without disabling it.
     codesign_path "$framework_path" runtime
 }
 
