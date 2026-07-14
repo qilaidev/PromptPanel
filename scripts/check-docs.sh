@@ -212,6 +212,7 @@ top_level_scripts=(
     "scripts/release-readiness.sh"
     "scripts/restore-backup.sh"
     "scripts/notarize-app.sh"
+    "scripts/generate-appcast.sh"
     "scripts/launch-computer-use.sh"
     "scripts/capture-ui-qa.sh"
     "scripts/check-docs.sh"

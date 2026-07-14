@@ -33,6 +33,7 @@ jobs:
         run: |
           zsh -n scripts/build-app.sh
           zsh -n scripts/check-docs.sh
+          zsh -n scripts/generate-appcast.sh
           zsh -n scripts/restore-backup.sh
           zsh -n scripts/release-readiness.sh
 

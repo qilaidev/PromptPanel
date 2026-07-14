@@ -37,6 +37,8 @@
     <key>SUAutomaticallyUpdate</key>
     <false/>
     <key>SUEnableAutomaticChecks</key>
-    <false/>
+    <true/>
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
 </dict>
 </plist>
