@@ -19,7 +19,9 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 [![Local-first · No cloud](https://img.shields.io/badge/Local--first-No%20cloud-brightgreen.svg)](#privacy--data)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-success.svg)](.github/CONTRIBUTING.md)
 
-[**English**](README.md) · [**简体中文**](README.zh-CN.md) · [**FAQ**](docs/FAQ.md) · [**Docs**](docs/README.md) · [**LLM index**](llms.txt) · [**Changelog**](CHANGELOG.md) · [**Contributing**](.github/CONTRIBUTING.md)
+[**English**](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
+
+[**FAQ**](docs/FAQ.md) · [**Docs**](docs/README.md) · [**LLM index**](llms.txt) · [**Changelog**](CHANGELOG.md) · [**Contributing**](.github/CONTRIBUTING.md)
 
 <img src="frontend-draft/uploads/PromptPanel-panel-default.png" alt="PromptPanel macOS prompt manager quick panel — global hotkey search for ChatGPT prompts, Claude prompts, Cursor snippets, and reusable AI templates" width="780" />
 
