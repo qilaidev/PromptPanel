@@ -152,7 +152,7 @@ enum Constants {
         let url = environmentURL(for: appSupportOverrideEnv)
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
                 .appendingPathComponent(appName)
-        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        ensureSecureDirectory(at: url)
         return url
     }
 
@@ -175,7 +175,7 @@ enum Constants {
             ?? FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
                 .appendingPathComponent("Logs")
                 .appendingPathComponent(appName)
-        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        ensureSecureDirectory(at: url)
         return url
     }
 
@@ -379,6 +379,26 @@ enum Constants {
             return applicationSupportDirectory
         }
         return normalizedDatabaseURL.deletingLastPathComponent()
+    }
+
+    /// Create (or tighten) a per-user data directory to 0700 so no other local
+    /// account can traverse or read PromptPanel storage. Mirrors the permission
+    /// contract already enforced in DatabaseManager / StorageMaintenanceService;
+    /// applying it here closes the window where a freshly created directory would
+    /// otherwise inherit the umask default (typically 0755).
+    private static func ensureSecureDirectory(at url: URL) {
+        let fileManager = FileManager.default
+        try? fileManager.createDirectory(
+            at: url,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: secureDirectoryPermissions]
+        )
+        if fileManager.fileExists(atPath: url.path) {
+            try? fileManager.setAttributes(
+                [.posixPermissions: secureDirectoryPermissions],
+                ofItemAtPath: url.path
+            )
+        }
     }
 
     private static func environmentURL(for key: String) -> URL? {
