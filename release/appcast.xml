@@ -4,12 +4,15 @@
 
   Published at https://tytsxai.github.io/PromptPanel/appcast.xml by
   .github/workflows/publish-appcast.yml. That URL is baked into every shipped binary as
-  SUFeedURL and CANNOT be changed for already-installed clients — treat it as permanent.
+  SUFeedURL and CANNOT be changed for already installed clients; treat it as permanent.
 
-  Do not hand-edit this file: every item is EdDSA-signed, and any manual change invalidates
-  the signature. Regenerate it with:
+  Do not hand edit this file: every item is EdDSA signed, and any manual change invalidates
+  the signature. Regenerate it with scripts/generate-appcast.sh, passing the staging
+  directory and the release tag.
 
-      scripts/generate-appcast.sh --archives-dir <staging> --tag v<version>
+  NOTE: XML comments must not contain a double hyphen. Writing the script's option flags
+  here makes this file unparseable, and Sparkle silently fails every update check on a feed
+  it cannot parse. The publish workflow now runs xmllint to catch that.
 
   The channel is intentionally empty until the first notarized release is published.
 -->

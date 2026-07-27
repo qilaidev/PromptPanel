@@ -38,6 +38,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Reject a malformed feed
+        # Sparkle parses the feed as XML and silently fails every update check on one it
+        # cannot parse, so a syntax error here is invisible until users stop getting updates.
+        # This already bit us once: XML comments may not contain a double hyphen, and the
+        # seed file documented the generator's option flags inside a comment.
+        run: xmllint --noout release/appcast.xml
+
       - name: Reject an unsigned feed
         # A feed whose items carry no EdDSA signature is worse than no feed at all: clients
         # with SUPublicEDKey set reject every item, so the channel looks alive but can never

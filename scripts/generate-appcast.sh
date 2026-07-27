@@ -224,6 +224,13 @@ log_info "Generating signed appcast for archives in $ARCHIVES_DIR"
 RESULT_APPCAST="${OUTPUT_PATH:-$ARCHIVES_DIR/appcast.xml}"
 [[ -f "$RESULT_APPCAST" ]] || fail "generate_appcast did not produce an appcast at $RESULT_APPCAST"
 
+# Sparkle silently fails every update check on a feed it cannot parse, so never write malformed
+# XML back to the published feed. generate_appcast itself refuses to parse a malformed seed, but
+# check the output too so a bad merge can never reach Pages.
+if command -v xmllint >/dev/null 2>&1; then
+    xmllint --noout "$RESULT_APPCAST" || fail "Generated appcast is not well-formed XML: $RESULT_APPCAST"
+fi
+
 # An unsigned feed is worse than no feed: clients with SUPublicEDKey set reject every item, so
 # the update channel looks alive but can never install anything. generate_appcast only warns
 # when the key is missing, so turn that into a hard failure here.
