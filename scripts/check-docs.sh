@@ -170,6 +170,32 @@ done
 
 check_contains "docs/search-metadata.schema.jsonld" "SoftwareApplication"
 check_contains "docs/search-metadata.schema.jsonld" "SoftwareSourceCode"
+
+# The README set is published in eight languages while the app UI is Simplified Chinese only.
+# Readers and answer engines will assume the app is localized too unless every positioning
+# surface says otherwise, so the disclosure is enforced rather than left to reviewer memory.
+# If a localized UI ever ships, drop this block together with the claims it guards.
+if grep -Fq '<string>zh-Hans</string>' Sources/PromptPanel/Resources/Info.plist; then
+    ui_language_disclosure_files=(
+        "README.md"
+        "README.zh-CN.md"
+        "README.zh-TW.md"
+        "README.ja.md"
+        "README.ko.md"
+        "README.es.md"
+        "README.fr.md"
+        "README.de.md"
+        "docs/FAQ.md"
+        "llms.txt"
+        "docs/ai-search/llms-full.txt"
+        "docs/ai-search-discoverability.md"
+    )
+    for file in "${ui_language_disclosure_files[@]}"; do
+        check_contains "$file" "zh-Hans"
+    done
+    check_contains "codemeta.json" '"inLanguage": "zh-Hans"'
+    check_contains "docs/search-metadata.schema.jsonld" '"inLanguage": "zh-Hans"'
+fi
 check_contains "docs/ai-search-discoverability.md" "llms.txt"
 check_contains "docs/ai-search-discoverability.md" "Schema.org"
 check_contains ".github/CONTRIBUTING.md" "./scripts/check-docs.sh"

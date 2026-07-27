@@ -23,8 +23,6 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 
 [FAQ](docs/FAQ.md) · [Documentación](docs/README.md) · [LLM index](llms.txt) · [Changelog](CHANGELOG.md) · [Contribuir](.github/CONTRIBUTING.md)
 
-<img src="frontend-draft/uploads/PromptPanel-panel-default.png" alt="Panel rápido del gestor de prompts PromptPanel para macOS — búsqueda con atajo global de prompts de ChatGPT, prompts de Claude, snippets de Cursor y plantillas de IA reutilizables" width="780" />
-
 </div>
 
 ---
@@ -40,7 +38,8 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 | Pila técnica / Tech stack | Swift 5.10, AppKit `NSPanel`, SwiftUI, SQLite/GRDB, KeyboardShortcuts, Sparkle 2, Swift Package Manager. |
 | Inicio rápido / Quick start | `git clone` -> `./scripts/build-app.sh` -> `open dist/PromptPanel.app`. En la primera ejecución, concede el permiso de Accessibility para el pegado automático; si no lo concedes, también puede copiar al portapapeles. |
 | Casos de uso típicos / Use cases | Role prompt de ChatGPT/Claude, contexto de proyecto de Cursor, checklist de revisión de PR, snippet de comando de terminal, plantilla de notas de reunión, plantilla de respuesta específica por cliente. |
-| Limitaciones / Limits | Solo compatible con macOS 14+; la Release actual aún no incluye un binario notarizado; sin sincronización en la nube, sin colaboración en equipo, sin versión para Windows/Linux; el pegado automático depende del permiso de Accessibility de macOS. |
+| Idioma de la interfaz / UI language | **La interfaz de la aplicación está actualmente solo en chino simplificado** (`CFBundleDevelopmentRegion = zh-Hans`; no hay recursos de localización ni selector de idioma dentro de la app). La documentación está disponible en 8 idiomas y `README.md` incluye una tabla de equivalencias chino→inglés de las etiquetas de la interfaz. El contenido de los prompts que guardes puede estar en cualquier idioma. |
+| Limitaciones / Limits | Solo compatible con macOS 14+; interfaz solo en chino simplificado; la Release actual aún no incluye un binario notarizado; sin sincronización en la nube, sin colaboración en equipo, sin versión para Windows/Linux; sin plantillas con variables; el pegado automático depende del permiso de Accessibility de macOS. |
 
 ## ¿Qué es PromptPanel? / What is PromptPanel?
 
@@ -73,7 +72,7 @@ Todo lo demás está al servicio de que ese ciclo sea rápido, predecible y nunc
 | Lo que quieres… | Lo que te da PromptPanel |
 |---|---|
 | Una biblioteca de prompts que funcione **en todas las apps**, no solo en un sitio web | Atajo global, panel nativo de macOS, funciona en cualquier campo de texto |
-| **Ciclo nativo de baja latencia** — objetivo de menos de un segundo desde la pulsación hasta la escritura | Objetivo de < 300 ms de atajo a foco, < 100 ms de refresco de búsqueda, < 250 ms de ejecución |
+| **Ciclo nativo de baja latencia** — objetivo de menos de un segundo desde la pulsación hasta la escritura | Objetivo de < 300 ms de atajo a foco, < 80 ms de refresco de búsqueda, < 250 ms de ejecución |
 | **Aislamiento por proyecto** para que los prompts del cliente A no se filtren al cliente B | Proyectos de primer nivel + un proyecto `Universal` integrado para el contenido compartido |
 | **Sin dependencia de la nube** para prompts sensibles | SQLite local. Cero llamadas de red para las funciones principales. Tus datos son un único archivo que te pertenece |
 | **Pegado automático que no falla en silencio** | Pegado automático primero, respaldo del portapapeles siempre, y un aviso claro si el pegado fue bloqueado |
@@ -112,14 +111,6 @@ Si "copio y pego el mismo prompt multilínea veinte veces al día" te describe, 
 ### Lo que explícitamente *no* hace (límites del proyecto)
 
 Por diseño, PromptPanel **nunca** añadirá sincronización en la nube, colaboración en equipo ni orquestación compleja de flujos de trabajo. No son cosas "para más adelante": están fuera de alcance para siempre. La herramienta es una utilidad de un solo usuario, solo local, y ese es precisamente su valor. Consulta [PRD §4.2](docs/项目快贴-PRD.md) para conocer el razonamiento.
-
-## Capturas de pantalla
-
-| Panel rápido — `⌥2` desde cualquier app | Biblioteca — proyectos, entradas, niveles por número de usos |
-|:---:|:---:|
-| <img src="frontend-draft/uploads/PromptPanel-panel-default.png" alt="Panel rápido de PromptPanel — lanzador de prompts de IA con atajo global, con números de fila continuos, búsqueda, fijado, alcance por proyecto, niveles por número de usos y pegado desde el portapapeles para ChatGPT, Claude y Cursor en macOS" width="380"/> | <img src="frontend-draft/uploads/PromptPanel-library.png" alt="Biblioteca de PromptPanel — gestor de prompts local-first para macOS con proyectos, entradas de prompts, snippets reutilizables, vista previa del editor, etiquetas, fijado y recuento de usos por entrada" width="380"/> |
-| Panel más pequeño — huella compacta sobre cualquier editor | Ajustes — preferencias, permisos, mantenimiento |
-| <img src="frontend-draft/uploads/PromptPanel-panel-min.png" alt="Panel rápido más pequeño de PromptPanel — selector de prompts con prioridad al teclado y lanzador de snippets flotando sobre otra app de macOS" width="380"/> | <img src="frontend-draft/uploads/PromptPanel-settings.png" alt="Ajustes de PromptPanel — preferencias segmentadas, permiso de Accessibility, grabador de atajos, comportamiento del panel, copia de seguridad, registros, ubicación de la base de datos y estado de ejecución" width="380"/> |
 
 ## ¿Cómo funciona?
 
@@ -174,27 +165,43 @@ Las GitHub Releases actualmente solo incluyen notas de versión de código/docum
 ### Configuración de la primera ejecución
 
 1. **Concede el permiso de Accessibility** cuando se te solicite. macOS lo usa para permitir las pulsaciones de teclado sintéticas `⌘V`. Sin él, PromptPanel sigue copiando al portapapeles de forma fiable; simplemente pegas manualmente.
-2. **Configura tu atajo** en Ajustes → Atajo. El valor por defecto actual es `⌥2`; elige otro atajo si entra en conflicto con tu configuración.
+2. **Configura tu atajo** en `设置 → 偏好 → 快捷键 → 呼出面板`. El valor por defecto actual es `⌥2`; elige otro atajo si entra en conflicto con tu configuración.
 3. **Crea un proyecto** o empieza a añadir entradas a `Universal`.
 
 ## Inicio rápido
 
+Suponiendo que la app está compilada y en ejecución (icono visible en la barra de menús):
+
 ```text
-1. ⌥2              → aparece el panel, con el foco en el campo de búsqueda
-2. escribe "review"→ filtra hasta tu prompt de revisión de código
-3. ↵               → el contenido se pega en el campo de texto activo
-4. (el panel se oculta) → sigues trabajando
+1. Ventana principal → 内容库 (Biblioteca) → añade tu primera entrada:
+   título "review", cuerpo = tu prompt de revisión de código, etiquetas opcionales
+2. ⌥2              → aparece el panel, con el foco en el campo de búsqueda
+3. escribe "review"→ filtra hasta tu prompt de revisión de código
+4. ↵               → el contenido se copia y luego se pega en el campo activo
+5. (el panel se oculta) → sigues trabajando
 ```
 
-Puedes cambiar el proyecto activo desde dentro del panel sin abrir la ventana principal — solo con el teclado, sin desvíos.
+### Sintaxis de búsqueda en el panel / Search syntax
+
+| Escribes | Qué ocurre |
+|---|---|
+| `review` | Coincidencia por **prefijo con FTS5 de SQLite** sobre el título y el contenido de la entrada |
+| `code rev` | Cada token separado por espacios es un término de prefijo, combinados con AND |
+| `#sql` | Filtra a las entradas con la etiqueta `sql`; el token `#tag` se elimina de la consulta de texto |
+| `#sql migrate` | Filtro de etiqueta `sql` **y** coincidencia de texto `migrate` |
+| *(vacío)* | Navega por el proyecto actual más `Universal`, ordenado por fijado → orden manual → recencia → número de usos |
+
+Notas: solo se usa el primer token `#tag` como filtro de etiqueta, y coincide de forma exacta y sensible a mayúsculas (`#SQL` no coincidirá con una etiqueta `sql`); los resultados se limitan a 100 filas; la coincidencia de texto es por prefijo, así que un término tomado del interior de una palabra (o de una secuencia CJK sin espacios) no coincidirá.
+
+Puedes cambiar el proyecto activo desde dentro del panel sin abrir la ventana principal — solo con el teclado, sin desvíos. `⌘1`–`⌘9` ejecutan directamente las nueve primeras filas; `⌘C` copia sin pegar; `⌘P` fija el panel; `Esc` lo cierra.
 
 ## Configuración
 
 | Ajuste | Dónde | Notas |
 |---|---|---|
-| Atajo global | Ajustes → Atajo | Un único atajo. Comportamiento de alternancia: la misma tecla lo descarta |
-| Tema | Ajustes → Apariencia | Claro / oscuro / seguir al sistema |
-| Inicio al abrir sesión | Ajustes → General | Usa `SMAppService` |
+| Atajo global | `设置 → 偏好 → 快捷键 → 呼出面板` | Un único atajo. Comportamiento de alternancia: la misma tecla lo descarta |
+| Tema | `设置 → 偏好 → 外观 → 主题` | Claro / oscuro / seguir al sistema |
+| Inicio al abrir sesión | `设置 → 权限 → 权限与启动` | Usa `SMAppService` |
 | Canal de actualización | GitHub Releases (manual) | Sparkle 2 está integrado pero desactivado hasta que se aloje un appcast firmado; suscríbete a las notificaciones de versiones y reemplaza el `.app` |
 | Ubicación de la base de datos | `~/Library/Application Support/PromptPanel/promptpanel.db` | SQLite de un único archivo, fácil de respaldar |
 | Registros | `~/Library/Logs/PromptPanel/` | Se inspeccionan mediante el "Runtime Health" de la ventana principal |
@@ -271,7 +278,7 @@ PromptPanel/
 │   │   └── MainWindow/   # Library + Settings
 │   └── Resources/        # Info.plist, entitlements, AppIcon, Assets
 ├── Tests/PromptPanelTests/
-├── frontend-draft/       # UI source-of-truth (HTML/JSX mockups + screenshots)
+├── frontend-draft/       # UI source-of-truth (HTML/JSX mockups)
 ├── scripts/              # build-app.sh, notarize, release readiness, restore
 ├── docs/                 # public architecture, FAQ, PRD, release, ops, handoff docs
 ├── .github/              # contribution, security, conduct, issue/PR templates, CI

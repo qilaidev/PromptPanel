@@ -21,8 +21,6 @@ PromptPanel 是一款本地优先的 **macOS Prompt 管理器**、**AI Prompt �
 
 [**FAQ**](docs/FAQ.md) · [**文档**](docs/README.md) · [**LLM 索引**](llms.txt) · [**变更记录**](CHANGELOG.md) · [**贡献指南**](.github/CONTRIBUTING.md)
 
-<img src="frontend-draft/uploads/PromptPanel-panel-default.png" alt="PromptPanel macOS Prompt 管理器快捷面板：全局快捷键搜索 ChatGPT Prompt、Claude Prompt、Cursor 片段和 AI 模板" width="780" />
-
 </div>
 
 ---
@@ -38,7 +36,8 @@ PromptPanel 是一款本地优先的 **macOS Prompt 管理器**、**AI Prompt �
 | 技术栈 | Swift 5.10、AppKit `NSPanel`、SwiftUI、SQLite/GRDB、KeyboardShortcuts、Sparkle 2、Swift Package Manager。 |
 | 快速开始 | `git clone` → `./scripts/build-app.sh` → `open dist/PromptPanel.app`。首次运行建议授予辅助功能权限；不授权也能复制到剪贴板。 |
 | 典型场景 | ChatGPT/Claude role prompt、Cursor project context、PR review checklist、terminal command snippet、会议纪要模板、客户回复模板。 |
-| 限制边界 | 仅支持 macOS 14+；当前 Release 暂无已公证二进制包；无云同步、无团队协作、无 Windows/Linux 版本；自动粘贴依赖 macOS Accessibility。 |
+| 界面语言 | 应用界面目前只有**简体中文**（`CFBundleDevelopmentRegion = zh-Hans`，无本地化资源与语言切换入口）。文档为中英双语、共 8 个语言版本。词条内容本身不限语言。 |
+| 限制边界 | 仅支持 macOS 14+；界面仅简体中文；当前 Release 暂无已公证二进制包；无云同步、无团队协作、无 Windows/Linux 版本；暂不支持变量模板；自动粘贴依赖 macOS Accessibility。 |
 
 ## PromptPanel 是什么？
 
@@ -73,7 +72,7 @@ PromptPanel 把上面这些全部塌进一条 sub-second 的链路——而你�
 | 你想要 | PromptPanel 给你 |
 |---|---|
 | 一个**任何应用都能用**的 Prompt 库，不限于某个网站 | 全局快捷键 + 原生 macOS 面板，任意输入框可用 |
-| **低延迟原生链路**——按键到能输入的目标时间明确 | < 300 ms 唤出聚焦目标、< 100 ms 搜索刷新目标、< 250 ms 执行目标 |
+| **低延迟原生链路**——按键到能输入的目标时间明确 | < 300 ms 唤出聚焦目标、< 80 ms 搜索刷新目标、< 250 ms 执行目标（即 `Constants.swift` 里的内部预算，超标会打 warning 日志） |
 | **项目隔离**，A 客户的 Prompt 不会串到 B 项目里 | 一等公民的"项目"概念 + 内置不可删的 `通用项目` |
 | 敏感 Prompt **不想上云** | 本地 SQLite，核心功能零网络调用，数据是一个你完全掌握的文件 |
 | **自动粘贴不能静默失败** | 自动粘贴优先 + 剪贴板永远兜底，被屏蔽时有清晰提示 |
@@ -112,14 +111,6 @@ PromptPanel 把上面这些全部塌进一条 sub-second 的链路——而你�
 ### 永远不会做（产品边界）
 
 PromptPanel **永远不会**加入云同步、团队协作、复杂工作流编排。这不是"以后再说"，而是"以后也不做"。这个工具就是单用户、纯本地、轻量快速，这才是它存在的理由。详见 [PRD §4.2](docs/项目快贴-PRD.md)。
-
-## 截图
-
-| 快捷面板 — 任意 app 中 `⌥2` 唤出 | 库管理 — 项目、词条、使用次数色阶 |
-|:---:|:---:|
-| <img src="frontend-draft/uploads/PromptPanel-panel-default.png" alt="PromptPanel 快捷面板：macOS 上的全局快捷键 AI Prompt 启动器，支持连续序号、搜索、置顶、项目范围、使用次数色阶和剪贴板粘贴，适用于 ChatGPT、Claude、Cursor" width="380"/> | <img src="frontend-draft/uploads/PromptPanel-library.png" alt="PromptPanel 库管理：本地优先 macOS Prompt 管理器，支持项目、Prompt 词条、可复用片段、预览编辑、标签、置顶与按使用次数排序" width="380"/> |
-| 小尺寸面板 — 浮在任意编辑器上方 | 设置 — 偏好、权限、维护 |
-| <img src="frontend-draft/uploads/PromptPanel-panel-min.png" alt="PromptPanel 小尺寸快捷面板：键盘优先的 Prompt 选择器和片段启动器，浮在其他 macOS 应用上方" width="380"/> | <img src="frontend-draft/uploads/PromptPanel-settings.png" alt="PromptPanel 设置：偏好、辅助功能权限、快捷键录制、面板行为、备份、日志、数据库位置与运行健康" width="380"/> |
 
 ## 工作原理
 
@@ -179,25 +170,44 @@ open dist/PromptPanel.app
 
 ## 快速上手
 
+假设 `.app` 已构建并运行（菜单栏能看到图标）：
+
 ```text
-1. ⌥2             → 面板浮现，搜索框自动聚焦
-2. 输入 "review"  → 过滤到你的代码评审模板
-3. ↵              → 内容粘贴进当前输入框
-4. （面板退场）    → 继续手头工作
+1. 打开主窗口 → 内容库 → 新建第一条词条：
+   标题填 "review"，正文粘你的代码评审 Prompt，可选填标签
+2. ⌥2             → 面板浮现，搜索框自动聚焦
+3. 输入 "review"  → 过滤到你的代码评审模板
+4. ↵              → 先写剪贴板，再粘贴进当前输入框
+5. （面板退场）    → 继续手头工作
 ```
 
-切换当前项目可以直接在面板内完成，不必打开主窗口——纯键盘，零绕路。
+### 面板内的搜索语法
+
+| 你输入 | 实际行为 |
+|---|---|
+| `review` | 对词条标题和正文做 SQLite **FTS5 前缀匹配** |
+| `code rev` | 空格分隔的每个 token 都是前缀词，彼此是 AND 关系 |
+| `#sql` | 只保留打了 `sql` 标签的词条；`#tag` 这个 token 会从文本查询里剔除 |
+| `#sql migrate` | 标签 `sql` **且** 文本命中 `migrate` |
+| *(空)* | 浏览「当前项目 + 通用项目」，按 置顶 → 手动排序 → 最近使用 → 使用次数 排列 |
+
+注意：一次查询只取**第一个** `#tag` 作为标签过滤，且标签是**精确、区分大小写**匹配（`#SQL` 匹配不到 `sql` 标签）；搜索结果上限 100 条；文本匹配是前缀式的，所以从词中间截取的片段（包括中文连写串的中段）匹配不到。
+
+切换当前项目可以直接在面板内完成，不必打开主窗口——纯键盘，零绕路。`⌘1`–`⌘9` 直达前九行，`⌘C` 只复制不粘贴，`⌘P` 固定面板，`Esc` 关闭。
 
 ## 配置
 
 | 设置项 | 位置 | 说明 |
 |---|---|---|
-| 全局快捷键 | 设置 → 快捷键 | 同一组合再按一次会关闭面板 |
-| 主题 | 设置 → 外观 | 浅色 / 深色 / 跟随系统 |
-| 开机启动 | 设置 → 通用 | 基于 `SMAppService` |
+| 全局快捷键 | `设置 → 偏好 → 快捷键 → 呼出面板` | 只有这一个快捷键，默认 `⌥2`；同一组合再按一次会关闭面板 |
+| 主题 | `设置 → 偏好 → 外观 → 主题` | 浅色 / 深色 / 跟随系统 |
+| 词条排序 | `设置 → 偏好 → 词条排序` | 按使用 / 按等级 / 按最近 / 按字母 |
+| 面板行为 | `设置 → 偏好 → 面板行为` | 固定面板、键位提示栏、紧凑行高、精确面板宽高 |
+| 辅助功能权限、开机启动 | `设置 → 权限 → 权限与启动` | 权限只影响自动粘贴；开机启动基于 `SMAppService` |
+| 备份 / 导入导出 / 诊断 | `设置 → 维护 → 维护操作` | `立即备份`、`导出/导入 JSON`、`导出/导入 MD`、`导出诊断` |
 | 更新通道 | GitHub Releases（手动） | Sparkle 2 已接入但当前发布未配置 appcast，订阅 Releases 后手动替换 `.app` 即可 |
-| 数据库位置 | `~/Library/Application Support/PromptPanel/promptpanel.db` | 单文件，方便备份 |
-| 日志 | `~/Library/Logs/PromptPanel/` | 主窗口"运行健康"也能查看 |
+| 数据库位置 | `~/Library/Application Support/PromptPanel/promptpanel.db` | 单文件，方便备份；同目录下 `Backups/` 保留 7 份自动备份，`Recovery/` 保留 5 份恢复产物 |
+| 日志 | `~/Library/Logs/PromptPanel/` | 主窗口"运行概况"也能查看；执行日志保留 30 天 |
 
 ## 隐私与数据
 
@@ -224,6 +234,20 @@ open dist/PromptPanel.app
 | 专门为 AI Prompt 工作流设计 | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ 但限浏览器 |
 
 **一句话**：如果你只在浏览器里用，浏览器插件就够。如果你在 Cursor / VS Code / 终端 / Slack / 各处都需要——那你需要原生面板型工具。在原生面板型工具里，PromptPanel 是开源、专为 AI Prompt 设计的那个。
+
+## 工作流示例
+
+下面是日常真实用法，也正好对应 PromptPanel 想解决的那些"我该怎么……"的长尾问题。
+
+- **开一个新的 ChatGPT / Claude 会话，直接甩上你的标准 role / system prompt。** 快捷键 → 输入 `role` → 回车。不用第 200 次手敲"你是一位资深工程师……"。
+- **把 Cursor / Copilot 的项目上下文块塞进新文件。** "这是架构、约定和约束"那一大段只存一次，之后任何一个新的 Cursor 会话一个快捷键就能贴进去。
+- **把代码评审清单贴进 PR 描述。** 长长的 checklist 存在 PromptPanel 里，一个快捷键追加到 GitHub PR 描述末尾。
+- **发一条带精确参数组合的重复终端命令。** `kubectl get pods --context=prod --namespace=… -o jsonpath=…`——敲一次、存起来、用短关键词唤出。
+- **往 Notion / Obsidian / 备忘录里插会议纪要模板。** 每周一站会都是同一个模板 → 一个快捷键，不用再去草稿文件里翻着复制。
+- **把客服 / 销售回复模板推进 Slack 或邮件。** 不同语气各存一条，从快捷面板里挑，而不是从备忘录文件夹里翻。
+- **在多个项目之间切换各自独立的 Prompt 集合。** 每个项目组保留自己的 role prompt、片段和模板，上下文永远不会在客户之间串味。
+
+更细的分场景示例见 [docs/使用示例.md](docs/使用示例.md)。
 
 ## 技术栈
 
@@ -257,7 +281,7 @@ PromptPanel/
 │   │   └── MainWindow/   # 库管理 + 设置
 │   └── Resources/        # Info.plist / entitlements / 图标 / Assets
 ├── Tests/PromptPanelTests/
-├── frontend-draft/       # UI 唯一基准（HTML/JSX 设计稿 + 截图）
+├── frontend-draft/       # UI 唯一基准（HTML/JSX 设计稿）
 ├── scripts/              # 构建、公证、发布预检、备份恢复
 ├── docs/                 # 公开架构、FAQ、PRD、部署、运维、交接文档
 ├── .github/              # 贡献、安全、行为准则、issue/PR 模板、CI
@@ -324,6 +348,37 @@ PromptPanel 走的是**刻意收敛**的路线。PRD 已经把"永不做"列出�
 
 不收费。MIT 协议，没有付费档、没有用量上限、没有账号。
 
+### 快捷键 `⌥2` 和别的软件冲突，能改吗？
+
+能。`设置 → 偏好 → 快捷键 → 呼出面板`，重新录一组即可。面板只有这一个快捷键，打开状态下再按一次就是关闭。如果录完发现按了没反应，通常是别的应用或 macOS 系统快捷键先占用了这个组合，换一组就行。
+
+从 1.0 之前版本升上来的安装，只有在快捷键仍停留在旧的内置默认值时，才会被一次性迁移到当前默认值；你自己设过的快捷键不会被覆盖。
+
+### 某个应用里自动粘贴不生效怎么办？
+
+按这个顺序排查：
+
+1. 确认 `设置 → 权限` 和系统的「隐私与安全性 → 辅助功能」里都已授权。重新构建 `.app` 之后 macOS 可能把它当成新二进制，需要先移除条目再重新添加。
+2. 直接按 `⌘V` 试试。如果手动能粘出正确内容，说明剪贴板这一步的承诺是兑现的，只是合成按键被拦了。
+3. 看 `设置 → 维护 → 最近执行记录`，每条失败都会记录原因。
+4. 有些应用会**主动**拒绝合成事件（密码框、部分安全输入场景、部分远程桌面和虚拟机窗口）。这属于目标应用的策略，不是 PromptPanel 可恢复的错误。
+5. 如果是常用应用且能稳定复现，欢迎提 issue 附上应用名、版本和执行日志里的失败原因，会补进 [docs/兼容性回归记录.md](docs/兼容性回归记录.md)。
+
+### 支持变量 / 占位符模板吗？
+
+暂时不支持，词条内容是原样粘贴。变量模板（`{{name}}` 形态）在路线图里是**有条件**的：只有在不拖慢主链路的前提下才会做。
+
+### 怎么彻底卸载并清理数据？
+
+如果之后可能还要用，先 `设置 → 维护 → 导出 JSON` 备份一份。然后从菜单栏退出、删掉 `.app`，再清掉这两个目录：
+
+```bash
+rm -rf ~/Library/Application\ Support/PromptPanel   # 数据库、Backups/、Recovery/
+rm -rf ~/Library/Logs/PromptPanel                   # 运行日志
+```
+
+另外记得在「系统设置 → 隐私与安全性 → 辅助功能」里移除 PromptPanel，开过开机启动的话也一并去掉。除了上述位置和标准 `UserDefaults` 域，PromptPanel 不往别处写数据。
+
 ### 支持 Apple Silicon（M1/M2/M3/M4）吗？
 
 支持，构建为 universal binary，Apple Silicon 与 Intel 在 macOS 14+ 都测过。
@@ -376,3 +431,7 @@ PromptPanel 站在以下肩膀上：
 ---
 
 <sub>**关键词**（方便你搜到）：macOS Prompt 管理 · AI Prompt 启动器 · ChatGPT Prompt 管理 macOS · Claude Prompt 库 · Cursor 代码片段管理 · Copilot 模板启动器 · 开源 TextExpander 替代 · Espanso 替代 · Raycast 替代 · Alfred Snippets 替代 · 全局快捷键粘贴 · 本地优先 Prompt 库 · 离线 AI Prompt 存储 · 原生 Swift NSPanel 应用 · AI 工作流效率工具 · Prompt 模板管理 macOS · macOS 片段启动器 · 键盘优先 Prompt 选择器 · LLM Prompt 仓库 Mac · Prompt 工程工具箱 · Cursor Prompt 管理器 · NDA 安全的本地 Prompt 存储 · 项目快贴.</sub>
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=tytsxai/PromptPanel&type=Date)](https://www.star-history.com/#tytsxai/PromptPanel&Date)

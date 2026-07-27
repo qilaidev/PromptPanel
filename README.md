@@ -23,8 +23,6 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 
 [**FAQ**](docs/FAQ.md) · [**Docs**](docs/README.md) · [**LLM index**](llms.txt) · [**Changelog**](CHANGELOG.md) · [**Contributing**](.github/CONTRIBUTING.md)
 
-<img src="frontend-draft/uploads/PromptPanel-panel-default.png" alt="PromptPanel macOS prompt manager quick panel — global hotkey search for ChatGPT prompts, Claude prompts, Cursor snippets, and reusable AI templates" width="780" />
-
 </div>
 
 ---
@@ -40,7 +38,8 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 | 技术栈 / Tech stack | Swift 5.10, AppKit `NSPanel`, SwiftUI, SQLite/GRDB, KeyboardShortcuts, Sparkle 2, Swift Package Manager。 |
 | 快速开始 / Quick start | `git clone` -> `./scripts/build-app.sh` -> `open dist/PromptPanel.app`。首次运行授予 Accessibility 权限后可自动粘贴；不授权也能复制到剪贴板。 |
 | 典型场景 / Use cases | ChatGPT/Claude role prompt、Cursor project context、PR review checklist、terminal command snippet、meeting notes template、client-specific response template。 |
-| 限制 / Limits | 仅支持 macOS 14+；当前 Release 暂无已公证二进制包；无云同步、无团队协作、无 Windows/Linux 版本；自动粘贴依赖 macOS Accessibility 权限。 |
+| 界面语言 / UI language | **应用界面目前只有简体中文**（`CFBundleDevelopmentRegion = zh-Hans`，无本地化资源）。The app UI is currently **Simplified Chinese only**; documentation is available in 8 languages. 你存储的 prompt 内容本身不限语言。 |
+| 限制 / Limits | 仅支持 macOS 14+；应用界面仅简体中文；当前 Release 暂无已公证二进制包；无云同步、无团队协作、无 Windows/Linux 版本；自动粘贴依赖 macOS Accessibility 权限。 |
 
 ## PromptPanel 是什么？ / What is PromptPanel?
 
@@ -73,7 +72,7 @@ Everything else is in service of making that loop fast, predictable, and never l
 | You want… | PromptPanel gives you |
 |---|---|
 | A prompt library that works **across every app**, not just one website | Global hotkey, native macOS panel, works in any text field |
-| **Low-latency native loop** — sub-second target from keypress to typing | < 300 ms hotkey-to-focus target, < 100 ms search refresh target, < 250 ms execution target |
+| **Low-latency native loop** — sub-second target from keypress to typing | < 300 ms hotkey-to-focus target, < 80 ms search refresh target, < 250 ms execution target (the internal budgets in `Constants.swift`; exceeding them is logged as a warning) |
 | **Project isolation** so client A's prompts don't leak into client B | First-class projects + a built-in `Universal` project for shared content |
 | **No cloud lock-in** for sensitive prompts | Local SQLite. Zero network calls for core features. Your data is a single file you own |
 | **Auto-paste that doesn't silently fail** | Auto-paste first, clipboard fallback always — and a clear toast if paste was blocked |
@@ -112,14 +111,6 @@ If "I copy and paste the same multiline prompt twenty times a day" describes you
 ### Explicitly *not* doing (project boundaries)
 
 By design PromptPanel will **never** add cloud sync, team collaboration, or complex workflow orchestration. These are not "later" — they are out of scope forever. The tool is a single-user, local-only utility, and that is the point. See [PRD §4.2](docs/项目快贴-PRD.md) for the rationale.
-
-## Screenshots
-
-| Quick Panel — `⌥2` from any app | Library — projects, entries, use-count tiers |
-|:---:|:---:|
-| <img src="frontend-draft/uploads/PromptPanel-panel-default.png" alt="PromptPanel quick panel — global hotkey AI prompt launcher with continuous row numbers, search, pinning, project scope, use-count tiers, and clipboard paste for ChatGPT, Claude, and Cursor on macOS" width="380"/> | <img src="frontend-draft/uploads/PromptPanel-library.png" alt="PromptPanel library — local-first macOS prompt manager with projects, prompt entries, reusable snippets, editor preview, tags, pinning, and per-entry use counts" width="380"/> |
-| Smaller panel — compact footprint over any editor | Settings — preferences, permissions, maintenance |
-| <img src="frontend-draft/uploads/PromptPanel-panel-min.png" alt="PromptPanel smaller quick panel — keyboard-first prompt picker and snippet launcher hovering over another macOS app" width="380"/> | <img src="frontend-draft/uploads/PromptPanel-settings.png" alt="PromptPanel settings — segmented preferences, Accessibility permission, hotkey recorder, panel behavior, backup, logs, database location, and runtime health" width="380"/> |
 
 ## How does it work?
 
@@ -171,33 +162,71 @@ Requirements for building:
 
 GitHub Releases currently carry source/documentation release notes only; no notarized binary asset is attached yet. Until the Developer ID notarization chain is complete, build locally with `./scripts/build-app.sh`.
 
+> **Note on UI language.** The app interface ships in **Simplified Chinese only** (`CFBundleDevelopmentRegion = zh-Hans`; there are no localization resources yet). English UI labels are mapped below and in [docs/FAQ.md](docs/FAQ.md) so non-Chinese readers can follow along. The prompt content you store is unaffected — any language works.
+
 ### First-run setup
 
-1. **Grant Accessibility permission** when prompted. macOS uses this to allow synthetic `⌘V` keystrokes. Without it, PromptPanel still copies to clipboard reliably; you just paste manually.
-2. **Set your hotkey** in Settings → Hotkey. The current default is `⌥2`; pick another shortcut if it conflicts with your setup.
-3. **Create a project** or start adding entries to `Universal`.
+1. **Grant Accessibility permission** when prompted (`设置 → 权限`). macOS uses this to allow synthetic `⌘V` keystrokes. Without it, PromptPanel still copies to clipboard reliably; you just paste manually.
+2. **Set your hotkey** in Settings → Hotkey (`设置 → 偏好 → 快捷键 → 呼出面板`). The current default is `⌥2`; pick another shortcut if it conflicts with your setup.
+3. **Create a project** or start adding entries to `Universal` (`通用项目`) in the Library tab (`内容库`).
+
+### UI label map (Chinese UI → English)
+
+| Chinese label | English meaning |
+|---|---|
+| `内容库` / `设置` | Library / Settings (main window tabs) |
+| `偏好` · `权限` · `维护` | Preferences · Permissions · Maintenance (settings tabs) |
+| `呼出面板` | Toggle quick panel (the global hotkey) |
+| `通用项目` | The built-in `Universal` project |
+| `词条` | Entry (one prompt / snippet) |
+| `立即备份` | Back up now |
+| `导出 JSON` / `导入 JSON` | Export / Import JSON (lossless library transfer) |
+| `导出 MD` / `导入 MD` | Export / Import Markdown |
+| `导出诊断` | Export diagnostics bundle |
+| `运行概况` / `最近执行记录` | Runtime overview / recent execution log |
+| `数据位置` | Data locations (database, backups, logs) |
 
 ## Quick start
 
+Assuming the app is built and running (menu-bar icon visible):
+
 ```text
-1. ⌥2              → panel appears, search field focused
-2. type "review"   → filters to your code-review prompt
-3. ↵               → content pasted into the active text field
-4. (panel hides)   → keep working
+1. Open the main window → 内容库 (Library) → add your first entry:
+   title "review", body = your code-review prompt, optional tags
+2. ⌥2              → panel appears, search field focused
+3. type "review"   → filters to your code-review prompt
+4. ↵               → content is copied, then pasted into the active text field
+5. (panel hides)   → keep working
 ```
 
-You can switch the active project from inside the panel without opening the main window — keyboard-only, no detour.
+### Search syntax in the panel
+
+| You type | What happens |
+|---|---|
+| `review` | SQLite **FTS5 prefix match** over entry title and content |
+| `code rev` | Every whitespace-separated token is a prefix term, combined with AND — matches "code review…" |
+| `#sql` | Filters to entries tagged `sql`; the `#tag` token is stripped from the text query |
+| `#sql migrate` | Tag filter `sql` **and** text match `migrate` |
+| *(empty)* | Browses the current project plus `Universal`, sorted by pin → manual order → recency → use count |
+
+Notes: only the first `#tag` token in a query is used as a tag filter, and the tag must match **exactly and case-sensitively** (`#SQL` will not match a `sql` tag); search results are capped at 100 rows; text matching is prefix-based, so a term from the *middle* of a word (or of an unspaced CJK run) will not match.
+
+You can switch the active project from inside the panel without opening the main window — keyboard-only, no detour. `⌘1`–`⌘9` execute the first nine rows directly; `⌘C` copies without pasting; `⌘P` pins the panel open; `Esc` dismisses.
 
 ## Configuration
 
-| Setting | Where | Notes |
+| Setting | Where (Chinese UI) | Notes |
 |---|---|---|
-| Global hotkey | Settings → Hotkey | One shortcut. Toggle behavior: same key dismisses |
-| Theme | Settings → Appearance | Light / dark / follow system |
-| Launch at login | Settings → General | Uses `SMAppService` |
+| Global hotkey | `设置 → 偏好 → 快捷键 → 呼出面板` | One shortcut. Toggle behavior: same key dismisses. Default `⌥2` |
+| Theme | `设置 → 偏好 → 外观 → 主题` | Light / dark / follow system |
+| Entry sort order | `设置 → 偏好 → 词条排序` | By use count, by level tier, by recency, or alphabetical |
+| Panel behavior | `设置 → 偏好 → 面板行为` | Pin panel open, key-hint bar, compact rows, exact panel width/height |
+| Launch at login | `设置 → 权限 → 权限与启动` | Uses `SMAppService` |
+| Accessibility permission | `设置 → 权限 → 权限与启动` | Required only for auto-paste |
+| Backup / import / export | `设置 → 维护 → 维护操作` | `立即备份`, `导出/导入 JSON`, `导出/导入 MD`, `导出诊断` |
 | Update channel | GitHub Releases (manual) | Sparkle 2 is wired in but disabled until a signed appcast is hosted; subscribe to release notifications and replace the `.app` |
-| Database location | `~/Library/Application Support/PromptPanel/promptpanel.db` | Single-file SQLite, easy to back up |
-| Logs | `~/Library/Logs/PromptPanel/` | Inspected via the main window's "Runtime Health" |
+| Database location | `~/Library/Application Support/PromptPanel/promptpanel.db` | Single-file SQLite, easy to back up. `Backups/` keeps 7 automatic backups; `Recovery/` keeps 5 artifacts |
+| Logs | `~/Library/Logs/PromptPanel/` | Inspected via the main window's runtime-health line (`运行概况`); execution logs are retained 30 days |
 
 ## Privacy & data
 
@@ -271,7 +300,7 @@ PromptPanel/
 │   │   └── MainWindow/   # Library + Settings
 │   └── Resources/        # Info.plist, entitlements, AppIcon, Assets
 ├── Tests/PromptPanelTests/
-├── frontend-draft/       # UI source-of-truth (HTML/JSX mockups + screenshots)
+├── frontend-draft/       # UI source-of-truth (HTML/JSX mockups)
 ├── scripts/              # build-app.sh, notarize, release readiness, restore
 ├── docs/                 # public architecture, FAQ, PRD, release, ops, handoff docs
 ├── .github/              # contribution, security, conduct, issue/PR templates, CI
@@ -338,6 +367,25 @@ For a longer FAQ, see [FAQ.md](docs/FAQ.md). The greatest hits:
 
 Yes. MIT license. No paid tier, no usage cap, no account.
 
+### What language is the app interface in?
+
+**Simplified Chinese only.** The bundle declares `CFBundleDevelopmentRegion = zh-Hans` and the UI strings are hard-coded — there are no localization resources and no in-app language switch yet. The documentation is bilingual (and available in eight languages), and the [UI label map](#ui-label-map-chinese-ui--english) above covers the labels you need. Your stored prompts can be in any language. English/multi-language UI is not currently on the roadmap; if you want it, open an issue so the demand is visible.
+
+### The hotkey `⌥2` conflicts with another app. Can I change it?
+
+Yes — `设置 → 偏好 → 快捷键 → 呼出面板` (Settings → Preferences → Hotkey → Toggle panel), then record any combination. There is exactly one hotkey, and pressing it again while the panel is open dismisses it. If a shortcut appears to do nothing, another app or a macOS system shortcut is likely claiming it first.
+
+### How do I completely uninstall PromptPanel and remove its data?
+
+Quit from the menu bar, delete the `.app`, then remove the two directories it owns:
+
+```bash
+rm -rf ~/Library/Application\ Support/PromptPanel   # database, Backups/, Recovery/
+rm -rf ~/Library/Logs/PromptPanel                   # runtime logs
+```
+
+Export your library first (`设置 → 维护 → 导出 JSON`) if you may want it back. Also remove PromptPanel from `System Settings → Privacy & Security → Accessibility` and from your login items if you enabled launch-at-login.
+
 ### Does it work with Apple Silicon (M1/M2/M3/M4)?
 
 Yes — it builds as a universal binary. Tested on both Apple Silicon and Intel macOS 14+.
@@ -364,7 +412,7 @@ Open an issue: <https://github.com/tytsxai/PromptPanel/issues>. Please use the t
 
 ### How do I import my existing prompts from another tool?
 
-Use `Settings → Maintenance → Import JSON` for full PromptPanel library transfers, or `Import MD` for Markdown prompt collections. Imports automatically create a local database backup first. `Export JSON` is best for lossless migration; `Export MD` is best for reviewable sharing.
+Use `设置 → 维护 → 导入 JSON` (Settings → Maintenance → Import JSON) for full PromptPanel library transfers, or `导入 MD` (Import MD) for Markdown prompt collections. Imports automatically create a local database backup first and run in a single SQLite transaction, so a failed import rolls back completely. `导出 JSON` (Export JSON) is best for lossless migration; `导出 MD` (Export MD) is best for reviewable sharing.
 
 ## Contributing
 

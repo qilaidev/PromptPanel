@@ -16,8 +16,11 @@
         "PromptPanel Cursor snippet manager",
         "项目快贴"
       ],
-      "description": "PromptPanel (项目快贴) is an open-source, local-first native macOS prompt manager, AI prompt launcher, and snippet launcher for ChatGPT, Claude, Cursor, Copilot, VS Code, Terminal, browser, and ordinary text-field workflows. It stores reusable prompts, code snippets, templates, and instructions locally in SQLite, opens a keyboard-first global hotkey panel, writes selected content to the clipboard first, and attempts automatic paste through macOS Accessibility when allowed.",
+      "description": "PromptPanel (项目快贴) is an open-source, local-first native macOS prompt manager, AI prompt launcher, and snippet launcher for ChatGPT, Claude, Cursor, Copilot, VS Code, Terminal, browser, and ordinary text-field workflows. It stores reusable prompts, code snippets, templates, and instructions locally in SQLite, opens a keyboard-first global hotkey panel, writes selected content to the clipboard first, and attempts automatic paste through macOS Accessibility when allowed. The application interface is currently Simplified Chinese only; the documentation is published in eight languages.",
       "url": "https://github.com/tytsxai/PromptPanel",
+      "inLanguage": "zh-Hans",
+      "softwareHelp": "https://github.com/tytsxai/PromptPanel/blob/main/docs/FAQ.md",
+      "discussionUrl": "https://github.com/tytsxai/PromptPanel/issues",
       "codeRepository": "https://github.com/tytsxai/PromptPanel",
       "downloadUrl": "https://github.com/tytsxai/PromptPanel/releases",
       "releaseNotes": "https://github.com/tytsxai/PromptPanel/blob/main/CHANGELOG.md",
@@ -30,12 +33,6 @@
       "programmingLanguage": "Swift",
       "softwareVersion": "1.1.1",
       "datePublished": "2026-07-14",
-      "screenshot": [
-        "https://raw.githubusercontent.com/tytsxai/PromptPanel/main/frontend-draft/uploads/PromptPanel-panel-default.png",
-        "https://raw.githubusercontent.com/tytsxai/PromptPanel/main/frontend-draft/uploads/PromptPanel-library.png",
-        "https://raw.githubusercontent.com/tytsxai/PromptPanel/main/frontend-draft/uploads/PromptPanel-panel-min.png",
-        "https://raw.githubusercontent.com/tytsxai/PromptPanel/main/frontend-draft/uploads/PromptPanel-settings.png"
-      ],
       "isAccessibleForFree": true,
       "keywords": [
         "macOS prompt manager",
@@ -89,6 +86,7 @@
         "Xcode 15 or later for source builds",
         "Swift 5.10"
       ],
+      "permissions": "macOS Accessibility permission, required only for automatic paste",
       "offers": {
         "@type": "Offer",
         "price": "0",
@@ -182,6 +180,46 @@
           "acceptedAnswer": {
             "@type": "Answer",
             "text": "macOS 14 Sonoma or later, on both Apple Silicon (M1/M2/M3/M4) and Intel Macs. The release is built as a universal binary."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What language is the PromptPanel user interface in?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Simplified Chinese only. The bundle declares CFBundleDevelopmentRegion = zh-Hans, UI strings are hard-coded, and there are no localization resources or in-app language switch. The documentation is bilingual and published in eight languages, and README.md includes a Chinese-to-English UI label map. Prompt content stored in the app can be in any language."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I change the PromptPanel global hotkey?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Open Settings → Preferences → Hotkey → Toggle panel (设置 → 偏好 → 快捷键 → 呼出面板) and record a new combination. The default is Option-2. There is exactly one panel hotkey and pressing it again while the panel is open dismisses it. If a recorded shortcut does nothing, another app or a macOS system shortcut is claiming it first."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I search or filter prompts in the PromptPanel quick panel?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Type in the search field; there is no submit step. Plain text runs a SQLite FTS5 prefix match over entry title and content, with each whitespace-separated token combined using AND. A #tag token filters by tag and is removed from the text query, so '#sql migrate' means tagged sql and matching migrate. Only the first #tag token is used, results are capped at 100 rows, and matching is prefix-based."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I uninstall PromptPanel and remove all of its data?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Export the library first from Settings → Maintenance → Export JSON if you may want it back. Quit from the menu bar, delete the app bundle, then remove ~/Library/Application Support/PromptPanel (database, Backups, Recovery) and ~/Library/Logs/PromptPanel. Also remove PromptPanel from System Settings → Privacy & Security → Accessibility and from login items. PromptPanel writes nothing outside those locations and its UserDefaults domain."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does PromptPanel support variables or template placeholders?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Not yet. Entry content is pasted verbatim. Variable templates are roadmap-conditional and will only be added if they can be implemented without slowing the hotkey-to-paste main link."
           }
         }
       ]

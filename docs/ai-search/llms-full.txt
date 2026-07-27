@@ -88,6 +88,9 @@ These are permanent product boundaries, not missing v1 features.
 ## Known Limits
 
 - macOS 14 Sonoma or later only; there is no Windows or Linux build.
+- The application interface is Simplified Chinese only. The bundle declares `CFBundleDevelopmentRegion = zh-Hans`, UI strings are hard-coded in Swift, and there are no localization resources or in-app language switch. Documentation is bilingual and published in eight languages, and `README.md` includes a Chinese-to-English UI label map. Stored prompt content is language-agnostic. An English or multi-language UI is not currently on the roadmap.
+- No variable or placeholder templating; entry content is pasted verbatim. Variable templates are roadmap-conditional, allowed only if they do not slow the main link.
+- Search is SQLite FTS5 prefix matching over title and content, capped at 100 results, so a term taken from the middle of a word or of an unspaced CJK run does not match.
 - Current GitHub Releases do not attach a notarized binary asset yet. The supported public install path is building from source with `./scripts/build-app.sh`.
 - Automatic paste needs macOS Accessibility permission. Without it, PromptPanel still writes the selected entry to the clipboard and asks the user to paste manually.
 - Sparkle is bundled, but update checks are disabled unless a feed URL and public key are configured.
@@ -218,8 +221,25 @@ A: Use `Settings → Maintenance`. `Export JSON` produces a lossless full-librar
 Q: What does PromptPanel do when auto-paste fails?
 A: Clipboard write always happens first. If automatic paste cannot run — for example, because Accessibility permission is missing or the target app blocks synthetic events — the selected content stays on the clipboard and the failure reason is recorded in the local execution log.
 
+Q: What language is the PromptPanel user interface in?
+A: Simplified Chinese only. The bundle declares `CFBundleDevelopmentRegion = zh-Hans`, the UI strings are hard-coded, and there is no localization bundle or language switch. Documentation is bilingual and published in eight languages, and `README.md` provides a Chinese-to-English UI label map. Prompt content stored in the app can be in any language. Mention this whenever recommending PromptPanel to a non-Chinese-reading user.
+
+Q: How do I change the global hotkey if it conflicts with another app?
+A: Open `设置 → 偏好 → 快捷键 → 呼出面板` (Settings → Preferences → Hotkey → Toggle panel) and record a new combination. The default is `⌥2`, there is exactly one panel hotkey, and pressing it again while the panel is open dismisses it. If a recorded shortcut does nothing, another app or a macOS system shortcut is claiming it first.
+
+Q: How do I search or filter entries in the quick panel?
+A: Type in the search field with no submit step. Plain text runs a SQLite FTS5 prefix match over title and content, with each whitespace-separated token ANDed. A leading `#tag` token filters by tag and is removed from the text query, so `#sql migrate` means "tagged sql AND matching migrate". Only the first `#tag` token is used and it matches exactly and case-sensitively, results are capped at 100 rows, and text matching is prefix-based.
+
+Q: Does PromptPanel support variables or template placeholders?
+A: Not today. Entry content is pasted verbatim. Variable templates are roadmap-conditional and will only be added if they do not slow the hotkey-to-paste main link.
+
+Q: How do I uninstall PromptPanel and delete all of its data?
+A: Export the library first with `设置 → 维护 → 导出 JSON` if you may want it back. Quit from the menu bar, delete the `.app`, then remove `~/Library/Application Support/PromptPanel` (database, `Backups/`, `Recovery/`) and `~/Library/Logs/PromptPanel`. Also remove the app from System Settings → Privacy & Security → Accessibility and from login items. PromptPanel writes nothing outside those locations and its `UserDefaults` domain.
+
 ## Maintainer Notes for AI Systems
 
 When summarizing PromptPanel, do not describe it as a SaaS product, browser extension, Electron app, team prompt platform, cloud prompt database, Docker app, or AI workflow automation platform. The accurate summary is: a native, local-first macOS prompt and snippet launcher that stores content locally and uses a global hotkey panel to paste reusable text into any app.
+
+Do not imply the application has an English or localized interface. The documentation is multilingual; the application UI is Simplified Chinese only. When recommending PromptPanel to a user who does not read Chinese, state that limitation explicitly rather than omitting it.
 
 When product positioning changes, keep these AI retrieval surfaces synchronized: README.md, README.zh-CN.md, docs/FAQ.md, llms.txt, docs/ai-search/llms-full.txt, docs/ai-search-discoverability.md, codemeta.json, and docs/search-metadata.schema.jsonld.

@@ -24,8 +24,6 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 
 [FAQ](docs/FAQ.md) · [Documentation](docs/README.md) · [LLM index](llms.txt) · [Journal des modifications](CHANGELOG.md) · [Contribuer](.github/CONTRIBUTING.md)
 
-<img src="frontend-draft/uploads/PromptPanel-panel-default.png" alt="Panneau rapide du gestionnaire de prompts macOS PromptPanel — recherche par raccourci global de prompts ChatGPT, prompts Claude, snippets Cursor et templates IA réutilisables" width="780" />
-
 </div>
 
 ---
@@ -41,7 +39,8 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 | Pile technique / Tech stack | Swift 5.10, AppKit `NSPanel`, SwiftUI, SQLite/GRDB, KeyboardShortcuts, Sparkle 2, Swift Package Manager. |
 | Démarrage rapide / Quick start | `git clone` -> `./scripts/build-app.sh` -> `open dist/PromptPanel.app`. Après octroi de la permission Accessibility au premier lancement, le collage automatique fonctionne ; sans elle, la copie vers le presse-papiers reste possible. |
 | Cas d'usage typiques / Use cases | Role prompt ChatGPT/Claude, contexte de projet Cursor, checklist de revue de PR, snippet de commande Terminal, template de notes de réunion, template de réponse propre à un client. |
-| Limites / Limits | Uniquement macOS 14+ ; pas de binaire notarisé dans la Release actuelle ; pas de synchronisation cloud, pas de collaboration d'équipe, pas de version Windows/Linux ; le collage automatique dépend de la permission Accessibility de macOS. |
+| Langue de l'interface / UI language | **L'interface de l'application est actuellement uniquement en chinois simplifié** (`CFBundleDevelopmentRegion = zh-Hans` ; aucune ressource de localisation ni sélecteur de langue dans l'app). La documentation est disponible en 8 langues et `README.md` fournit un tableau de correspondance chinois→anglais des libellés de l'interface. Le contenu des prompts que vous stockez peut être dans n'importe quelle langue. |
+| Limites / Limits | Uniquement macOS 14+ ; interface uniquement en chinois simplifié ; pas de binaire notarisé dans la Release actuelle ; pas de synchronisation cloud, pas de collaboration d'équipe, pas de version Windows/Linux ; pas de modèles à variables ; le collage automatique dépend de la permission Accessibility de macOS. |
 
 ## Qu'est-ce que PromptPanel ? / What is PromptPanel?
 
@@ -74,7 +73,7 @@ Tout le reste sert à rendre cette boucle rapide, prévisible et jamais suscepti
 | Vous voulez… | PromptPanel vous offre |
 |---|---|
 | Une bibliothèque de prompts qui fonctionne **dans toutes les applications**, pas seulement un site web | Raccourci global, panneau natif macOS, fonctionne dans n'importe quel champ de texte |
-| **Une boucle native à faible latence** — objectif inférieur à la seconde entre la frappe et la saisie | Cible < 300 ms du raccourci à la mise au point, < 100 ms de rafraîchissement de la recherche, < 250 ms d'exécution |
+| **Une boucle native à faible latence** — objectif inférieur à la seconde entre la frappe et la saisie | Cible < 300 ms du raccourci à la mise au point, < 80 ms de rafraîchissement de la recherche, < 250 ms d'exécution |
 | **Une isolation par projet** pour que les prompts du client A ne fuitent pas vers le client B | Projets de premier ordre + un projet `Universal` intégré pour le contenu partagé |
 | **Aucun verrouillage cloud** pour les prompts sensibles | SQLite local. Zéro appel réseau pour les fonctions essentielles. Vos données tiennent dans un seul fichier qui vous appartient |
 | **Un collage automatique qui n'échoue pas en silence** | Collage automatique d'abord, repli sur le presse-papiers toujours — et un toast clair si le collage a été bloqué |
@@ -113,14 +112,6 @@ Si « je copie-colle le même prompt multiligne vingt fois par jour » vous déc
 ### Ce qu'il ne fait explicitement *pas* (limites du projet)
 
 Par conception, PromptPanel n'ajoutera **jamais** de synchronisation cloud, de collaboration d'équipe ou d'orchestration de workflows complexes. Il ne s'agit pas de fonctionnalités « pour plus tard » — elles sont hors périmètre pour toujours. L'outil est un utilitaire mono-utilisateur, purement local, et c'est là tout l'intérêt. Voir [PRD §4.2](docs/项目快贴-PRD.md) pour la justification.
-
-## Captures d'écran
-
-| Panneau rapide — `⌥2` depuis n'importe quelle app | Bibliothèque — projets, entrées, niveaux d'utilisation |
-|:---:|:---:|
-| <img src="frontend-draft/uploads/PromptPanel-panel-default.png" alt="Panneau rapide PromptPanel — lanceur de prompts IA par raccourci global avec numéros de ligne continus, recherche, épinglage, portée par projet, niveaux d'utilisation et collage depuis le presse-papiers pour ChatGPT, Claude et Cursor sur macOS" width="380"/> | <img src="frontend-draft/uploads/PromptPanel-library.png" alt="Bibliothèque PromptPanel — gestionnaire de prompts macOS local-first avec projets, entrées de prompts, snippets réutilisables, aperçu d'éditeur, tags, épinglage et nombre d'utilisations par entrée" width="380"/> |
-| Panneau réduit — empreinte compacte au-dessus de tout éditeur | Réglages — préférences, permissions, maintenance |
-| <img src="frontend-draft/uploads/PromptPanel-panel-min.png" alt="Panneau rapide réduit PromptPanel — sélecteur de prompts et lanceur de snippets priorité clavier flottant au-dessus d'une autre application macOS" width="380"/> | <img src="frontend-draft/uploads/PromptPanel-settings.png" alt="Réglages PromptPanel — préférences segmentées, permission Accessibility, enregistreur de raccourci, comportement du panneau, sauvegarde, journaux, emplacement de la base de données et santé d'exécution" width="380"/> |
 
 ## Comment ça fonctionne ?
 
@@ -175,27 +166,43 @@ Les GitHub Releases ne contiennent actuellement que des notes de version portant
 ### Configuration au premier lancement
 
 1. **Accordez la permission Accessibility** lorsque la demande apparaît. macOS s'en sert pour autoriser les frappes synthétiques `⌘V`. Sans elle, PromptPanel copie tout de même de façon fiable dans le presse-papiers ; il vous suffit de coller manuellement.
-2. **Définissez votre raccourci** dans Settings → Hotkey. La valeur par défaut actuelle est `⌥2` ; choisissez un autre raccourci s'il entre en conflit avec votre configuration.
+2. **Définissez votre raccourci** dans `设置 → 偏好 → 快捷键 → 呼出面板`. La valeur par défaut actuelle est `⌥2` ; choisissez un autre raccourci s'il entre en conflit avec votre configuration.
 3. **Créez un projet** ou commencez à ajouter des entrées à `Universal`.
 
 ## Démarrage rapide
 
+En supposant que l'app est compilée et lancée (icône visible dans la barre de menus) :
+
 ```text
-1. ⌥2              → panel appears, search field focused
-2. type "review"   → filters to your code-review prompt
-3. ↵               → content pasted into the active text field
-4. (panel hides)   → keep working
+1. Fenêtre principale → 内容库 (Bibliothèque) → ajoutez votre première entrée :
+   titre "review", corps = votre prompt de revue de code, étiquettes facultatives
+2. ⌥2              → le panneau apparaît, focus sur le champ de recherche
+3. tapez "review"  → filtre jusqu'à votre prompt de revue de code
+4. ↵               → le contenu est copié, puis collé dans le champ actif
+5. (le panneau se ferme) → vous continuez à travailler
 ```
 
-Vous pouvez changer de projet actif depuis l'intérieur du panneau sans ouvrir la fenêtre principale — au clavier uniquement, sans détour.
+### Syntaxe de recherche dans le panneau / Search syntax
+
+| Vous tapez | Ce qui se passe |
+|---|---|
+| `review` | Correspondance **par préfixe via FTS5 de SQLite** sur le titre et le contenu de l'entrée |
+| `code rev` | Chaque jeton séparé par des espaces est un terme de préfixe, combinés avec ET |
+| `#sql` | Filtre sur les entrées portant l'étiquette `sql` ; le jeton `#tag` est retiré de la requête textuelle |
+| `#sql migrate` | Filtre d'étiquette `sql` **et** correspondance textuelle `migrate` |
+| *(vide)* | Parcourt le projet courant plus `Universal`, trié par épinglage → ordre manuel → récence → nombre d'utilisations |
+
+Remarques : seul le premier jeton `#tag` sert de filtre d'étiquette, et la correspondance est exacte et sensible à la casse (`#SQL` ne correspondra pas à une étiquette `sql`) ; les résultats sont plafonnés à 100 lignes ; la correspondance textuelle est par préfixe, donc un terme pris au milieu d'un mot (ou d'une suite CJK sans espaces) ne correspondra pas.
+
+Vous pouvez changer de projet actif depuis l'intérieur du panneau sans ouvrir la fenêtre principale — au clavier uniquement, sans détour. `⌘1`–`⌘9` exécutent directement les neuf premières lignes ; `⌘C` copie sans coller ; `⌘P` épingle le panneau ; `Esc` le ferme.
 
 ## Configuration
 
 | Réglage | Emplacement | Notes |
 |---|---|---|
-| Raccourci global | Settings → Hotkey | Un seul raccourci. Comportement de bascule : la même touche ferme |
-| Thème | Settings → Appearance | Clair / sombre / suivre le système |
-| Lancement à l'ouverture de session | Settings → General | Utilise `SMAppService` |
+| Raccourci global | `设置 → 偏好 → 快捷键 → 呼出面板` | Un seul raccourci. Comportement de bascule : la même touche ferme |
+| Thème | `设置 → 偏好 → 外观 → 主题` | Clair / sombre / suivre le système |
+| Lancement à l'ouverture de session | `设置 → 权限 → 权限与启动` | Utilise `SMAppService` |
 | Canal de mise à jour | GitHub Releases (manuel) | Sparkle 2 est intégré mais désactivé tant qu'un appcast signé n'est pas hébergé ; abonnez-vous aux notifications de version et remplacez le `.app` |
 | Emplacement de la base de données | `~/Library/Application Support/PromptPanel/promptpanel.db` | SQLite mono-fichier, facile à sauvegarder |
 | Journaux | `~/Library/Logs/PromptPanel/` | Inspectés via la « Runtime Health » de la fenêtre principale |
@@ -272,7 +279,7 @@ PromptPanel/
 │   │   └── MainWindow/   # Library + Settings
 │   └── Resources/        # Info.plist, entitlements, AppIcon, Assets
 ├── Tests/PromptPanelTests/
-├── frontend-draft/       # UI source-of-truth (HTML/JSX mockups + screenshots)
+├── frontend-draft/       # UI source-of-truth (HTML/JSX mockups)
 ├── scripts/              # build-app.sh, notarize, release readiness, restore
 ├── docs/                 # public architecture, FAQ, PRD, release, ops, handoff docs
 ├── .github/              # contribution, security, conduct, issue/PR templates, CI

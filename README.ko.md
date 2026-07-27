@@ -23,8 +23,6 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 
 [FAQ](docs/FAQ.md) · [문서](docs/README.md) · [LLM index](llms.txt) · [변경 이력](CHANGELOG.md) · [기여 안내](.github/CONTRIBUTING.md)
 
-<img src="frontend-draft/uploads/PromptPanel-panel-default.png" alt="PromptPanel macOS prompt manager quick panel — global hotkey search for ChatGPT prompts, Claude prompts, Cursor snippets, and reusable AI templates" width="780" />
-
 </div>
 
 ---
@@ -40,7 +38,8 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 | 기술 스택 / Tech stack | Swift 5.10, AppKit `NSPanel`, SwiftUI, SQLite/GRDB, KeyboardShortcuts, Sparkle 2, Swift Package Manager. |
 | 빠른 시작 / Quick start | `git clone` -> `./scripts/build-app.sh` -> `open dist/PromptPanel.app`. 첫 실행 시 Accessibility 권한을 부여하면 자동 붙여넣기가 가능하며, 부여하지 않아도 클립보드에 복사됩니다. |
 | 대표 시나리오 / Use cases | ChatGPT/Claude role prompt, Cursor project context, PR review checklist, terminal command snippet, meeting notes template, client-specific response template. |
-| 제한 사항 / Limits | macOS 14+ 만 지원. 현재 릴리스에는 공증된 바이너리 패키지가 아직 없음. 클라우드 동기화 없음, 팀 협업 없음, Windows/Linux 버전 없음. 자동 붙여넣기는 macOS Accessibility 권한에 의존함. |
+| UI 언어 / UI language | **앱 인터페이스는 현재 간체 중국어만 지원**합니다(`CFBundleDevelopmentRegion = zh-Hans`, 현지화 리소스와 앱 내 언어 전환 없음). 문서는 8개 언어로 제공되며 `README.md`에 중국어→영어 UI 레이블 대응표가 있습니다. 저장하는 프롬프트 내용 자체는 언어 제한이 없습니다. |
+| 제한 사항 / Limits | macOS 14+ 만 지원. UI는 간체 중국어만 지원. 현재 릴리스에는 공증된 바이너리 패키지가 아직 없음. 클라우드 동기화 없음, 팀 협업 없음, Windows/Linux 버전 없음. 변수 템플릿 미지원. 자동 붙여넣기는 macOS Accessibility 권한에 의존함. |
 
 ## PromptPanel이란? / What is PromptPanel?
 
@@ -73,7 +72,7 @@ PromptPanel은 이 모든 것을, 여러분이 완전히 소유하는 로컬 SQL
 | 원하는 것… | PromptPanel이 제공하는 것 |
 |---|---|
 | 한 웹사이트가 아니라 **모든 앱에서** 동작하는 prompt library | 전역 단축키, 네이티브 macOS 패널, 어떤 텍스트 필드에서든 동작 |
-| **저지연 네이티브 루프** — 키 입력부터 타이핑까지 1초 미만 목표 | 단축키-포커스 < 300 ms 목표, 검색 갱신 < 100 ms 목표, 실행 < 250 ms 목표 |
+| **저지연 네이티브 루프** — 키 입력부터 타이핑까지 1초 미만 목표 | 단축키-포커스 < 300 ms 목표, 검색 갱신 < 80 ms 목표, 실행 < 250 ms 목표 |
 | 고객 A의 프롬프트가 고객 B로 새지 않도록 하는 **프로젝트 격리** | 일급(first-class) 프로젝트 + 공용 콘텐츠를 위한 내장 `Universal` 프로젝트 |
 | 민감한 프롬프트에 대한 **클라우드 종속 없음** | 로컬 SQLite. 핵심 기능에 대한 네트워크 호출 제로. 여러분의 데이터는 여러분이 소유하는 단일 파일 |
 | **조용히 실패하지 않는 자동 붙여넣기** | 자동 붙여넣기 우선, 클립보드 폴백 상시 — 붙여넣기가 차단되면 명확한 토스트 표시 |
@@ -112,14 +111,6 @@ PromptPanel은 이 모든 것을, 여러분이 완전히 소유하는 로컬 SQL
 ### 명시적으로 *하지 않는 것* (프로젝트 경계)
 
 설계상 PromptPanel은 클라우드 동기화, 팀 협업, 복잡한 워크플로 오케스트레이션을 **절대** 추가하지 않습니다. 이는 "나중에"가 아니라 영원히 범위 밖입니다. 이 도구는 단일 사용자, 로컬 전용 유틸리티이며 그것이 핵심입니다. 근거는 [PRD §4.2](docs/项目快贴-PRD.md)를 참고하세요.
-
-## 스크린샷
-
-| 빠른 패널 — 임의의 앱에서 `⌥2` | 라이브러리 — 프로젝트, 항목, 사용 횟수 등급 |
-|:---:|:---:|
-| <img src="frontend-draft/uploads/PromptPanel-panel-default.png" alt="PromptPanel quick panel — global hotkey AI prompt launcher with continuous row numbers, search, pinning, project scope, use-count tiers, and clipboard paste for ChatGPT, Claude, and Cursor on macOS" width="380"/> | <img src="frontend-draft/uploads/PromptPanel-library.png" alt="PromptPanel library — local-first macOS prompt manager with projects, prompt entries, reusable snippets, editor preview, tags, pinning, and per-entry use counts" width="380"/> |
-| 더 작은 패널 — 임의의 에디터 위에 놓이는 컴팩트한 크기 | 설정 — 환경 설정, 권한, 유지 관리 |
-| <img src="frontend-draft/uploads/PromptPanel-panel-min.png" alt="PromptPanel smaller quick panel — keyboard-first prompt picker and snippet launcher hovering over another macOS app" width="380"/> | <img src="frontend-draft/uploads/PromptPanel-settings.png" alt="PromptPanel settings — segmented preferences, Accessibility permission, hotkey recorder, panel behavior, backup, logs, database location, and runtime health" width="380"/> |
 
 ## 어떻게 동작하나요?
 
@@ -174,27 +165,43 @@ GitHub Releases는 현재 소스/문서 릴리스 노트만 담고 있으며, �
 ### 첫 실행 설정
 
 1. 안내가 나오면 **Accessibility 권한을 부여**하세요. macOS는 이를 통해 합성 `⌘V` 키 입력을 허용합니다. 권한이 없어도 PromptPanel은 여전히 클립보드에 안정적으로 복사하며, 붙여넣기만 수동으로 하면 됩니다.
-2. 설정 → Hotkey에서 **단축키를 지정**하세요. 현재 기본값은 `⌥2`이며, 설정과 충돌하면 다른 단축키를 고르세요.
+2. `设置 → 偏好 → 快捷键 → 呼出面板`에서 **단축키를 지정**하세요. 현재 기본값은 `⌥2`이며, 설정과 충돌하면 다른 단축키를 고르세요.
 3. **프로젝트를 만들거나** `Universal`에 항목 추가를 시작하세요.
 
 ## 빠른 시작
 
+앱이 빌드되어 실행 중이라는 전제하에(메뉴 막대에 아이콘이 보임):
+
 ```text
-1. ⌥2              → panel appears, search field focused
-2. type "review"   → filters to your code-review prompt
-3. ↵               → content pasted into the active text field
-4. (panel hides)   → keep working
+1. 메인 창 → 内容库 (라이브러리) → 첫 항목 추가:
+   제목 "review", 본문에 코드 리뷰 프롬프트, 태그는 선택
+2. ⌥2              → 패널이 나타나고 검색 필드에 포커스
+3. "review" 입력   → 코드 리뷰 프롬프트로 필터링
+4. ↵               → 클립보드에 복사된 뒤 활성 텍스트 필드에 붙여넣기
+5. (패널이 닫힘)   → 계속 작업
 ```
 
-메인 창을 열지 않고도 패널 안에서 활성 프로젝트를 전환할 수 있습니다 — 키보드만으로, 우회 없이.
+### 패널 검색 문법 / Search syntax
+
+| 입력 | 동작 |
+|---|---|
+| `review` | 항목 제목과 본문에 대한 SQLite **FTS5 접두사 매칭** |
+| `code rev` | 공백으로 구분된 각 토큰이 접두사 검색어가 되며 AND로 결합됨 |
+| `#sql` | `sql` 태그가 붙은 항목만 필터링. `#tag` 토큰은 텍스트 질의에서 제외됨 |
+| `#sql migrate` | 태그 `sql` **그리고** 텍스트 `migrate` 일치 |
+| *(비움)* | 현재 프로젝트와 `Universal`을 고정 → 수동 순서 → 최근순 → 사용 횟수로 정렬해 표시 |
+
+참고: 태그 필터로 사용되는 것은 첫 번째 `#tag` 토큰뿐이며 대소문자를 구분하는 정확 일치입니다(`#SQL`은 `sql` 태그에 일치하지 않음). 검색 결과는 최대 100건이고, 텍스트 매칭은 접두사 기반이라 단어 중간(또는 공백 없는 CJK 문자열 중간)에서 잘라낸 조각은 일치하지 않습니다.
+
+메인 창을 열지 않고도 패널 안에서 활성 프로젝트를 전환할 수 있습니다 — 키보드만으로, 우회 없이. `⌘1`–`⌘9`는 상위 9개 항목을 바로 실행하고, `⌘C`는 붙여넣기 없이 복사, `⌘P`는 패널 고정, `Esc`는 닫기입니다.
 
 ## 구성
 
 | 설정 | 위치 | 비고 |
 |---|---|---|
-| 전역 단축키 | 설정 → Hotkey | 단축키 하나. 토글 동작: 같은 키로 닫힘 |
-| 테마 | 설정 → Appearance | 라이트 / 다크 / 시스템 따르기 |
-| 로그인 시 실행 | 설정 → General | `SMAppService` 사용 |
+| 전역 단축키 | `设置 → 偏好 → 快捷键 → 呼出面板` | 단축키 하나. 토글 동작: 같은 키로 닫힘 |
+| 테마 | `设置 → 偏好 → 外观 → 主题` | 라이트 / 다크 / 시스템 따르기 |
+| 로그인 시 실행 | `设置 → 权限 → 权限与启动` | `SMAppService` 사용 |
 | 업데이트 채널 | GitHub Releases (수동) | Sparkle 2가 연결되어 있으나 서명된 appcast가 호스팅되기 전까지는 비활성. 릴리스 알림을 구독하고 `.app`을 교체하세요 |
 | 데이터베이스 위치 | `~/Library/Application Support/PromptPanel/promptpanel.db` | 단일 파일 SQLite, 백업이 쉬움 |
 | 로그 | `~/Library/Logs/PromptPanel/` | 메인 창의 "Runtime Health"에서 확인 |
@@ -271,7 +278,7 @@ PromptPanel/
 │   │   └── MainWindow/   # Library + Settings
 │   └── Resources/        # Info.plist, entitlements, AppIcon, Assets
 ├── Tests/PromptPanelTests/
-├── frontend-draft/       # UI source-of-truth (HTML/JSX mockups + screenshots)
+├── frontend-draft/       # UI source-of-truth (HTML/JSX mockups)
 ├── scripts/              # build-app.sh, notarize, release readiness, restore
 ├── docs/                 # public architecture, FAQ, PRD, release, ops, handoff docs
 ├── .github/              # contribution, security, conduct, issue/PR templates, CI

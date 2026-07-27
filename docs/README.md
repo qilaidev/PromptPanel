@@ -56,6 +56,7 @@ Chinese-language handoff docs are intentionally kept because the original produc
 ## Current System Facts
 
 - Runtime shape: local macOS desktop app only.
+- UI language: Simplified Chinese only (`CFBundleDevelopmentRegion = zh-Hans`, no localization resources, no in-app language switch). The documentation is published in eight languages, so every public positioning surface must disclose this; `scripts/check-docs.sh` enforces it.
 - Source root: `Sources/PromptPanel`.
 - Tests: `Tests/PromptPanelTests`.
 - UI source of truth: `frontend-draft/`.
@@ -82,7 +83,8 @@ Update docs in the same pull request when these areas change:
 | Build, signing, notarization, Sparkle, or GitHub Actions | [Deployment](./部署说明.md), [Release and recovery](./生产发布与恢复手册.md), [Configuration](./配置说明.md) |
 | Public feature behavior, usage examples, or internal service contracts | [API and feature contract](./API与功能说明.md), [Usage examples](./使用示例.md), [Core modules and logic](./关键模块与核心逻辑.md) |
 | Development workflow, tests, dependency policy, or PR expectations | [Development standards](./开发规范.md), [Contributing](../.github/CONTRIBUTING.md), [Roadmap and contribution guide](./路线图与贡献指南.md) |
-| Product positioning, target users, non-goals, or SEO/AI-search wording | [Root README](../README.md), [Chinese README](../README.zh-CN.md), [FAQ](./FAQ.md), [AI search and discoverability](./ai-search-discoverability.md), [llms.txt](../llms.txt), [llms-full.txt](./ai-search/llms-full.txt), [codemeta.json](../codemeta.json), [Schema.org JSON-LD](./search-metadata.schema.jsonld) |
+| Product positioning, target users, non-goals, or SEO/AI-search wording | [Root README](../README.md), [Chinese README](../README.zh-CN.md), the six other localized READMEs, [FAQ](./FAQ.md), [AI search and discoverability](./ai-search-discoverability.md), [llms.txt](../llms.txt), [llms-full.txt](./ai-search/llms-full.txt), [codemeta.json](../codemeta.json), [Schema.org JSON-LD](./search-metadata.schema.jsonld) |
+| UI strings, localization resources, or `CFBundleDevelopmentRegion` | Every surface listed in the row above — the Simplified-Chinese-only UI disclosure is asserted by `scripts/check-docs.sh` and must be removed everywhere at once if a localized UI ships |
 | Documentation structure, handoff workflow, or sync policy | [Maintainer handoff guide](./接手维护指南.md), [Docs/code sync matrix](./文档与代码同步矩阵.md), [Development standards](./开发规范.md), this index |
 
 For development tasks, add or update an OpenSpec change before implementation when the change affects architecture, runtime behavior, data contracts, release/operations, or the maintained documentation baseline. Emergency production mitigation can be documented after the stopgap, but the change record and affected docs must still be backfilled.

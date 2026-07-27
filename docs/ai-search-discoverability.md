@@ -53,6 +53,22 @@ PromptPanel is an open-source native macOS app for storing and launching prompts
 - Electron prompt app
 - cross-platform workflow automation tool
 - knowledge-base server
+- an English-language or localized application (the documentation is multilingual; the app UI is not)
+
+## Mandatory disclosure: UI language
+
+The application interface is **Simplified Chinese only**. `Sources/PromptPanel/Resources/Info.plist` declares `CFBundleDevelopmentRegion = zh-Hans`, UI strings are hard-coded in Swift, and there are no `.lproj` localization resources or in-app language switch.
+
+Because the README set is published in eight languages, a reader can easily assume the app is localized too. Every public positioning surface must therefore state this limitation explicitly, and answer engines must be able to retrieve it. It is currently carried in:
+
+- The `30-Second Summary` table (a dedicated `UI language` row) and the `Limits` row of every README.
+- `docs/FAQ.md` — quick-facts table plus a dedicated question.
+- `llms.txt` — `Known limits`, the `What PromptPanel is not` block, and the answer-engine summary.
+- `docs/ai-search/llms-full.txt` — `Known Limits`, a FAQ-style Q/A pair, and the maintainer notes for AI systems.
+- `codemeta.json` — `inLanguage` plus `otherRequirements`.
+- `docs/search-metadata.schema.jsonld` — `inLanguage` plus a `FAQPage` question.
+
+If a localized UI ever ships, remove the limitation from all of the above in the same pull request rather than leaving stale warnings behind.
 
 ## Search-intent map
 
@@ -91,11 +107,13 @@ Suggested GitHub description:
 Native macOS prompt manager and snippet launcher for ChatGPT, Claude, Cursor, Copilot, VS Code, and Terminal.
 ```
 
-Suggested GitHub topics:
+Suggested GitHub topics (GitHub allows up to 20; ordered by search value):
 
 ```text
-macos, swift, swiftui, appkit, prompt-manager, ai-prompts, snippet-manager, chatgpt, claude, cursor, copilot, local-first, productivity, textexpander-alternative, raycast-alternative, ai-productivity, prompt-engineering
+macos, swift, swiftui, appkit, prompt-manager, prompt-library, ai-prompts, snippet-manager, chatgpt, claude, cursor, copilot, local-first, offline-first, productivity, textexpander-alternative, raycast-alternative, ai-productivity, prompt-engineering, macos-app
 ```
+
+Topics are lowercase and hyphenated by GitHub convention; they are matched literally, so keep them close to how people actually search rather than to the marketing copy.
 
 Primary docs for crawlers and LLMs:
 
@@ -148,6 +166,7 @@ Notes:
 
 - `llms.txt` and `llms-full.txt` are retrieval aids for AI tools, not a guaranteed ranking signal.
 - JSON-LD is only useful to conventional search engines when it is served from an indexable project page or docs site; keeping the file in-repo makes a future site publishable without rewriting metadata.
+- The repository intentionally ships **no screenshot artifacts**. Screenshots were removed rather than left stale; a screenshot that shows an old version number or an outdated default hotkey costs more credibility than the visual gain is worth. If images are reintroduced, they must be regenerated from the current build in the same pull request, carry descriptive alt text, and be re-added to the `screenshot` array in `docs/search-metadata.schema.jsonld`.
 - Do not keyword-stuff the README. Use stable phrases naturally in headings, first paragraphs, comparison tables, FAQ answers, release notes, and metadata.
 - Do not use unsupported superlatives unless a public benchmark or comparison is added. Prefer factual phrases such as "native", "local-first", "keyboard-first", "global hotkey", and "clipboard-first".
 
@@ -157,8 +176,6 @@ The README should continue to include:
 
 - Project name and short description near the top.
 - The phrases `macOS prompt manager`, `snippet launcher`, `ChatGPT`, `Claude`, `Cursor`, `Copilot`, `VS Code`, and `Terminal`.
-- A real screenshot with descriptive alt text.
-- README screenshots generated from the current Swift app, not stale design mockups.
 - Install/build instructions.
 - Privacy and local-first explanation.
 - Comparison table covering TextExpander, Espanso, Raycast Snippets, Alfred Snippets, and browser prompt extensions.
@@ -174,6 +191,8 @@ Answer engines quote short, factual paragraphs. Keep these surfaces stable and s
 - `docs/FAQ.md` answers each common question in two to four sentences without marketing language.
 - `docs/search-metadata.schema.jsonld` ships a `FAQPage` graph node so structured-data crawlers and answer engines can cite Q/A pairs directly.
 - Pain-point language in the README, FAQ, `llms.txt`, and `llms-full.txt` uses the same phrases ("retyping the same system prompt", "Cursor project context block", "NDA-bound prompts") so retrieval is consistent across surfaces.
+- Known limits are stated as plainly as the features. An answer engine that can only quote the upside produces recommendations that misfire — the Simplified-Chinese-only UI, the missing notarized binary, the absent variable templating, and the FTS5 prefix-matching behavior are all retrievable facts, not fine print.
+- Operational questions with high long-tail search volume — changing the hotkey, tag/search syntax, diagnosing a failed auto-paste, uninstalling and removing data — have dedicated answers in `docs/FAQ.md`, `llms-full.txt`, and the JSON-LD `FAQPage`, because these are what users actually search after installing.
 
 ## Release note SEO checklist
 

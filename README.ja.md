@@ -24,8 +24,6 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 
 [FAQ](docs/FAQ.md) · [ドキュメント](docs/README.md) · [LLM index](llms.txt) · [変更履歴](CHANGELOG.md) · [コントリビュート](.github/CONTRIBUTING.md)
 
-<img src="frontend-draft/uploads/PromptPanel-panel-default.png" alt="PromptPanel macOS prompt manager quick panel — global hotkey search for ChatGPT prompts, Claude prompts, Cursor snippets, and reusable AI templates" width="780" />
-
 </div>
 
 ---
@@ -41,7 +39,8 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 | 技術スタック / Tech stack | Swift 5.10, AppKit `NSPanel`, SwiftUI, SQLite/GRDB, KeyboardShortcuts, Sparkle 2, Swift Package Manager。 |
 | クイックスタート / Quick start | `git clone` -> `./scripts/build-app.sh` -> `open dist/PromptPanel.app`。初回起動で Accessibility 権限を付与すれば自動貼り付けが可能。付与しなくてもクリップボードへのコピーは動作する。 |
 | 典型的な用途 / Use cases | ChatGPT/Claude role prompt、Cursor project context、PR review checklist、terminal command snippet、meeting notes template、client-specific response template。 |
-| 制限事項 / Limits | macOS 14+ のみ対応。現在の Release には公証済みバイナリはまだ含まれない。クラウド同期、チームコラボレーション、Windows/Linux 版はなし。自動貼り付けは macOS Accessibility 権限に依存する。 |
+| UI 言語 / UI language | **アプリの UI は現在、簡体字中国語のみ**です（`CFBundleDevelopmentRegion = zh-Hans`、ローカライズリソースおよびアプリ内の言語切り替えはありません）。ドキュメントは 8 言語で提供され、`README.md` に中国語→英語の UI ラベル対応表があります。保存するプロンプトの内容は言語を問いません。 |
+| 制限事項 / Limits | macOS 14+ のみ対応。UI は簡体字中国語のみ。現在の Release には公証済みバイナリはまだ含まれない。クラウド同期、チームコラボレーション、Windows/Linux 版はなし。変数テンプレートは未対応。自動貼り付けは macOS Accessibility 権限に依存する。 |
 
 ## PromptPanel とは？ / What is PromptPanel?
 
@@ -74,7 +73,7 @@ PromptPanel はそのすべてを、あなたが完全に所有するローカ�
 | こうしたい… | PromptPanel が提供するもの |
 |---|---|
 | 1 つのウェブサイトだけでなく、**あらゆるアプリ横断** で動くプロンプトライブラリ | グローバルホットキー、ネイティブ macOS パネル、任意のテキストフィールドで動作 |
-| **低レイテンシのネイティブループ** — キー押下から入力まで 1 秒未満を目標 | ホットキーからフォーカスまで < 300 ms、検索更新 < 100 ms、実行 < 250 ms を目標 |
+| **低レイテンシのネイティブループ** — キー押下から入力まで 1 秒未満を目標 | ホットキーからフォーカスまで < 300 ms、検索更新 < 80 ms、実行 < 250 ms を目標 |
 | クライアント A のプロンプトがクライアント B に漏れないための **プロジェクト分離** | ファーストクラスの projects と、共有コンテンツ用の組み込み `Universal` プロジェクト |
 | 機密性の高いプロンプトを **クラウドに囲い込まれない** | ローカル SQLite。コア機能でのネットワーク通信ゼロ。データはあなたが所有する単一ファイル |
 | **無言で失敗しない自動貼り付け** | 自動貼り付けを優先、クリップボードフォールバックは常に有効。貼り付けがブロックされたら明確なトースト表示 |
@@ -113,14 +112,6 @@ PromptPanel はそのすべてを、あなたが完全に所有するローカ�
 ### あえて *やらない* こと（プロジェクトの境界）
 
 設計上、PromptPanel はクラウド同期、チームコラボレーション、複雑なワークフローのオーケストレーションを **決して** 追加しません。これらは「後回し」ではなく、永久にスコープ外です。このツールはシングルユーザーでローカル専用のユーティリティであり、それこそが本質です。理由については [PRD §4.2](docs/项目快贴-PRD.md) を参照してください。
-
-## スクリーンショット / Screenshots
-
-| クイックパネル — 任意のアプリから `⌥2` | ライブラリ — プロジェクト、エントリ、使用回数の階層 |
-|:---:|:---:|
-| <img src="frontend-draft/uploads/PromptPanel-panel-default.png" alt="PromptPanel quick panel — global hotkey AI prompt launcher with continuous row numbers, search, pinning, project scope, use-count tiers, and clipboard paste for ChatGPT, Claude, and Cursor on macOS" width="380"/> | <img src="frontend-draft/uploads/PromptPanel-library.png" alt="PromptPanel library — local-first macOS prompt manager with projects, prompt entries, reusable snippets, editor preview, tags, pinning, and per-entry use counts" width="380"/> |
-| 小型パネル — 任意のエディタ上でコンパクトな占有面積 | 設定 — 環境設定、権限、メンテナンス |
-| <img src="frontend-draft/uploads/PromptPanel-panel-min.png" alt="PromptPanel smaller quick panel — keyboard-first prompt picker and snippet launcher hovering over another macOS app" width="380"/> | <img src="frontend-draft/uploads/PromptPanel-settings.png" alt="PromptPanel settings — segmented preferences, Accessibility permission, hotkey recorder, panel behavior, backup, logs, database location, and runtime health" width="380"/> |
 
 ## どのように動作するか？ / How does it work?
 
@@ -175,27 +166,43 @@ GitHub Releases には現在、ソース/ドキュメントのリリースノー
 ### 初回起動時のセットアップ
 
 1. **Accessibility 権限を付与する** — プロンプトが表示されたら許可する。macOS はこれを使って合成 `⌘V` キーストロークを許可します。権限がなくても PromptPanel は確実にクリップボードへコピーします。手動で貼り付けるだけです。
-2. **ホットキーを設定する** — 設定 → Hotkey で行います。現在の既定値は `⌥2` です。環境と競合する場合は別のショートカットを選んでください。
+2. **ホットキーを設定する** — `设置 → 偏好 → 快捷键 → 呼出面板` で行います。現在の既定値は `⌥2` です。環境と競合する場合は別のショートカットを選んでください。
 3. **プロジェクトを作成する** か、`Universal` にエントリを追加し始めます。
 
 ## クイックスタート / Quick start
 
+アプリがビルド済みで起動している（メニューバーにアイコンが見える）前提で：
+
 ```text
-1. ⌥2              → panel appears, search field focused
-2. type "review"   → filters to your code-review prompt
-3. ↵               → content pasted into the active text field
-4. (panel hides)   → keep working
+1. メインウィンドウ → 内容库 (ライブラリ) → 最初のエントリを追加：
+   タイトル "review"、本文にコードレビュー用プロンプト、タグは任意
+2. ⌥2              → パネルが表示され、検索欄にフォーカス
+3. "review" と入力 → コードレビュー用プロンプトに絞り込まれる
+4. ↵               → クリップボードに書き込まれ、アクティブな入力欄に貼り付けられる
+5. （パネルが閉じる）→ 作業を続行
 ```
 
-メインウィンドウを開かずに、パネル内からアクティブなプロジェクトを切り替えられます。キーボードのみで、回り道はありません。
+### パネル内の検索構文 / Search syntax
+
+| 入力 | 動作 |
+|---|---|
+| `review` | エントリのタイトルと本文に対する SQLite **FTS5 前方一致検索** |
+| `code rev` | 空白区切りの各トークンが前方一致語となり、AND で結合される |
+| `#sql` | `sql` タグの付いたエントリだけに絞り込む。`#tag` トークンはテキスト検索から除外される |
+| `#sql migrate` | タグ `sql` **かつ** テキストが `migrate` に一致 |
+| *(空)* | 現在のプロジェクトと `Universal` を、ピン → 手動順 → 最近使用 → 使用回数 の順で一覧表示 |
+
+注意：タグフィルタとして使われるのは最初の `#tag` トークンのみで、大文字小文字を区別した完全一致です（`#SQL` は `sql` タグに一致しません）。検索結果は最大 100 件、テキスト照合は前方一致なので、単語の途中（や空白のない CJK 文字列の途中）から取った語句は一致しません。
+
+メインウィンドウを開かずに、パネル内からアクティブなプロジェクトを切り替えられます。キーボードのみで、回り道はありません。`⌘1`–`⌘9` で上位 9 件を直接実行、`⌘C` は貼り付けずにコピー、`⌘P` はパネルを固定、`Esc` で閉じます。
 
 ## 設定 / Configuration
 
 | 設定 | 場所 | 備考 |
 |---|---|---|
-| グローバルホットキー | 設定 → Hotkey | ショートカットは 1 つ。トグル動作: 同じキーで閉じる |
-| テーマ | 設定 → Appearance | ライト / ダーク / システムに追従 |
-| ログイン時に起動 | 設定 → General | `SMAppService` を使用 |
+| グローバルホットキー | `设置 → 偏好 → 快捷键 → 呼出面板` | ショートカットは 1 つ。トグル動作: 同じキーで閉じる |
+| テーマ | `设置 → 偏好 → 外观 → 主题` | ライト / ダーク / システムに追従 |
+| ログイン時に起動 | `设置 → 权限 → 权限与启动` | `SMAppService` を使用 |
 | アップデートチャネル | GitHub Releases（手動） | Sparkle 2 は組み込み済みだが、署名済み appcast がホストされるまで無効。リリース通知を購読し、`.app` を差し替える |
 | データベースの場所 | `~/Library/Application Support/PromptPanel/promptpanel.db` | 単一ファイルの SQLite、バックアップが容易 |
 | ログ | `~/Library/Logs/PromptPanel/` | メインウィンドウの「Runtime Health」から確認 |
@@ -272,7 +279,7 @@ PromptPanel/
 │   │   └── MainWindow/   # Library + Settings
 │   └── Resources/        # Info.plist, entitlements, AppIcon, Assets
 ├── Tests/PromptPanelTests/
-├── frontend-draft/       # UI source-of-truth (HTML/JSX mockups + screenshots)
+├── frontend-draft/       # UI source-of-truth (HTML/JSX mockups)
 ├── scripts/              # build-app.sh, notarize, release readiness, restore
 ├── docs/                 # public architecture, FAQ, PRD, release, ops, handoff docs
 ├── .github/              # contribution, security, conduct, issue/PR templates, CI

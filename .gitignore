@@ -21,3 +21,5 @@ DerivedData/
 *.db
 *.sqlite*
 
+# UI QA screenshots are regenerable build output (scripts/capture-ui-qa.sh); never commit them.
+docs/ui-qa/latest/

@@ -74,7 +74,7 @@ This repo has an unusual rule: **`frontend-draft/` is the visual source of truth
 If you propose a UI change:
 
 1. Update `frontend-draft/components/<view>.jsx` (or `index.html` if it's a layout-level change) with the new structure.
-2. Add or update the relevant screenshot in `frontend-draft/uploads/` if the change is visual.
+2. Make the visual change visible in the mockup itself — the repository no longer stores screenshot artifacts. Run `./scripts/capture-ui-qa.sh` locally if you need rendered images for review; its output is git-ignored.
 3. Then update the Swift view to match.
 4. In the PR, mention the JSX file your Swift change is aligning to.
 

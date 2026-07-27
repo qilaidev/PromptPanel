@@ -9,7 +9,7 @@
     "PromptPanel Claude prompt library",
     "PromptPanel Cursor snippet manager"
   ],
-  "description": "PromptPanel (项目快贴) is an open-source, local-first native macOS prompt manager, AI prompt launcher, and snippet launcher for ChatGPT, Claude, Cursor, Copilot, VS Code, Terminal, browser, and ordinary text-field workflows. It stores reusable prompts, code snippets, templates, and instructions locally in SQLite, opens a keyboard-first global hotkey panel, writes selected content to the clipboard first, and attempts automatic paste through macOS Accessibility when allowed.",
+  "description": "PromptPanel (项目快贴) is an open-source, local-first native macOS prompt manager, AI prompt launcher, and snippet launcher for ChatGPT, Claude, Cursor, Copilot, VS Code, Terminal, browser, and ordinary text-field workflows. It stores reusable prompts, code snippets, templates, and instructions locally in SQLite, opens a keyboard-first global hotkey panel, writes selected content to the clipboard first, and attempts automatic paste through macOS Accessibility when allowed. The application interface is currently Simplified Chinese only; the documentation is published in eight languages.",
   "version": "1.1.1",
   "datePublished": "2026-07-14",
   "codeRepository": "https://github.com/tytsxai/PromptPanel",
@@ -19,7 +19,11 @@
   "runtimePlatform": "macOS",
   "operatingSystem": "macOS 14 or later",
   "applicationCategory": "DeveloperApplication",
+  "applicationSubCategory": "Prompt manager and snippet launcher",
   "applicationSuite": "AI productivity tools",
+  "developmentStatus": "active",
+  "inLanguage": "zh-Hans",
+  "softwareHelp": "https://github.com/tytsxai/PromptPanel/blob/main/docs/FAQ.md",
   "releaseNotes": "https://github.com/tytsxai/PromptPanel/blob/main/CHANGELOG.md",
   "readme": "https://github.com/tytsxai/PromptPanel/blob/main/README.md",
   "downloadUrl": "https://github.com/tytsxai/PromptPanel/releases",
@@ -89,6 +93,11 @@
     "macOS 14+",
     "Xcode 15+ for source builds",
     "Swift 5.10"
+  ],
+  "otherRequirements": [
+    "macOS Accessibility permission is required only for automatic paste; clipboard fallback works without it",
+    "The application interface is Simplified Chinese only (CFBundleDevelopmentRegion = zh-Hans); there are no localization resources or in-app language switch",
+    "GitHub Releases do not attach a notarized binary asset yet; the supported install path is building from source"
   ],
   "author": [
     {

@@ -24,8 +24,6 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 
 [FAQ](docs/FAQ.md) · [Dokumentation](docs/README.md) · [LLM index](llms.txt) · [Änderungsprotokoll](CHANGELOG.md) · [Mitwirken](.github/CONTRIBUTING.md)
 
-<img src="frontend-draft/uploads/PromptPanel-panel-default.png" alt="PromptPanel macOS-Prompt-Manager Schnellpanel — globale Tastenkürzel-Suche für ChatGPT-Prompts, Claude-Prompts, Cursor-Snippets und wiederverwendbare AI-Templates" width="780" />
-
 </div>
 
 ---
@@ -37,11 +35,12 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 | Was es ist / What it is | Ein quelloffener, lokal-orientierter macOS-Prompt-Manager und Snippet-Launcher, der über ein globales Tastenkürzel ein natives Panel aufruft, um wiederverwendbaren Text zu durchsuchen und einzufügen. |
 | Welches Problem gelöst wird / Problem solved | Nutzer, die häufig ChatGPT, Claude, Cursor, Copilot, VS Code und Terminal verwenden, müssen nicht mehr ständig Notizen durchwühlen oder denselben System-Prompt, Projektkontext oder dieselbe Befehlsvorlage kopieren. |
 | Für wen / Audience | AI-Heavy-User, Entwickler, Prompt-Engineers, Technical Writer, PMs, Berater und unabhängige Entwickler, die ihre Prompt library projektweise trennen müssen. |
-| Kernfunktionen / Core features | Globales Tastenkürzel, Sofortsuche, Projekttrennung, `Universal / 通用项目`, `#tag`-Filter, Zwischenablage-Priorität, Accessibility-Auto-Paste, Ausführungsprotokoll, JSON/Markdown-Import/-Export. |
+| Kernfunktionen / Core features | Globales Tastenkürzel, Sofortsuche, Projekttrennung, `Universal`-Projekt (in der App: `通用项目`), `#tag`-Filter, Zwischenablage-Priorität, Accessibility-Auto-Paste, Ausführungsprotokoll, JSON/Markdown-Import/-Export. |
 | Tech-Stack / Tech stack | Swift 5.10, AppKit `NSPanel`, SwiftUI, SQLite/GRDB, KeyboardShortcuts, Sparkle 2, Swift Package Manager. |
 | Schnellstart / Quick start | `git clone` -> `./scripts/build-app.sh` -> `open dist/PromptPanel.app`. Nach Erteilung der Accessibility-Berechtigung beim ersten Start ist Auto-Paste möglich; auch ohne Berechtigung wird in die Zwischenablage kopiert. |
 | Typische Szenarien / Use cases | ChatGPT/Claude Role-Prompt, Cursor Project-Context, PR-Review-Checkliste, Terminal-Command-Snippet, Meeting-Notes-Template, kundenspezifisches Antwort-Template. |
-| Einschränkungen / Limits | Nur macOS 14+; das aktuelle Release enthält noch kein notarisiertes Binary-Paket; keine Cloud-Synchronisierung, keine Team-Zusammenarbeit, keine Windows-/Linux-Version; Auto-Paste erfordert die macOS-Accessibility-Berechtigung. |
+| UI-Sprache / UI language | **Die App-Oberfläche ist derzeit ausschließlich auf vereinfachtem Chinesisch** (`CFBundleDevelopmentRegion = zh-Hans`; keine Lokalisierungsressourcen, keine Sprachumschaltung in der App). Die Dokumentation liegt in 8 Sprachen vor, und `README.md` enthält eine Zuordnungstabelle Chinesisch→Englisch für die UI-Beschriftungen. Die von dir gespeicherten Prompt-Inhalte sind sprachunabhängig. |
+| Einschränkungen / Limits | Nur macOS 14+; Oberfläche nur auf vereinfachtem Chinesisch; das aktuelle Release enthält noch kein notarisiertes Binary-Paket; keine Cloud-Synchronisierung, keine Team-Zusammenarbeit, keine Windows-/Linux-Version; keine Variablen-Templates; Auto-Paste erfordert die macOS-Accessibility-Berechtigung. |
 
 ## Was ist PromptPanel? / What is PromptPanel?
 
@@ -74,7 +73,7 @@ Alles andere dient dem Zweck, diese Schleife schnell, vorhersehbar und niemals v
 | Du willst … | PromptPanel bietet dir |
 |---|---|
 | Eine Prompt-Bibliothek, die **in jeder App** funktioniert, nicht nur auf einer Website | Globales Tastenkürzel, natives macOS-Panel, funktioniert in jedem Textfeld |
-| **Latenzarme native Schleife** — Sub-Sekunden-Ziel von Tastendruck bis zum Tippen | Ziel: < 300 ms Tastenkürzel-bis-Fokus, < 100 ms Suchaktualisierung, < 250 ms Ausführung |
+| **Latenzarme native Schleife** — Sub-Sekunden-Ziel von Tastendruck bis zum Tippen | Ziel: < 300 ms Tastenkürzel-bis-Fokus, < 80 ms Suchaktualisierung, < 250 ms Ausführung |
 | **Projekttrennung**, damit die Prompts von Kunde A nicht zu Kunde B durchsickern | Erstklassige Projekte + ein eingebautes `Universal`-Projekt für gemeinsame Inhalte |
 | **Kein Cloud-Lock-in** für sensible Prompts | Lokales SQLite. Null Netzwerkaufrufe für Kernfunktionen. Deine Daten sind eine einzige Datei, die dir gehört |
 | **Auto-Paste, das nicht stillschweigend fehlschlägt** | Zuerst Auto-Paste, immer Fallback auf die Zwischenablage — und ein klarer Hinweis (Toast), falls das Einfügen blockiert wurde |
@@ -113,14 +112,6 @@ Wenn „Ich kopiere denselben mehrzeiligen Prompt zwanzigmal am Tag" auf dich zu
 ### Was ausdrücklich *nicht* getan wird (Projektgrenzen)
 
 Konstruktionsbedingt wird PromptPanel **niemals** Cloud-Synchronisierung, Team-Zusammenarbeit oder komplexe Workflow-Orchestrierung hinzufügen. Das ist kein „später" — es ist für immer außerhalb des Umfangs. Das Tool ist ein Einzelnutzer-, rein lokales Dienstprogramm, und genau das ist der Sinn. Siehe [PRD §4.2](docs/项目快贴-PRD.md) für die Begründung.
-
-## Screenshots
-
-| Schnellpanel — `⌥2` aus jeder App | Bibliothek — Projekte, Einträge, Nutzungshäufigkeits-Stufen |
-|:---:|:---:|
-| <img src="frontend-draft/uploads/PromptPanel-panel-default.png" alt="PromptPanel Schnellpanel — globaler Tastenkürzel-AI-Prompt-Launcher mit fortlaufenden Zeilennummern, Suche, Anheften, Projekt-Scope, Nutzungshäufigkeits-Stufen und Zwischenablage-Einfügen für ChatGPT, Claude und Cursor auf macOS" width="380"/> | <img src="frontend-draft/uploads/PromptPanel-library.png" alt="PromptPanel Bibliothek — lokal-orientierter macOS-Prompt-Manager mit Projekten, Prompt-Einträgen, wiederverwendbaren Snippets, Editor-Vorschau, Tags, Anheften und Nutzungszählern pro Eintrag" width="380"/> |
-| Kleineres Panel — kompakter Fußabdruck über jedem Editor | Einstellungen — Präferenzen, Berechtigungen, Wartung |
-| <img src="frontend-draft/uploads/PromptPanel-panel-min.png" alt="PromptPanel kleineres Schnellpanel — tastaturorientierte Prompt-Auswahl und Snippet-Launcher, der über einer anderen macOS-App schwebt" width="380"/> | <img src="frontend-draft/uploads/PromptPanel-settings.png" alt="PromptPanel Einstellungen — segmentierte Präferenzen, Accessibility-Berechtigung, Tastenkürzel-Rekorder, Panel-Verhalten, Backup, Logs, Datenbank-Speicherort und Laufzeit-Zustand" width="380"/> |
 
 ## Wie funktioniert es?
 
@@ -175,27 +166,43 @@ GitHub Releases enthalten derzeit nur Quellcode-/Dokumentations-Release-Notes; e
 ### Einrichtung beim ersten Start
 
 1. **Erteile die Accessibility-Berechtigung**, wenn du dazu aufgefordert wirst. macOS nutzt sie, um synthetische `⌘V`-Tastenanschläge zuzulassen. Ohne sie kopiert PromptPanel weiterhin zuverlässig in die Zwischenablage; du fügst dann nur manuell ein.
-2. **Lege dein Tastenkürzel** unter Settings → Hotkey fest. Der aktuelle Standard ist `⌥2`; wähle ein anderes Kürzel, falls es mit deinem Setup kollidiert.
+2. **Lege dein Tastenkürzel** unter `设置 → 偏好 → 快捷键 → 呼出面板` fest. Der aktuelle Standard ist `⌥2`; wähle ein anderes Kürzel, falls es mit deinem Setup kollidiert.
 3. **Erstelle ein Projekt** oder beginne, Einträge zu `Universal` hinzuzufügen.
 
 ## Schnellstart
 
+Vorausgesetzt, die App ist gebaut und läuft (Menüleisten-Symbol sichtbar):
+
 ```text
-1. ⌥2              → panel appears, search field focused
-2. type "review"   → filters to your code-review prompt
-3. ↵               → content pasted into the active text field
-4. (panel hides)   → keep working
+1. Hauptfenster → 内容库 (Bibliothek) → ersten Eintrag anlegen:
+   Titel "review", Inhalt = dein Code-Review-Prompt, Tags optional
+2. ⌥2              → Panel erscheint, Suchfeld fokussiert
+3. "review" tippen → filtert auf deinen Code-Review-Prompt
+4. ↵               → Inhalt wird kopiert und ins aktive Textfeld eingefügt
+5. (Panel schließt) → weiterarbeiten
 ```
 
-Du kannst das aktive Projekt direkt im Panel wechseln, ohne das Hauptfenster zu öffnen — nur mit der Tastatur, ohne Umweg.
+### Suchsyntax im Panel / Search syntax
+
+| Du tippst | Was passiert |
+|---|---|
+| `review` | **FTS5-Präfixsuche** von SQLite über Titel und Inhalt des Eintrags |
+| `code rev` | Jedes durch Leerzeichen getrennte Token ist ein Präfixterm, mit UND verknüpft |
+| `#sql` | Filtert auf Einträge mit dem Tag `sql`; das `#tag`-Token wird aus der Textsuche entfernt |
+| `#sql migrate` | Tag-Filter `sql` **und** Texttreffer `migrate` |
+| *(leer)* | Durchsucht das aktuelle Projekt plus `Universal`, sortiert nach Anheften → manuelle Reihenfolge → Aktualität → Nutzungshäufigkeit |
+
+Hinweise: Nur das erste `#tag`-Token wirkt als Tag-Filter, und es trifft exakt und case-sensitiv (`#SQL` trifft kein `sql`-Tag); Suchergebnisse sind auf 100 Zeilen begrenzt; der Textabgleich ist präfixbasiert, ein Begriff aus der Mitte eines Wortes (oder einer CJK-Folge ohne Leerzeichen) trifft also nicht.
+
+Du kannst das aktive Projekt direkt im Panel wechseln, ohne das Hauptfenster zu öffnen — nur mit der Tastatur, ohne Umweg. `⌘1`–`⌘9` führen die ersten neun Zeilen direkt aus; `⌘C` kopiert ohne Einfügen; `⌘P` fixiert das Panel; `Esc` schließt es.
 
 ## Konfiguration
 
 | Einstellung | Ort | Hinweise |
 |---|---|---|
-| Globales Tastenkürzel | Settings → Hotkey | Ein Kürzel. Umschaltverhalten: dieselbe Taste schließt |
-| Theme | Settings → Appearance | Hell / Dunkel / System folgen |
-| Start bei der Anmeldung | Settings → General | Nutzt `SMAppService` |
+| Globales Tastenkürzel | `设置 → 偏好 → 快捷键 → 呼出面板` | Ein Kürzel. Umschaltverhalten: dieselbe Taste schließt |
+| Theme | `设置 → 偏好 → 外观 → 主题` | Hell / Dunkel / System folgen |
+| Start bei der Anmeldung | `设置 → 权限 → 权限与启动` | Nutzt `SMAppService` |
 | Update-Kanal | GitHub Releases (manuell) | Sparkle 2 ist eingebaut, aber deaktiviert, bis ein signierter Appcast gehostet wird; abonniere Release-Benachrichtigungen und ersetze die `.app` |
 | Datenbank-Speicherort | `~/Library/Application Support/PromptPanel/promptpanel.db` | Einzeldatei-SQLite, einfach zu sichern |
 | Logs | `~/Library/Logs/PromptPanel/` | Über „Runtime Health" im Hauptfenster einsehbar |
@@ -272,7 +279,7 @@ PromptPanel/
 │   │   └── MainWindow/   # Library + Settings
 │   └── Resources/        # Info.plist, entitlements, AppIcon, Assets
 ├── Tests/PromptPanelTests/
-├── frontend-draft/       # UI source-of-truth (HTML/JSX mockups + screenshots)
+├── frontend-draft/       # UI source-of-truth (HTML/JSX mockups)
 ├── scripts/              # build-app.sh, notarize, release readiness, restore
 ├── docs/                 # public architecture, FAQ, PRD, release, ops, handoff docs
 ├── .github/              # contribution, security, conduct, issue/PR templates, CI
