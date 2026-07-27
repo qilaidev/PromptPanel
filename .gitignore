@@ -1,9 +1,12 @@
 .DS_Store
 
 # Swift Package Manager
+# NOTE: Package.resolved is intentionally NOT ignored. This repo ships a signed,
+# notarized macOS app; without the committed lockfile a release build can silently
+# resolve a different GRDB 7.x / Sparkle 2.x than the one that was QA'd.
 .build/
+.build-*/
 .swiftpm/
-Package.resolved
 .deps/
 dist/
 
@@ -17,3 +20,4 @@ DerivedData/
 # Local app data / logs
 *.db
 *.sqlite*
+
