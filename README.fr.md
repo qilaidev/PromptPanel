@@ -348,7 +348,7 @@ Oui. Licence MIT. Pas de palier payant, pas de plafond d'utilisation, pas de com
 
 ### Fonctionne-t-il avec Apple Silicon (M1/M2/M3/M4) ?
 
-Oui — il se compile en binaire universel. Testé à la fois sur Apple Silicon et Intel sous macOS 14+.
+Oui — la version est compilée en binaire universel (arm64 + x86_64), elle s'exécute donc nativement sur les Mac Apple Silicon comme Intel sous macOS 14+.
 
 ### Envoie-t-il mes prompts où que ce soit ?
 

@@ -347,7 +347,7 @@ Sí. Licencia MIT. Sin plan de pago, sin límite de uso, sin cuenta.
 
 ### ¿Funciona con Apple Silicon (M1/M2/M3/M4)?
 
-Sí — se compila como binario universal. Probado tanto en Apple Silicon como en Intel con macOS 14+.
+Sí — la versión se compila como binario universal (arm64 + x86_64), por lo que se ejecuta de forma nativa tanto en Macs con Apple Silicon como con Intel en macOS 14+.
 
 ### ¿Envía mis prompts a algún sitio?
 

@@ -381,7 +381,7 @@ rm -rf ~/Library/Logs/PromptPanel                   # 运行日志
 
 ### 支持 Apple Silicon（M1/M2/M3/M4）吗？
 
-支持，构建为 universal binary，Apple Silicon 与 Intel 在 macOS 14+ 都测过。
+支持。发布包构建为 universal binary（arm64 + x86_64），在 macOS 14+ 的 Apple Silicon 与 Intel 机型上都能原生运行。
 
 ### 我的 Prompt 会不会被发到云上？
 

@@ -388,7 +388,7 @@ Export your library first (`设置 → 维护 → 导出 JSON`) if you may want 
 
 ### Does it work with Apple Silicon (M1/M2/M3/M4)?
 
-Yes — it builds as a universal binary. Tested on both Apple Silicon and Intel macOS 14+.
+Yes — the release is built as a universal binary (arm64 + x86_64), so it runs natively on both Apple Silicon and Intel Macs on macOS 14+.
 
 ### Does it send my prompts anywhere?
 

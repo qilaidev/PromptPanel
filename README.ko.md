@@ -347,7 +347,7 @@ PromptPanel은 **의도적으로 작은** 로드맵을 따릅니다. PRD에는 �
 
 ### Apple Silicon (M1/M2/M3/M4)에서 동작하나요?
 
-네 — 유니버설 바이너리로 빌드됩니다. Apple Silicon과 Intel macOS 14+ 양쪽에서 테스트되었습니다.
+네 — 릴리스는 유니버설 바이너리(arm64 + x86_64)로 빌드되므로 macOS 14 이상의 Apple Silicon과 Intel Mac 모두에서 네이티브로 실행됩니다.
 
 ### 제 프롬프트를 어딘가로 전송하나요?
 

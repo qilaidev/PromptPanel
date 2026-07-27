@@ -348,7 +348,7 @@ Ja. MIT-Lizenz. Keine kostenpflichtige Stufe, kein Nutzungslimit, kein Konto.
 
 ### Funktioniert es mit Apple Silicon (M1/M2/M3/M4)?
 
-Ja — es wird als Universal Binary gebaut. Getestet auf sowohl Apple Silicon als auch Intel unter macOS 14+.
+Ja — die Release-Version wird als Universal Binary (arm64 + x86_64) gebaut und läuft damit sowohl auf Apple-Silicon- als auch auf Intel-Macs unter macOS 14+ nativ.
 
 ### Sendet es meine Prompts irgendwohin?
 
