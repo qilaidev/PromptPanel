@@ -229,6 +229,11 @@ RESULT_APPCAST="${OUTPUT_PATH:-$ARCHIVES_DIR/appcast.xml}"
 # check the output too so a bad merge can never reach Pages.
 if command -v xmllint >/dev/null 2>&1; then
     xmllint --noout "$RESULT_APPCAST" || fail "Generated appcast is not well-formed XML: $RESULT_APPCAST"
+elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import sys, xml.parsers.expat; xml.parsers.expat.ParserCreate().ParseFile(open(sys.argv[1], "rb"))' "$RESULT_APPCAST" \
+        || fail "Generated appcast is not well-formed XML: $RESULT_APPCAST"
+else
+    log_warn "Neither xmllint nor python3 is available; skipped the XML well-formedness check."
 fi
 
 # An unsigned feed is worse than no feed: clients with SUPublicEDKey set reject every item, so

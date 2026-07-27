@@ -43,7 +43,20 @@ jobs:
         # cannot parse, so a syntax error here is invisible until users stop getting updates.
         # This already bit us once: XML comments may not contain a double hyphen, and the
         # seed file documented the generator's option flags inside a comment.
-        run: xmllint --noout release/appcast.xml
+        #
+        # Uses the preinstalled python3 rather than xmllint: libxml2-utils is no longer part
+        # of the ubuntu-latest runner image, and installing it would add a network dependency
+        # to a gate whose whole job is to be reliable.
+        run: |
+          python3 - <<'PY'
+          import sys, xml.parsers.expat
+          try:
+              with open("release/appcast.xml", "rb") as feed:
+                  xml.parsers.expat.ParserCreate().ParseFile(feed)
+          except xml.parsers.expat.ExpatError as error:
+              sys.exit(f"release/appcast.xml is not well-formed XML: {error}")
+          print("Feed is well-formed XML.")
+          PY
 
       - name: Reject an unsigned feed
         # A feed whose items carry no EdDSA signature is worse than no feed at all: clients
