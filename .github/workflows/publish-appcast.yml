@@ -1,0 +1,70 @@
+name: Publish Sparkle Appcast
+
+# Publishes ONLY release/appcast.xml to GitHub Pages, at
+# https://tytsxai.github.io/PromptPanel/appcast.xml — the SUFeedURL baked into every shipped
+# binary.
+#
+# Why a workflow instead of serving a branch or the docs/ folder: Pages would then mirror the
+# whole documentation set on a second domain, which competes with the canonical GitHub URLs
+# this project deliberately optimises for. Deploying a one-file artifact keeps the feed live
+# with no side effects on discoverability.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'release/appcast.xml'
+      - '.github/workflows/publish-appcast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; a half-published feed would break update checks.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Reject an unsigned feed
+        # A feed whose items carry no EdDSA signature is worse than no feed at all: clients
+        # with SUPublicEDKey set reject every item, so the channel looks alive but can never
+        # install anything. An empty channel (before the first release) is fine.
+        run: |
+          if grep -q '<item>' release/appcast.xml; then
+            if ! grep -q 'sparkle:edSignature=' release/appcast.xml; then
+              echo "release/appcast.xml has items but no sparkle:edSignature; refusing to publish." >&2
+              exit 1
+            fi
+          else
+            echo "Feed has no items yet; publishing the empty channel."
+          fi
+
+      - name: Stage the feed
+        run: |
+          mkdir -p _site
+          cp release/appcast.xml _site/appcast.xml
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

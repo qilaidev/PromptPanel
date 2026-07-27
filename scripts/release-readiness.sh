@@ -16,6 +16,12 @@ SPARKLE_FEED_URL=""
 SPARKLE_PUBLIC_ED_KEY=""
 SMOKE_TIMEOUT_SECONDS=12
 
+# The canonical Sparkle feed, published from release/appcast.xml by
+# .github/workflows/publish-appcast.yml. This value is baked into every shipped binary as
+# SUFeedURL and cannot be changed for already-installed clients, so it is pinned here and
+# asserted on every public build rather than retyped per release.
+CANONICAL_SPARKLE_FEED_URL="https://tytsxai.github.io/PromptPanel/appcast.xml"
+
 usage() {
     cat <<'EOF'
 Usage: scripts/release-readiness.sh [options]
@@ -172,6 +178,23 @@ if [[ $PUBLIC_DISTRIBUTION -eq 1 && "$SIGN_IDENTITY" == "none" ]]; then
     fail "Public distribution precheck requires a non-ad-hoc signing identity."
 fi
 
+# A public build that ships without SUFeedURL/SUPublicEDKey is unrecoverable: those values live
+# in the installed app's Info.plist, so every user who installs that build is stranded on it
+# forever and can only update by manually re-downloading. Default the feed to the canonical
+# Pages URL so a release cannot silently omit it, and require the matching public key.
+if [[ $PUBLIC_DISTRIBUTION -eq 1 ]]; then
+    if [[ -z "$SPARKLE_FEED_URL" ]]; then
+        SPARKLE_FEED_URL="$CANONICAL_SPARKLE_FEED_URL"
+        log_info "Defaulting Sparkle feed URL to the canonical value: $SPARKLE_FEED_URL"
+    elif [[ "$SPARKLE_FEED_URL" != "$CANONICAL_SPARKLE_FEED_URL" ]]; then
+        log_warn "Sparkle feed URL differs from the canonical value ($CANONICAL_SPARKLE_FEED_URL). Already-installed clients poll the URL baked into their own build; only use a different feed deliberately."
+    fi
+
+    if [[ -z "$SPARKLE_PUBLIC_ED_KEY" ]]; then
+        fail "Public distribution requires --sparkle-public-ed-key. Run Sparkle's generate_keys once (it stores the private key in your Keychain and prints the public key), then pass that public key here. Shipping without it strands every installer of this build with no update path."
+    fi
+fi
+
 mkdir -p "$OUTPUT_ROOT"
 
 log_info "Validating shell scripts"
@@ -299,6 +322,18 @@ fi
 # dylib-injection attack surface; keep it out of the distributed bundle.
 if grep -Fq "com.apple.security.cs.disable-library-validation" <<<"$EMBEDDED_ENTITLEMENTS"; then
     fail "Built app ships com.apple.security.cs.disable-library-validation; library validation must stay enabled for distribution (all Sparkle code is re-signed with the app's identity, so the entitlement is unnecessary and weakens hardening)."
+fi
+
+# Assert the update metadata actually landed in the packaged Info.plist. build-app.sh injects it
+# via PlistBuddy; a typo in the key name or a silently skipped injection would otherwise only
+# surface once users are already stranded on a build that never checks for updates.
+if [[ $PUBLIC_DISTRIBUTION -eq 1 ]]; then
+    EMBEDDED_FEED_URL="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "${APP_PATH}/Contents/Info.plist" 2>/dev/null || true)"
+    EMBEDDED_PUBLIC_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "${APP_PATH}/Contents/Info.plist" 2>/dev/null || true)"
+    [[ -n "$EMBEDDED_FEED_URL" ]] || fail "Built app has no SUFeedURL; it would never check for updates."
+    [[ -n "$EMBEDDED_PUBLIC_KEY" ]] || fail "Built app has no SUPublicEDKey; Sparkle would refuse every update."
+    [[ "$EMBEDDED_FEED_URL" == "$SPARKLE_FEED_URL" ]] || fail "Built app's SUFeedURL ($EMBEDDED_FEED_URL) does not match the requested feed ($SPARKLE_FEED_URL)."
+    log_info "Update channel embedded: SUFeedURL=$EMBEDDED_FEED_URL"
 fi
 
 UNPACK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/promptpanel-unpacked.XXXXXX")"

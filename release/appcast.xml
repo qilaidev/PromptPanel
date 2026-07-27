@@ -1,0 +1,23 @@
+<?xml version="1.0" standalone="yes"?>
+<!--
+  Sparkle update feed for PromptPanel.
+
+  Published at https://tytsxai.github.io/PromptPanel/appcast.xml by
+  .github/workflows/publish-appcast.yml. That URL is baked into every shipped binary as
+  SUFeedURL and CANNOT be changed for already-installed clients — treat it as permanent.
+
+  Do not hand-edit this file: every item is EdDSA-signed, and any manual change invalidates
+  the signature. Regenerate it with:
+
+      scripts/generate-appcast.sh --archives-dir <staging> --tag v<version>
+
+  The channel is intentionally empty until the first notarized release is published.
+-->
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>PromptPanel</title>
+        <link>https://github.com/tytsxai/PromptPanel</link>
+        <description>PromptPanel update feed</description>
+        <language>en</language>
+    </channel>
+</rss>

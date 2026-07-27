@@ -25,26 +25,38 @@ OUTPUT_PATH=""
 KEYCHAIN_ACCOUNT=""
 ED_KEY_FILE=""
 CHANNEL=""
+RELEASE_TAG=""
+FEED_FILE="${REPO_ROOT}/release/appcast.xml"
+ALLOW_MULTIPLE_ARCHIVES=0
 
 usage() {
     cat <<'EOF'
-Usage: scripts/generate-appcast.sh --archives-dir <dir> [options]
+Usage: scripts/generate-appcast.sh --archives-dir <dir> --tag <tag> [options]
 
-Generate and EdDSA-sign a Sparkle appcast.xml for the release archives in a directory.
-The archives directory should contain the notarized/stapled release .zip (and, optionally,
-matching .html/.md/.txt release-note files with the same base name).
+Generate and EdDSA-sign the Sparkle appcast for one new release, merging it into the
+published feed at release/appcast.xml.
+
+The archives directory is a STAGING directory that must hold exactly one notarized/stapled
+release .zip (plus, optionally, a matching .html/.md/.txt release-note file with the same
+base name). The script seeds it with the currently published feed, runs Sparkle's
+generate_appcast, and writes the merged result back to the feed file.
 
 Options:
-  --archives-dir <dir>        Directory holding the release .zip archives. Required.
-                              appcast.xml is written into this directory (or --output).
-  --download-url-prefix <url> URL prefix where the archives will be hosted, e.g.
-                              https://downloads.example.com/promptpanel/ . Recommended so the
-                              generated appcast points at the real download location.
+  --archives-dir <dir>        Staging directory holding the new release archive. Required.
+  --tag <tag>                 Git tag of the GitHub Release the archive is attached to, e.g.
+                              v1.1.2. Used to derive the download URL prefix from the origin
+                              remote. Required unless --download-url-prefix is given.
+  --feed-file <path>          Published feed to merge into and write back
+                              (default: release/appcast.xml). Pass "none" to skip merging
+                              and leave appcast.xml in the staging directory only.
+  --download-url-prefix <url> Override the URL prefix derived from --tag.
   --output <path>             Output appcast path (default: <archives-dir>/appcast.xml).
   --keychain-account <name>   Keychain account holding the private EdDSA key (default: ed25519).
   --ed-key-file <path>        Read the private EdDSA key from a file instead of the Keychain.
                               Use only where the Keychain is unavailable (e.g. CI); never commit it.
   --channel <name>            Sparkle channel name for the generated entries (optional).
+  --allow-multiple-archives   Escape hatch for rebuilding a feed from scratch. Read the
+                              warning in the single-archive guard below before using it.
   --help                      Show this help message.
 EOF
 }
@@ -84,6 +96,18 @@ while [[ $# -gt 0 ]]; do
             CHANNEL="$2"
             shift 2
             ;;
+        --tag)
+            RELEASE_TAG="$2"
+            shift 2
+            ;;
+        --feed-file)
+            FEED_FILE="$2"
+            shift 2
+            ;;
+        --allow-multiple-archives)
+            ALLOW_MULTIPLE_ARCHIVES=1
+            shift
+            ;;
         --help)
             usage
             exit 0
@@ -98,12 +122,65 @@ done
 [[ -n "$ARCHIVES_DIR" ]] || { usage >&2; fail "--archives-dir is required."; }
 [[ -d "$ARCHIVES_DIR" ]] || fail "Archives directory not found: $ARCHIVES_DIR"
 
-if [[ -z "$(find "$ARCHIVES_DIR" -maxdepth 1 \( -name '*.zip' -o -name '*.dmg' \) -print -quit 2>/dev/null)" ]]; then
+archive_count=0
+while IFS= read -r _; do
+    archive_count=$((archive_count + 1))
+done < <(find "$ARCHIVES_DIR" -maxdepth 1 \( -name '*.zip' -o -name '*.dmg' \) -print 2>/dev/null)
+
+if [[ $archive_count -eq 0 ]]; then
     fail "No .zip/.dmg release archives found in $ARCHIVES_DIR; run scripts/build-app.sh (and notarize-app.sh) first."
+fi
+
+# Single-archive guard.
+#
+# generate_appcast rewrites the enclosure URL of EVERY archive it finds in the staging
+# directory using the CURRENT --download-url-prefix. Our archives live under per-tag GitHub
+# Release URLs, so if a previous release's zip is still sitting in the staging directory, its
+# already-published entry gets silently rewritten to the NEW tag's URL — a 404 that turns the
+# whole update channel dead for users on that version. Verified behaviour: with both zips
+# present the tool reports "updated 1 existing update" and rewrites the old URL; with only the
+# new zip present it reports "updated 0 existing updates" and leaves the old entry intact.
+#
+# Entries for archives that are absent are copied through untouched, which is exactly what we
+# want — so stage one archive per release and let the feed file carry the history.
+if [[ $archive_count -gt 1 && $ALLOW_MULTIPLE_ARCHIVES -eq 0 ]]; then
+    fail "Staging directory holds $archive_count archives. Stage exactly one release archive: generate_appcast would rewrite every staged archive's download URL to the current --tag, breaking the already-published entries. Pass --allow-multiple-archives only when deliberately rebuilding the whole feed under one URL prefix."
 fi
 
 if [[ -n "$ED_KEY_FILE" ]]; then
     [[ -f "$ED_KEY_FILE" ]] || fail "EdDSA key file not found: $ED_KEY_FILE"
+fi
+
+# Derive the download URL prefix from the release tag and the origin remote so a release never
+# ships an appcast pointing at the wrong tag because someone hand-typed the prefix.
+if [[ -z "$DOWNLOAD_URL_PREFIX" ]]; then
+    [[ -n "$RELEASE_TAG" ]] || { usage >&2; fail "--tag is required (or pass --download-url-prefix explicitly)."; }
+
+    origin_url="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null || true)"
+    [[ -n "$origin_url" ]] || fail "Cannot derive the download URL: no 'origin' remote. Pass --download-url-prefix explicitly."
+
+    # Accept both git@github.com:owner/repo.git and https://github.com/owner/repo(.git)
+    repo_slug="${origin_url##*github.com[:/]}"
+    repo_slug="${repo_slug%.git}"
+    [[ "$repo_slug" == */* ]] || fail "Cannot parse owner/repo from origin remote: $origin_url"
+
+    DOWNLOAD_URL_PREFIX="https://github.com/${repo_slug}/releases/download/${RELEASE_TAG}/"
+    log_info "Derived download URL prefix: $DOWNLOAD_URL_PREFIX"
+fi
+
+# Seed the staging directory with the currently published feed so generate_appcast merges the
+# new item into the existing history instead of emitting a feed with a single item.
+if [[ "$FEED_FILE" != "none" ]]; then
+    if [[ -f "$FEED_FILE" ]]; then
+        if [[ -f "${ARCHIVES_DIR}/appcast.xml" ]]; then
+            log_info "Staging directory already has an appcast.xml; leaving it in place."
+        else
+            log_info "Seeding staging directory from published feed: $FEED_FILE"
+            cp "$FEED_FILE" "${ARCHIVES_DIR}/appcast.xml"
+        fi
+    else
+        log_info "No published feed at $FEED_FILE yet; generating a fresh one."
+    fi
 fi
 
 # Locate Sparkle's generate_appcast from the resolved SPM artifact bundle. The exact path under
@@ -147,5 +224,19 @@ log_info "Generating signed appcast for archives in $ARCHIVES_DIR"
 RESULT_APPCAST="${OUTPUT_PATH:-$ARCHIVES_DIR/appcast.xml}"
 [[ -f "$RESULT_APPCAST" ]] || fail "generate_appcast did not produce an appcast at $RESULT_APPCAST"
 
-log_info "Appcast written: $RESULT_APPCAST"
-log_info "Publish this appcast.xml and the referenced archives to your Sparkle feed URL host."
+# An unsigned feed is worse than no feed: clients with SUPublicEDKey set reject every item, so
+# the update channel looks alive but can never install anything. generate_appcast only warns
+# when the key is missing, so turn that into a hard failure here.
+if ! grep -q 'sparkle:edSignature=' "$RESULT_APPCAST"; then
+    fail "Generated appcast has no sparkle:edSignature. The private EdDSA key was not available (run 'generate_keys' once, or pass --ed-key-file). Do NOT publish this file: clients would reject every item."
+fi
+
+if [[ "$FEED_FILE" != "none" ]]; then
+    mkdir -p "${FEED_FILE:h}"
+    cp "$RESULT_APPCAST" "$FEED_FILE"
+    log_info "Published feed updated: $FEED_FILE"
+    log_info "Commit and push it — .github/workflows/publish-appcast.yml deploys it to GitHub Pages."
+else
+    log_info "Appcast written: $RESULT_APPCAST"
+    log_info "Publish this appcast.xml to your Sparkle feed URL host."
+fi
