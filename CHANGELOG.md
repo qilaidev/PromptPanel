@@ -6,9 +6,34 @@ The format is based on Keep a Changelog, and this project uses Conventional Comm
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-07-28
+
+Distribution-correctness release. Nothing changes in how the app is used day to day; what changes is that a downloaded build is now actually installable and updatable. Two defects that would have surfaced on the first public binary are fixed (invalid code signature, arm64-only "universal" build), the Sparkle update channel is finalized end to end, and the public positioning surfaces now state only what the evidence supports.
+
+### Fixed
+
+- **The packaged `.app` had an invalid code signature.** `build-app.sh` added three app-root symlinks to `Contents/Resources/*.bundle` after signing, to satisfy the SwiftPM `Bundle.module` accessor. Content at the bundle root cannot be sealed, so `codesign --verify` exited 1 (`unsealed contents present in the bundle root`) — not a warning: a quarantined download would be blocked by Gatekeeper on first launch and Sparkle would refuse to install the update. The symlinks are gone and `release-readiness.sh` now verifies signatures with no exemptions, so the failure cannot silently return.
+- **The release archive was arm64-only** while the README and FAQ promised a universal binary — an Intel download would simply not run, and the defect was invisible on an Apple Silicon build machine. Release builds now produce `arm64 + x86_64` (native build + cross build + `lipo -create`; `--debug` stays single-arch, overridable with `--arch native|universal`), and the release gate fails if either slice is missing.
+- **The seeded `release/appcast.xml` was not well-formed XML**: its explanatory comment contained a double hyphen, so Sparkle's parser rejected the whole feed. Update checks would have failed silently forever — HTTP 200, plausible-looking file, no updates ever offered. The comment is fixed and both `generate-appcast.sh` and the publish workflow now validate the feed before writing or deploying it.
+- **The appcast XML check broke the publish workflow**: `xmllint` is no longer preinstalled on `ubuntu-latest`, so the guard itself failed with exit 127. Validation now uses the preinstalled `python3` (expat), with the same fallback in `generate-appcast.sh`.
+
+### Added
+
+- **Sparkle update channel finalized.** The feed URL is pinned to `https://tytsxai.github.io/PromptPanel/appcast.xml`, published from `release/appcast.xml` by `.github/workflows/publish-appcast.yml`; installers ship as GitHub Release assets. `SUFeedURL`/`SUPublicEDKey` are baked into each installed app and cannot be corrected afterwards, so `release-readiness.sh --public-distribution` now fills in the canonical feed URL, requires an EdDSA public key, and asserts both keys are present in the packaged `Info.plist`. `generate-appcast.sh` gained `--tag` (download-URL prefix derived from the remote), `--feed-file` seed merging, a guard against rewriting already-published enclosure URLs when an older archive lingers in the staging directory, and a hard failure when no signing key is available.
+- **`HotkeyRecorderField`**, a self-drawn shortcut recorder built only on the public non-UI API of `KeyboardShortcuts`, replacing `KeyboardShortcuts.Recorder` — this is what removed the last runtime dependency on `Bundle.module`. Existing hotkeys are temporarily disabled while recording so the Carbon-registered shortcut cannot swallow the keystroke; Esc cancels and Delete clears as before. Trade-off: the library's "this shortcut is already taken" popup is gone (it used internal API); the Settings hint and FAQ cover the workaround.
+- Seven unit tests for the recorder's decision function, plus regression coverage around the signing path.
+
 ### Changed
 
-- **Simplified the framework-signing helper in `build-app.sh`**: collapsed a redundant `case` branch in `sign_framework_contents` whose two arms ran the identical `codesign_path "$helper_path" runtime` command. Every embedded executable already needs the hardened-runtime flag, so the branch carried no behavioural difference — only maintenance noise. No change to signing output.
+- **`Package.resolved` is now version-controlled.** With `Sparkle from: "2.9.1"` and a GRDB version range, release builds were not reproducible: different machines could ship dependency versions that were never QA'd, invisibly. Locked at GRDB 7.8.0 / KeyboardShortcuts 1.10.0 / Sparkle 2.9.4.
+- **README architecture claims now state build facts only.** All eight READMEs previously said Apple Silicon and Intel were both tested; the x86_64 slice has only been exercised through Rosetta, so the claim is now that the release is built as a universal binary that runs natively on both.
+- **The Simplified-Chinese-only app interface is disclosed** across all eight READMEs, FAQ, `llms.txt`, `llms-full.txt`, the discoverability doc, `codemeta.json`, and the Schema.org JSON-LD — the docs ship in eight languages and readers (and answer engines) would otherwise assume the UI does too. `check-docs.sh` asserts the disclosure as long as `CFBundleDevelopmentRegion` is `zh-Hans`.
+- Simplified the framework-signing helper in `build-app.sh`: collapsed a redundant `case` branch in `sign_framework_contents` whose two arms ran the identical `codesign_path "$helper_path" runtime` command. Signing output is unchanged.
+- README search-latency figure corrected to `<80 ms`, matching `Constants.searchLatencyTargetMs`.
+
+### Removed
+
+- **10 UI-QA and draft screenshots (~5.9 MiB) deleted from the repository.** They are regenerable output of `capture-ui-qa.sh` and are now git-ignored; referencing docs and the Schema.org `screenshot` array were updated accordingly.
 
 ## [1.1.1] - 2026-07-14
 
@@ -112,7 +137,9 @@ First public release. Aligns the `Info.plist`, `codemeta.json`, and `docs/search
 
 - No remote authentication, telemetry, or cloud sync paths are introduced. Prompt content remains local in SQLite; the only network traffic is the optional Sparkle update check.
 
-[Unreleased]: https://github.com/tytsxai/PromptPanel/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/tytsxai/PromptPanel/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/tytsxai/PromptPanel/compare/v1.1.1...v1.1.2
+[1.1.1]: https://github.com/tytsxai/PromptPanel/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/tytsxai/PromptPanel/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/tytsxai/PromptPanel/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/tytsxai/PromptPanel/releases/tag/v1.0.0

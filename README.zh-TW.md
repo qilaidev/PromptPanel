@@ -9,7 +9,7 @@
 
 PromptPanel 是一款本地優先的 **macOS Prompt 管理器**、**AI Prompt 啟動器** 和 **程式碼片段啟動器**：全域快捷鍵喚出快捷面板，瞬間檢索你的 **Prompt 庫 / 程式碼片段 / 範本**，把內容一鍵送進 **ChatGPT、Claude、Cursor、Copilot、VS Code、Terminal、瀏覽器或任意輸入框**。
 
-[![Release: v1.1.1](https://img.shields.io/badge/Release-v1.1.1-blue.svg)](CHANGELOG.md)
+[![Release: v1.1.2](https://img.shields.io/badge/Release-v1.1.2-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: macOS 14+](https://img.shields.io/badge/Platform-macOS%2014%2B-lightgrey.svg)](https://www.apple.com/macos)
 [![Swift 5.10](https://img.shields.io/badge/Swift-5.10-orange.svg)](https://swift.org)
