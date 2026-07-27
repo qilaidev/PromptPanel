@@ -558,10 +558,9 @@ private struct HotkeySection: View {
         SettingsCard("快捷键") {
             SettingsRow(
                 label: "呼出面板",
-                hint: "这是呼出快捷面板的唯一入口。"
+                hint: "这是呼出快捷面板的唯一入口。点击后按下组合键即可修改；如果新快捷键按下去没反应，说明已被其他应用或系统占用，换一个组合。"
             ) {
-                KeyboardShortcuts.Recorder(for: .togglePanel)
-                    .labelsHidden()
+                HotkeyRecorderField(name: .togglePanel)
             }
         }
     }

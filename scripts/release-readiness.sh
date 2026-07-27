@@ -57,32 +57,24 @@ fail() {
     exit 1
 }
 
-# Verify a packaged .app's code signature, tolerating exactly one benign
-# condition: the intentional, unsealed resource-bundle symlinks that
-# build-app.sh adds at the bundle root so SwiftPM's `Bundle.module` accessor can
-# find its resources at runtime (see build-app.sh for the full rationale).
-# codesign flags those as "unsealed contents present in the bundle root". We
-# treat that as a pass ONLY when it is the sole diagnostic — any other line
-# (invalid signature, missing/modified sealed resource, unsatisfied requirement)
-# still fails, so real signature tampering is never masked.
+# Verify a packaged .app's code signature with NO exemptions.
+#
+# This used to tolerate "unsealed contents present in the bundle root", which is what the
+# app-root resource-bundle symlinks produced. That tolerance was wrong for anything we ship:
+# Gatekeeper runs the same validation on the user's machine, so an app that only passed here
+# was blocked on first launch after download and rejected by Sparkle as an update. The
+# symlinks are gone (see build-app.sh); if this diagnostic ever reappears, something put
+# content back at the bundle root and the build is not distributable.
 verify_bundle_signature() {
     local target="$1"
-    local output rc residual
-    output="$(codesign --verify --deep --strict --verbose=2 "$target" 2>&1)"
-    rc=$?
-    if [[ $rc -eq 0 ]]; then
-        return 0
-    fi
-    residual="$(grep -v \
-        -e 'unsealed contents present in the bundle root' \
-        -e '^--prepared:' \
-        -e '^--validated:' \
-        <<<"$output" | grep -v '^[[:space:]]*$' || true)"
-    if [[ -z "$residual" ]] && grep -q 'unsealed contents present in the bundle root' <<<"$output"; then
-        log_warn "codesign reports only the expected unsealed root-symlink notice for ${target}; treating as valid."
+    local output
+    if output="$(codesign --verify --deep --strict --verbose=2 "$target" 2>&1)"; then
         return 0
     fi
     printf '%s\n' "$output" >&2
+    if grep -q 'unsealed contents present in the bundle root' <<<"$output"; then
+        log_warn "The bundle root carries unsealed content. Gatekeeper will reject this build and Sparkle will refuse to install it; keep SwiftPM resource bundles under Contents/Resources only."
+    fi
     return 1
 }
 
@@ -268,6 +260,18 @@ SHORT_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' 
 BUILD_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${APP_PATH}/Contents/Info.plist")"
 ZIP_PATH="${OUTPUT_ROOT}/PromptPanel-${SHORT_VERSION}+${BUILD_VERSION}-macos.zip"
 [[ -f "$ZIP_PATH" ]] || fail "Expected built zip archive not found: $ZIP_PATH"
+
+# README/FAQ promise an Apple Silicon + Intel universal binary. A plain `swift build` only
+# ever emits the host slice, so without this assertion an arm64-only archive could ship and
+# fail to launch for every Intel user — a failure that is invisible on the build machine.
+log_info "Verifying shipped architectures"
+APP_BINARY_ARCHS="$(lipo -archs "${APP_PATH}/Contents/MacOS/PromptPanel")"
+for required_arch in arm64 x86_64; do
+    if [[ " $APP_BINARY_ARCHS " != *" $required_arch "* ]]; then
+        fail "Built app is missing the ${required_arch} slice (found: ${APP_BINARY_ARCHS}); the distributed build must be universal."
+    fi
+done
+log_info "App binary architectures: ${APP_BINARY_ARCHS}"
 
 log_info "Verifying code signatures"
 verify_bundle_signature "$APP_PATH" || fail "Code signature verification failed for $APP_PATH"

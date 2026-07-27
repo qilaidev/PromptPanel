@@ -755,6 +755,84 @@ final class PromptPanelTests: XCTestCase {
         XCTAssertTrue(migrationDefaults.bool(forKey: "toggle_panel_shortcut_migrated_to_option_2"))
     }
 
+    // MARK: - Hotkey recorder
+    //
+    // The recorder replaced `KeyboardShortcuts.Recorder` so the packaged .app no longer needs
+    // resource-bundle symlinks at its root (those made `codesign --verify` fail, which blocks
+    // Gatekeeper and Sparkle). These cover the accept/reject/cancel/clear rules that used to
+    // live inside the library.
+
+    private func makeKeyStroke(
+        keyCode: UInt16,
+        modifiers: NSEvent.ModifierFlags,
+        isFunctionKey: Bool = false,
+        hasUsableShortcut: Bool = true
+    ) -> HotkeyRecorderModel.KeyStroke {
+        HotkeyRecorderModel.KeyStroke(
+            keyCode: keyCode,
+            modifiers: modifiers,
+            isFunctionKey: isFunctionKey,
+            carbonShortcut: hasUsableShortcut ? (keyCode: Int(keyCode), modifiers: 0) : nil
+        )
+    }
+
+    func testHotkeyRecorderCancelsOnBareEscape() {
+        XCTAssertEqual(
+            HotkeyRecorderModel.outcome(for: makeKeyStroke(keyCode: 53, modifiers: [])),
+            .cancelled
+        )
+    }
+
+    func testHotkeyRecorderTreatsModifiedEscapeAsARecordableShortcut() {
+        XCTAssertEqual(
+            HotkeyRecorderModel.outcome(for: makeKeyStroke(keyCode: 53, modifiers: [.option])),
+            .recorded(carbonKeyCode: 53, carbonModifiers: 0)
+        )
+    }
+
+    func testHotkeyRecorderClearsOnBareDeleteKeys() {
+        for keyCode: UInt16 in [51, 117] {
+            XCTAssertEqual(
+                HotkeyRecorderModel.outcome(for: makeKeyStroke(keyCode: keyCode, modifiers: [])),
+                .cleared
+            )
+        }
+    }
+
+    func testHotkeyRecorderRejectsCombinationsWithoutARealModifier() {
+        // A bare key or a shift-only combination would swallow ordinary typing.
+        XCTAssertEqual(
+            HotkeyRecorderModel.outcome(for: makeKeyStroke(keyCode: 19, modifiers: [])),
+            .rejected
+        )
+        XCTAssertEqual(
+            HotkeyRecorderModel.outcome(for: makeKeyStroke(keyCode: 19, modifiers: [.shift])),
+            .rejected
+        )
+    }
+
+    func testHotkeyRecorderAcceptsFunctionKeysWithoutModifiers() {
+        XCTAssertEqual(
+            HotkeyRecorderModel.outcome(for: makeKeyStroke(keyCode: 96, modifiers: [], isFunctionKey: true)),
+            .recorded(carbonKeyCode: 96, carbonModifiers: 0)
+        )
+    }
+
+    func testHotkeyRecorderRejectsEventsThatCarryNoUsableShortcut() {
+        XCTAssertEqual(
+            HotkeyRecorderModel.outcome(
+                for: makeKeyStroke(keyCode: 19, modifiers: [.option], hasUsableShortcut: false)
+            ),
+            .rejected
+        )
+    }
+
+    func testHotkeyRecorderAcceptsTheShippedDefaultCombination() {
+        XCTAssertTrue(
+            HotkeyRecorderModel.isAcceptableCombination(modifiers: [.option], isFunctionKey: false)
+        )
+    }
+
     func testAppLaunchCoordinatorReturnsNilWhenOnlyCurrentProcessExists() {
         XCTAssertNil(
             AppLaunchCoordinator.duplicateProcessIdentifier(

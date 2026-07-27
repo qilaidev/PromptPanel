@@ -16,6 +16,7 @@ SPARKLE_FEED_URL=""
 SPARKLE_PUBLIC_ED_KEY=""
 BUNDLE_IDENTIFIER=""
 DISPLAY_NAME_OVERRIDE=""
+ARCH_MODE=""
 
 usage() {
     cat <<'EOF'
@@ -23,6 +24,8 @@ Usage: scripts/build-app.sh [options]
 
 Options:
   --debug                 Build a debug app instead of release.
+  --arch <mode>           universal (arm64 + x86_64, default for release) or
+                          native (host architecture only, default for --debug).
   --output-dir <path>     Output directory for the generated app and zip.
   --sign-identity <id>    codesign identity. Use "none" to skip signing.
   --no-archive            Skip zip archive creation.
@@ -43,6 +46,10 @@ while [[ $# -gt 0 ]]; do
         --debug)
             CONFIGURATION="debug"
             shift
+            ;;
+        --arch)
+            ARCH_MODE="$2"
+            shift 2
             ;;
         --output-dir)
             OUTPUT_ROOT="$2"
@@ -112,11 +119,69 @@ if [[ -n "$SPARKLE_FEED_URL" && "$SPARKLE_FEED_URL" != https://* ]]; then
     exit 64
 fi
 
+if [[ -z "$ARCH_MODE" ]]; then
+    # Release builds are what gets distributed, and README/FAQ promise a universal
+    # binary; plain `swift build` only ever emits the host slice, which would leave
+    # every Intel Mac with an app that cannot launch. Debug builds stay native so the
+    # local edit/run loop is not doubled.
+    if [[ "$CONFIGURATION" == "release" ]]; then
+        ARCH_MODE="universal"
+    else
+        ARCH_MODE="native"
+    fi
+fi
+
+if [[ "$ARCH_MODE" != "universal" && "$ARCH_MODE" != "native" ]]; then
+    echo "Unsupported --arch mode: ${ARCH_MODE} (expected 'universal' or 'native')" >&2
+    exit 64
+fi
+
 mkdir -p "$OUTPUT_ROOT"
 
-echo "Building ${APP_NAME} (${CONFIGURATION})..."
+echo "Building ${APP_NAME} (${CONFIGURATION}, arch=${ARCH_MODE})..."
 swift build --package-path "$PACKAGE_ROOT" -c "$CONFIGURATION"
 BIN_DIR="$(swift build --package-path "$PACKAGE_ROOT" -c "$CONFIGURATION" --show-bin-path)"
+
+# Cross-build the complementary slice and lipo it onto the host slice. Only the app's own
+# executable is single-arch — SwiftPM's binary artifacts (Sparkle.framework) and the resource
+# bundles it produces are already universal / architecture-independent, so nothing else needs
+# to be merged. The deployment target is read from Info.plist, which scripts/check-docs.sh
+# already keeps in sync with Package.swift's `.macOS(...)` platform.
+SECONDARY_BIN_DIR=""
+if [[ "$ARCH_MODE" == "universal" ]]; then
+    HOST_ARCH="$(uname -m)"
+    case "$HOST_ARCH" in
+        arm64)
+            SECONDARY_ARCH="x86_64"
+            ;;
+        x86_64)
+            SECONDARY_ARCH="arm64"
+            ;;
+        *)
+            echo "Cannot build a universal binary on unsupported host architecture: ${HOST_ARCH}" >&2
+            exit 1
+            ;;
+    esac
+
+    MINIMUM_MACOS_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "${PACKAGE_ROOT}/Sources/PromptPanel/Resources/Info.plist")"
+    SECONDARY_TRIPLE="${SECONDARY_ARCH}-apple-macosx${MINIMUM_MACOS_VERSION}"
+    SECONDARY_SCRATCH_PATH="${PACKAGE_ROOT}/.build-${SECONDARY_ARCH}"
+
+    echo "Cross-building ${SECONDARY_ARCH} slice (${SECONDARY_TRIPLE})..."
+    swift build \
+        --package-path "$PACKAGE_ROOT" \
+        -c "$CONFIGURATION" \
+        --triple "$SECONDARY_TRIPLE" \
+        --scratch-path "$SECONDARY_SCRATCH_PATH"
+    SECONDARY_BIN_DIR="$(
+        swift build \
+            --package-path "$PACKAGE_ROOT" \
+            -c "$CONFIGURATION" \
+            --triple "$SECONDARY_TRIPLE" \
+            --scratch-path "$SECONDARY_SCRATCH_PATH" \
+            --show-bin-path
+    )"
+fi
 
 codesign_path() {
     local target_path="$1"
@@ -217,7 +282,15 @@ if [[ -n "$SPARKLE_PUBLIC_ED_KEY" ]]; then
 fi
 BUNDLE_IDENTIFIER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${CONTENTS_DIR}/Info.plist")"
 
-cp "${BIN_DIR}/${APP_NAME}" "${MACOS_DIR}/${APP_NAME}"
+if [[ -n "$SECONDARY_BIN_DIR" ]]; then
+    lipo -create \
+        "${BIN_DIR}/${APP_NAME}" \
+        "${SECONDARY_BIN_DIR}/${APP_NAME}" \
+        -output "${MACOS_DIR}/${APP_NAME}"
+    echo "Merged architectures: $(lipo -archs "${MACOS_DIR}/${APP_NAME}")"
+else
+    cp "${BIN_DIR}/${APP_NAME}" "${MACOS_DIR}/${APP_NAME}"
+fi
 chmod 755 "${MACOS_DIR}/${APP_NAME}"
 
 APP_ICON_SRC="${PACKAGE_ROOT}/Sources/PromptPanel/Resources/AppIcon.icns"
@@ -275,28 +348,21 @@ if [[ "$SIGN_IDENTITY" == "none" ]]; then
     fi
 fi
 
-# SwiftPM resource-bundle discovery shim (Swift 6+ toolchain).
+# NOTE — do NOT re-add app-root symlinks for the SwiftPM resource bundles.
 #
-# SwiftPM's generated `Bundle.module` accessor resolves a target's resource
-# bundle only at `Bundle.main.bundleURL/<Package>_<Target>.bundle`. For a
-# packaged .app, `Bundle.main.bundleURL` is the bundle ROOT (sibling of
-# Contents/), NOT Contents/Resources. Because our resource bundles live in
-# Contents/Resources, the accessor's lookup fails and any dependency that
-# touches `Bundle.module` at runtime (e.g. KeyboardShortcuts.Recorder, which
-# lazily loads its localized bundle the first time the recorder is shown)
-# hits `fatalError` and crashes the app.
+# SwiftPM's generated `Bundle.module` accessor resolves a target's resource bundle only at
+# `Bundle.main.bundleURL/<Package>_<Target>.bundle`, which for a packaged .app is the bundle
+# ROOT (sibling of Contents/). We used to satisfy that by symlinking the bundles at the root
+# after signing. That is not viable for distribution: a .app's CodeResources seal is rooted at
+# Contents/, so root-level entries can never be sealed — with them present `codesign --verify`
+# exits non-zero ("unsealed contents present in the bundle root"), Gatekeeper blocks the
+# downloaded app, and Sparkle refuses to install it as an update. Signing with the symlinks
+# already in place produces the same error, so ordering does not help.
 #
-# We must keep the real bundles under Contents/Resources so the code signature
-# stays sealed and passes `codesign --verify --strict`; putting bundles (or even
-# symlinks) at the root BEFORE signing trips "unsealed contents present in the
-# bundle root" and fails signing. So we add relative symlinks at the app root
-# AFTER all signing/verification. The root symlinks are unsealed, which is fine
-# for locally installed / ad-hoc builds but means a notarized build would need
-# a different (xcodebuild-based) resource layout.
-for resource_bundle in "${RESOURCES_DIR}"/*.bundle(N); do
-    bundle_basename="$(basename "$resource_bundle")"
-    ln -sfn "Contents/Resources/${bundle_basename}" "${APP_PATH}/${bundle_basename}"
-done
+# The bundles stay under Contents/Resources (sealed) and nothing reads them through
+# `Bundle.module` at runtime: this app's own sources never touch it, GRDB's bundle only carries
+# PrivacyInfo.xcprivacy, and the one dependency that did — KeyboardShortcuts' localized recorder
+# alerts — was replaced by Features/Shared/HotkeyRecorderField.swift.
 
 SHORT_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${CONTENTS_DIR}/Info.plist")"
 BUILD_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${CONTENTS_DIR}/Info.plist")"
