@@ -4,6 +4,17 @@ All notable changes to PromptPanel are tracked here.
 
 The format is based on Keep a Changelog, and this project uses Conventional Commits for commit messages.
 
+## [1.4.0] - 2026-09-02
+
+### Changed
+
+- **frecency 换成连续的半衰期衰减，排序不再有台阶。** 1.3.0 用的是按 4 / 14 / 31 / 90 / 180 天分档的整数权重，实测有两个毛病：档位之间是悬崖——一条词条在夜里跨过 31 天那条线，名次会毫无征兆地跳一截；而且 100 → 30 的落差太陡，时效轻易压过 3 倍的频次差，出现「用了 6 次的排在用了 19 次的上面」。现在是 `使用次数 × 2^(-闲置天数 / 90)`：每闲置 90 天权重减半，只有一个参数、一个含义，曲线连续没有跳变。频次重新占主导，而两年没碰过的旧热词依然会沉下去。
+- **SQL 侧不再重写公式。** `EntryRanking.databaseFunction` 把 Swift 的打分函数注册成 SQLite 标量函数 `pp_frecency`，仓储层的 `ORDER BY` 和面板内存排序调的是同一份代码。此前是「同一张权重表生成两套实现」，仍留有写歪的余地——而两边一旦不一致，⌘1-9 的编号就会指向错的词条。顺带也不再依赖 SQLite 是否编进了可选数学扩展。
+
+### Fixed
+
+- **快捷面板的行里显示「最近使用」，替掉了「Prompt」标签。** 排序由「使用次数 × 时效」决定，但行里只显示了使用次数——另一半是隐形的，所以「6 次」排在「19 次」上面看起来像坏了。现在显示「今天 / 3天 / 5周 / 7月」这种紧凑相对时间。被替掉的类型标签在词条库里几乎每行都是同一个词，信息量为零，而且行首图标已经在表达类型了。
+
 ## [1.3.0] - 2026-09-02
 
 ### Changed
@@ -176,7 +187,8 @@ First public release. Aligns the `Info.plist`, `codemeta.json`, and `docs/search
 
 - No remote authentication, telemetry, or cloud sync paths are introduced. Prompt content remains local in SQLite; the only network traffic is the optional Sparkle update check.
 
-[Unreleased]: https://github.com/tytsxai/PromptPanel/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/tytsxai/PromptPanel/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/tytsxai/PromptPanel/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/tytsxai/PromptPanel/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/tytsxai/PromptPanel/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/tytsxai/PromptPanel/compare/v1.1.1...v1.1.2

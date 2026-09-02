@@ -108,20 +108,14 @@ updated_at DESC
 id ASC
 ```
 
-`frecency` 展开后是：
+`frecency` 由注册进 SQLite 的 Swift 标量函数计算，SQL 里写作：
 
 ```sql
-entries.use_count * (CASE
-    WHEN entries.last_used_at IS NULL THEN 0
-    WHEN age_days <   4 THEN 100
-    WHEN age_days <  14 THEN  70
-    WHEN age_days <  31 THEN  50
-    WHEN age_days <  90 THEN  30
-    WHEN age_days < 180 THEN  10
-    ELSE 1
-END)
--- age_days = CAST(julianday('now') - julianday(entries.last_used_at) AS INTEGER)
+pp_frecency(entries.use_count, entries.last_used_at, ?)   -- 第三个参数是 now
 ```
+
+公式为 `use_count × 2^(-闲置天数 / 90)`：每闲置 90 天权重减半，从未使用记 0，
+未来时间戳按 0 天处理。实现见 `EntryRanking`；SQL 与内存排序调用同一份代码。
 
 `sort_order` 自 v1.3.0 起不参与排序，列保留仅为兼容导入导出格式。
 
