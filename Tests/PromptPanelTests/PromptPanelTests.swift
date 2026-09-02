@@ -1500,9 +1500,13 @@ final class PromptPanelTests: XCTestCase {
         XCTAssertEqual(pasteDispatcher.attemptCount, 1)
     }
 
-    func testQuickPanelRankingRespectsManualSortOrderBeforeUsage() {
+    /// Replaces testQuickPanelRankingRespectsManualSortOrderBeforeUsage. `sort_order` used
+    /// to outrank usage, which is exactly the defect: nothing in the UI ever wrote that
+    /// column, so an imported value parked a barely-used entry above a heavily-used one
+    /// with no way to clear it.
+    func testQuickPanelRankingIgnoresRetiredSortOrderAndPrefersFrecency() {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
-        let highUsageEntry = Entry(
+        let heavilyUsedEntry = Entry(
             id: "high-usage",
             projectId: "project-current",
             title: "High Usage",
@@ -1512,7 +1516,7 @@ final class PromptPanelTests: XCTestCase {
             lastUsedAt: now,
             updatedAt: now
         )
-        let manualTopEntry = Entry(
+        let staleManualTopEntry = Entry(
             id: "manual-top",
             projectId: "project-current",
             title: "Manual Top",
@@ -1524,11 +1528,136 @@ final class PromptPanelTests: XCTestCase {
         )
 
         let sorted = QuickPanelViewModel.applyPanelRankingSort(
-            [highUsageEntry, manualTopEntry],
-            currentProjectId: "project-current"
+            [staleManualTopEntry, heavilyUsedEntry],
+            currentProjectId: "project-current",
+            now: now
         )
 
-        XCTAssertEqual(sorted.map(\.id), [manualTopEntry.id, highUsageEntry.id])
+        XCTAssertEqual(sorted.map(\.id), [heavilyUsedEntry.id, staleManualTopEntry.id])
+    }
+
+    func testEntryRankingWeighsFrequencyAgainstRecency() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        func daysAgo(_ days: Double) -> Date { now.addingTimeInterval(-days * 86_400) }
+
+        // Bucket boundaries are half-open: the weight changes AT maxAgeDays, not after it.
+        XCTAssertEqual(EntryRanking.recencyWeight(ageDays: 0), 100)
+        XCTAssertEqual(EntryRanking.recencyWeight(ageDays: 3), 100)
+        XCTAssertEqual(EntryRanking.recencyWeight(ageDays: 4), 70)
+        XCTAssertEqual(EntryRanking.recencyWeight(ageDays: 30), 50)
+        XCTAssertEqual(EntryRanking.recencyWeight(ageDays: 31), 30)
+        XCTAssertEqual(EntryRanking.recencyWeight(ageDays: 180), EntryRanking.staleWeight)
+
+        // A prompt used 600 times today beats one used 3 times two months ago...
+        XCTAssertGreaterThan(
+            EntryRanking.score(useCount: 600, lastUsedAt: now, now: now),
+            EntryRanking.score(useCount: 3, lastUsedAt: daysAgo(60), now: now)
+        )
+        // ...and a once-hot prompt untouched for a year sinks below a modest recent one,
+        // which is the whole point of decaying instead of ranking on the raw total.
+        XCTAssertGreaterThan(
+            EntryRanking.score(useCount: 10, lastUsedAt: now, now: now),
+            EntryRanking.score(useCount: 500, lastUsedAt: daysAgo(365), now: now)
+        )
+        // Never used ranks below used-once-long-ago, so a stale entry still beats a blank.
+        XCTAssertEqual(EntryRanking.score(useCount: 0, lastUsedAt: nil, now: now), 0)
+        XCTAssertGreaterThan(
+            EntryRanking.score(useCount: 1, lastUsedAt: daysAgo(900), now: now),
+            EntryRanking.score(useCount: 99, lastUsedAt: nil, now: now)
+        )
+        // A negative age (clock moved backwards, or an imported future timestamp) must not
+        // fall off the bucket table.
+        XCTAssertEqual(EntryRanking.recencyWeight(ageDays: -5), 100)
+    }
+
+    /// The panel re-sorts in memory while the repository sorts in SQL. If those two ever
+    /// disagree the ⌘1-9 numbers point at the wrong rows, so pin them to each other over a
+    /// spread that exercises every bucket and every tiebreaker.
+    func testSqlAndInMemoryRankingAgree() throws {
+        let databaseManager = try makeDatabaseManager()
+        let projectRepository = ProjectRepository(dbQueue: databaseManager.dbQueue)
+        let entryRepository = EntryRepository(dbQueue: databaseManager.dbQueue)
+        let defaultProject = try XCTUnwrap(projectRepository.fetchDefault())
+
+        let now = Date()
+        let samples: [(id: String, useCount: Int, ageDays: Double?, pinned: Bool)] = [
+            ("a-hot-today", 600, 0, false),
+            ("b-hot-but-stale", 500, 400, false),
+            ("c-modest-today", 10, 0.5, false),
+            ("d-rare-and-old", 3, 60, false),
+            ("e-never-used", 0, nil, false),
+            ("f-pinned-cold", 1, 300, true),
+            ("g-week-old", 40, 6, false),
+            ("h-month-old", 40, 20, false),
+        ]
+        for sample in samples {
+            try entryRepository.create(
+                Entry(
+                    id: sample.id,
+                    projectId: defaultProject.id,
+                    title: sample.id,
+                    content: "ranking sample",
+                    isPinned: sample.pinned,
+                    sortOrder: 0,
+                    useCount: sample.useCount,
+                    lastUsedAt: sample.ageDays.map { now.addingTimeInterval(-$0 * 86_400) },
+                    createdAt: now,
+                    updatedAt: now
+                )
+            )
+        }
+
+        let fromSQL = try entryRepository.fetchByProject(defaultProject.id)
+        let fromSwift = QuickPanelViewModel.applyPanelRankingSort(
+            fromSQL.shuffled(),
+            currentProjectId: defaultProject.id,
+            now: now
+        )
+        XCTAssertEqual(fromSQL.map(\.id), fromSwift.map(\.id))
+
+        // And the order is the one the user asked for: pinned first, then frecency.
+        XCTAssertEqual(fromSQL.first?.id, "f-pinned-cold")
+        let unpinned = fromSQL.dropFirst().map(\.id)
+        XCTAssertEqual(Array(unpinned.prefix(3)), ["a-hot-today", "c-modest-today", "g-week-old"])
+        XCTAssertEqual(unpinned.last, "e-never-used")
+        // The 500-use entry untouched for over a year is no longer near the top.
+        let staleIndex = try XCTUnwrap(unpinned.firstIndex(of: "b-hot-but-stale"))
+        let modestIndex = try XCTUnwrap(unpinned.firstIndex(of: "c-modest-today"))
+        XCTAssertGreaterThan(staleIndex, modestIndex)
+    }
+
+    func testMigrationClearsRetiredSortOrderValues() throws {
+        let databaseManager = try makeDatabaseManager()
+        let projectRepository = ProjectRepository(dbQueue: databaseManager.dbQueue)
+        let entryRepository = EntryRepository(dbQueue: databaseManager.dbQueue)
+        let defaultProject = try XCTUnwrap(projectRepository.fetchDefault())
+
+        // Simulate an archive imported before v6, which is the only way a non-zero value
+        // ever reached the column.
+        try entryRepository.create(
+            Entry(
+                id: "imported",
+                projectId: defaultProject.id,
+                title: "Imported",
+                content: "x",
+                sortOrder: 1_003
+            )
+        )
+        try databaseManager.dbQueue.write { db in
+            try db.execute(sql: "UPDATE entries SET sort_order = 1003 WHERE id = 'imported'")
+        }
+
+        var migrator = DatabaseMigrator()
+        Migrations.registerAll(&migrator)
+        try databaseManager.dbQueue.write { db in
+            try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = 'v6_retire_entry_sort_order'")
+        }
+        try migrator.migrate(databaseManager.dbQueue)
+
+        let stillSet = try databaseManager.dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM entries WHERE sort_order <> 0") ?? -1
+        }
+        XCTAssertEqual(stillSet, 0)
     }
 
     @MainActor
