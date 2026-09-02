@@ -1536,38 +1536,35 @@ final class PromptPanelTests: XCTestCase {
         XCTAssertEqual(sorted.map(\.id), [heavilyUsedEntry.id, staleManualTopEntry.id])
     }
 
-    func testEntryRankingWeighsFrequencyAgainstRecency() {
+    func testEntryRankingDecaysUseCountByHalfLife() {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         func daysAgo(_ days: Double) -> Date { now.addingTimeInterval(-days * 86_400) }
+        func score(_ useCount: Int, _ days: Double?) -> Double {
+            EntryRanking.score(useCount: useCount, lastUsedAt: days.map(daysAgo), now: now)
+        }
 
-        // Bucket boundaries are half-open: the weight changes AT maxAgeDays, not after it.
-        XCTAssertEqual(EntryRanking.recencyWeight(ageDays: 0), 100)
-        XCTAssertEqual(EntryRanking.recencyWeight(ageDays: 3), 100)
-        XCTAssertEqual(EntryRanking.recencyWeight(ageDays: 4), 70)
-        XCTAssertEqual(EntryRanking.recencyWeight(ageDays: 30), 50)
-        XCTAssertEqual(EntryRanking.recencyWeight(ageDays: 31), 30)
-        XCTAssertEqual(EntryRanking.recencyWeight(ageDays: 180), EntryRanking.staleWeight)
+        // The half-life is the whole contract: one half-life of neglect halves the score.
+        XCTAssertEqual(score(100, 0), 100, accuracy: 0.001)
+        XCTAssertEqual(score(100, EntryRanking.halfLifeDays), 50, accuracy: 0.001)
+        XCTAssertEqual(score(100, EntryRanking.halfLifeDays * 2), 25, accuracy: 0.001)
 
-        // A prompt used 600 times today beats one used 3 times two months ago...
-        XCTAssertGreaterThan(
-            EntryRanking.score(useCount: 600, lastUsedAt: now, now: now),
-            EntryRanking.score(useCount: 3, lastUsedAt: daysAgo(60), now: now)
-        )
-        // ...and a once-hot prompt untouched for a year sinks below a modest recent one,
-        // which is the whole point of decaying instead of ranking on the raw total.
-        XCTAssertGreaterThan(
-            EntryRanking.score(useCount: 10, lastUsedAt: now, now: now),
-            EntryRanking.score(useCount: 500, lastUsedAt: daysAgo(365), now: now)
-        )
-        // Never used ranks below used-once-long-ago, so a stale entry still beats a blank.
-        XCTAssertEqual(EntryRanking.score(useCount: 0, lastUsedAt: nil, now: now), 0)
-        XCTAssertGreaterThan(
-            EntryRanking.score(useCount: 1, lastUsedAt: daysAgo(900), now: now),
-            EntryRanking.score(useCount: 99, lastUsedAt: nil, now: now)
-        )
-        // A negative age (clock moved backwards, or an imported future timestamp) must not
-        // fall off the bucket table.
-        XCTAssertEqual(EntryRanking.recencyWeight(ageDays: -5), 100)
+        // The case the user reported: frequency leads, recency only modulates it. 19 uses
+        // three months ago must stay ahead of 6 uses today.
+        XCTAssertGreaterThan(score(19, 97), score(6, 0))
+        XCTAssertGreaterThan(score(15, 82), score(6, 0))
+        // But recency still decides between comparable counts.
+        XCTAssertGreaterThan(score(40, 6), score(40, 20))
+        // And a once-hot prompt untouched for two years finally drops below a modest
+        // prompt in current use, which is why the count decays at all.
+        XCTAssertGreaterThan(score(10, 0), score(500, 730))
+
+        // Never used scores zero, below anything with any history.
+        XCTAssertEqual(score(0, nil), 0)
+        XCTAssertGreaterThan(score(1, 900), score(99, nil))
+
+        // A future timestamp (clock skew, or an imported record) must not be amplified into
+        // a permanent top slot.
+        XCTAssertEqual(score(10, -365), score(10, 0), accuracy: 0.001)
     }
 
     /// The panel re-sorts in memory while the repository sorts in SQL. If those two ever
@@ -1607,6 +1604,9 @@ final class PromptPanelTests: XCTestCase {
             )
         }
 
+        // The repository binds its own `now`, microseconds after this one. Scores here are
+        // separated by whole integers, so that gap cannot reorder anything — see the note on
+        // precision in EntryRanking.
         let fromSQL = try entryRepository.fetchByProject(defaultProject.id)
         let fromSwift = QuickPanelViewModel.applyPanelRankingSort(
             fromSQL.shuffled(),
@@ -1616,9 +1616,10 @@ final class PromptPanelTests: XCTestCase {
         XCTAssertEqual(fromSQL.map(\.id), fromSwift.map(\.id))
 
         // And the order is the one the user asked for: pinned first, then frecency.
-        // Scores, for the record: a=600*100, g=40*70, h=40*50, c=10*100, b=500*1,
-        // d=3*30, e=0 — note that "used 40 times this month" outranks "used 10 times
-        // today", and that the 500-use entry untouched for over a year sinks below both.
+        // Scores, for the record (half-life 90d): a=600.0, g=38.2, h=34.3, b=23.0,
+        // c=10.0, d=1.9, e=0 — "used 40 times in the last three weeks" outranks "used 10
+        // times today", and the 500-use entry untouched for 400 days has fallen past both
+        // of the 40-use ones.
         XCTAssertEqual(fromSQL.first?.id, "f-pinned-cold")
         XCTAssertEqual(
             fromSQL.dropFirst().map(\.id),
@@ -1626,8 +1627,8 @@ final class PromptPanelTests: XCTestCase {
                 "a-hot-today",
                 "g-week-old",
                 "h-month-old",
-                "c-modest-today",
                 "b-hot-but-stale",
+                "c-modest-today",
                 "d-rare-and-old",
                 "e-never-used",
             ]
