@@ -117,6 +117,8 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
     @Published var selectedEntryId: String?
+    /// Bumped to move focus into the library search field (⌘F).
+    @Published private(set) var searchFocusToken: Int = 0
     @Published var entryKindFilter: String? {
         didSet {
             refreshDisplayedEntriesUnlessBatching()
@@ -388,6 +390,71 @@ final class MainWindowViewModel: ObservableObject {
 
     func clearEntryFilters() {
         updateEntryFilters(kind: nil, tag: nil)
+    }
+
+    // MARK: - Main window shortcuts
+
+    /// A ⌘-combination the main window owns.
+    ///
+    /// The library drew ⌘F / ⌘C / ⌘E next to the controls they belong to, but
+    /// nothing implemented them: ⌘C fell through to the Edit menu's generic
+    /// Copy, and ⌘F / ⌘E did nothing at all.
+    ///
+    /// Copy-entry is bound to ⇧⌘C rather than ⌘C on purpose. The preview pane's
+    /// content is selectable, so claiming plain ⌘C would mean a user who
+    /// highlights part of a prompt and copies it silently gets the whole entry
+    /// instead. ⇧⌘C is unclaimed, leaves ⌘C alone everywhere, and still gives
+    /// the action a keyboard route.
+    enum MainWindowKeyCommand: Equatable {
+        case focusSearch
+        case copySelectedEntry
+        case editSelectedEntry
+    }
+
+    static func mainWindowKeyCommand(
+        modifierFlags: NSEvent.ModifierFlags,
+        charactersIgnoringModifiers: String?
+    ) -> MainWindowKeyCommand? {
+        guard modifierFlags.contains(.command) else {
+            return nil
+        }
+        guard modifierFlags.isDisjoint(with: [.option, .control]) else {
+            return nil
+        }
+        let characters = charactersIgnoringModifiers?.lowercased()
+        if modifierFlags.contains(.shift) {
+            return characters == "c" ? .copySelectedEntry : nil
+        }
+        switch characters {
+        case "f": return .focusSearch
+        case "e": return .editSelectedEntry
+        default: return nil
+        }
+    }
+
+    /// Run a main-window command. Returns `false` when it does not apply, so
+    /// the caller lets AppKit handle the event normally — that is what keeps
+    /// ⌘C copying highlighted text when no entry is selected.
+    @discardableResult
+    func handleMainWindowKeyCommand(_ command: MainWindowKeyCommand) -> Bool {
+        guard selectedTab == .library else {
+            return false
+        }
+        switch command {
+        case .focusSearch:
+            searchFocusToken += 1
+        case .copySelectedEntry:
+            guard let entry = selectedEntry else {
+                return false
+            }
+            copyEntryContent(entry)
+        case .editSelectedEntry:
+            guard let entry = selectedEntry else {
+                return false
+            }
+            startEditEntry(entry)
+        }
+        return true
     }
 
     func copyEntryContent(_ entry: Entry) {

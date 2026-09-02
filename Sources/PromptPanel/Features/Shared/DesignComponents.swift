@@ -6,6 +6,67 @@ enum Design {
     static let cardCornerRadius: CGFloat = 10
     static let windowCornerRadius: CGFloat = 12
     static let popoverShadowRadius: CGFloat = 36
+
+    /// Type scale. Six steps, whole points only.
+    ///
+    /// Half-point sizes and a dozen near-identical steps used to be scattered
+    /// across the views; they cost legibility (9pt labels) without buying any
+    /// hierarchy. Everything now snaps to one of these, so density comes from
+    /// tighter spacing rather than from shrinking text.
+    enum TextSize: CGFloat {
+        /// Counters, keycaps, badge text. Almost always monospaced.
+        case micro = 10
+        /// Meta lines, hints, section headings.
+        case caption = 11
+        /// Default UI text: labels, buttons, secondary copy.
+        case body = 12
+        /// Row titles and editable content.
+        case title = 13
+        /// Sheet headers.
+        case heading = 15
+        /// The preview pane's entry title — the one place that needs to shout.
+        case display = 18
+    }
+
+    /// Glyph scale for SF Symbols, deliberately one step finer than the type
+    /// scale because symbols read larger than text at the same point size.
+    enum IconSize: CGFloat {
+        /// Chevrons and inline pin markers.
+        case micro = 9
+        case small = 11
+        case base = 12
+        /// Empty-state glyph inside a list column.
+        case large = 16
+        /// Empty-state glyph for a full pane.
+        case hero = 22
+    }
+
+    /// Vertical/horizontal spacing scale. 2pt grid.
+    enum Space {
+        static let hairline: CGFloat = 0.5
+        static let xxs: CGFloat = 2
+        static let xs: CGFloat = 4
+        static let sm: CGFloat = 6
+        static let md: CGFloat = 8
+        static let lg: CGFloat = 10
+        static let xl: CGFloat = 14
+    }
+}
+
+/// `Font.Design` shadows the app's `Design` enum inside `extension Font`,
+/// so the scales are reached through this alias.
+typealias PPDesign = Design
+
+extension Font {
+    /// Text in the PromptPanel type scale. Prefer this over raw point sizes.
+    static func ui(_ size: PPDesign.TextSize, weight: Font.Weight = .regular, mono: Bool = false) -> Font {
+        .system(size: size.rawValue, weight: weight, design: mono ? .monospaced : .default)
+    }
+
+    /// SF Symbol glyph in the PromptPanel icon scale.
+    static func icon(_ size: PPDesign.IconSize, weight: Font.Weight = .medium) -> Font {
+        .system(size: size.rawValue, weight: weight)
+    }
 }
 
 extension View {
@@ -23,17 +84,17 @@ struct KbdLabel: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .font(.ui(.micro, weight: .medium, mono: true))
             .foregroundStyle(Constants.VisualStyle.textSecondary)
-            .padding(.horizontal, 5)
-            .frame(minWidth: 18, minHeight: 18)
+            .padding(.horizontal, Design.Space.xs)
+            .frame(minWidth: 17, minHeight: 17)
             .background(
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .fill(Constants.VisualStyle.tintMedium)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .strokeBorder(Constants.VisualStyle.tintStrong, lineWidth: 0.5)
+                    .strokeBorder(Constants.VisualStyle.tintStrong, lineWidth: Constants.Layout.hairline)
             )
     }
 }
@@ -61,21 +122,21 @@ struct FilterChip: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
+            HStack(spacing: Design.Space.xs) {
                 if let systemImage {
                     Image(systemName: systemImage)
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.icon(.small))
                 }
                 Text(label)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.ui(.caption, weight: .medium))
                 if let count {
                     Text("\(count)")
-                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                        .font(.ui(.micro, weight: .medium, mono: true))
                         .opacity(0.8)
                 }
             }
-            .padding(.horizontal, 8)
-            .frame(height: 22)
+            .padding(.horizontal, Design.Space.sm)
+            .frame(height: Constants.Layout.compactControlHeight - 2)
             .foregroundStyle(isActive ? Constants.VisualStyle.accent : Constants.VisualStyle.textTertiary)
             .background(
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
@@ -92,7 +153,7 @@ struct SectionHeading: View {
 
     var body: some View {
         Text(text.uppercased())
-            .font(.system(size: 10.5, weight: .semibold))
+            .font(.ui(.caption, weight: .semibold))
             .tracking(0.8)
             .foregroundStyle(Constants.VisualStyle.textQuaternary)
     }
@@ -121,19 +182,19 @@ struct PrimaryActionButton: View {
             HStack(spacing: 6) {
                 if let systemImage {
                     Image(systemName: systemImage)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.icon(.small, weight: .semibold))
                 }
                 Text(title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.ui(.body, weight: .semibold))
                 if let shortcut {
                     Text(shortcut)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(.ui(.micro, weight: .medium, mono: true))
                         .opacity(0.8)
                 }
             }
             .foregroundStyle(.white)
-            .padding(.horizontal, 12)
-            .frame(height: 28)
+            .padding(.horizontal, Design.Space.lg)
+            .frame(height: Constants.Layout.regularControlHeight)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(Constants.VisualStyle.accent)
@@ -175,26 +236,26 @@ struct GhostActionButton: View {
             HStack(spacing: 6) {
                 if let systemImage {
                     Image(systemName: systemImage)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.icon(.small))
                 }
                 Text(title)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.ui(.body, weight: .medium))
                 if let shortcut {
                     Text(shortcut)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(.ui(.micro, weight: .medium, mono: true))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
                 }
             }
             .foregroundStyle(foreground)
-            .padding(.horizontal, 11)
-            .frame(height: 28)
+            .padding(.horizontal, Design.Space.lg)
+            .frame(height: Constants.Layout.regularControlHeight)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(Constants.VisualStyle.tintMedium)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(strokeColor, lineWidth: 0.5)
+                    .strokeBorder(strokeColor, lineWidth: Constants.Layout.hairline)
             )
             .roundedHitTarget(cornerRadius: 6)
         }
@@ -232,9 +293,9 @@ struct QuietIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 12, weight: .medium))
+                .font(.icon(.base))
                 .foregroundStyle(tint ?? Constants.VisualStyle.textTertiary)
-                .frame(width: 26, height: 24)
+                .frame(width: Constants.Layout.compactControlHeight, height: Constants.Layout.compactControlHeight)
                 .background(
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
                         .fill(Color.clear)

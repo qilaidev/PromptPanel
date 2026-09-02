@@ -776,6 +776,147 @@ final class PromptPanelTests: XCTestCase {
         )
     }
 
+    // MARK: - Quick panel ⌘ shortcuts
+
+    func testPanelKeyCommandMapsCommandDigitsToDirectExecution() {
+        for digit in 1...9 {
+            XCTAssertEqual(
+                QuickPanelViewModel.panelKeyCommand(
+                    modifierFlags: [.command],
+                    charactersIgnoringModifiers: "\(digit)"
+                ),
+                .executeEntry(number: digit)
+            )
+        }
+    }
+
+    func testPanelKeyCommandMapsCopyAndPin() {
+        XCTAssertEqual(
+            QuickPanelViewModel.panelKeyCommand(modifierFlags: [.command], charactersIgnoringModifiers: "c"),
+            .copySelection
+        )
+        XCTAssertEqual(
+            QuickPanelViewModel.panelKeyCommand(modifierFlags: [.command], charactersIgnoringModifiers: "C"),
+            .copySelection
+        )
+        XCTAssertEqual(
+            QuickPanelViewModel.panelKeyCommand(modifierFlags: [.command], charactersIgnoringModifiers: "p"),
+            .togglePin
+        )
+    }
+
+    func testPanelKeyCommandIgnoresUnhandledCombinations() {
+        // No ⌘ at all.
+        XCTAssertNil(QuickPanelViewModel.panelKeyCommand(modifierFlags: [], charactersIgnoringModifiers: "1"))
+        // Extra modifiers stay available to the system / other apps.
+        XCTAssertNil(QuickPanelViewModel.panelKeyCommand(modifierFlags: [.command, .shift], charactersIgnoringModifiers: "1"))
+        XCTAssertNil(QuickPanelViewModel.panelKeyCommand(modifierFlags: [.command, .option], charactersIgnoringModifiers: "c"))
+        XCTAssertNil(QuickPanelViewModel.panelKeyCommand(modifierFlags: [.command, .control], charactersIgnoringModifiers: "p"))
+        // ⌘0 is not a direct-execution slot; other letters are untouched.
+        XCTAssertNil(QuickPanelViewModel.panelKeyCommand(modifierFlags: [.command], charactersIgnoringModifiers: "0"))
+        XCTAssertNil(QuickPanelViewModel.panelKeyCommand(modifierFlags: [.command], charactersIgnoringModifiers: "v"))
+        XCTAssertNil(QuickPanelViewModel.panelKeyCommand(modifierFlags: [.command], charactersIgnoringModifiers: nil))
+    }
+
+    func testPanelKeyCommandIgnoresCapsLockAndFunctionNoise() {
+        // Caps lock / numeric-keypad flags ride along on real key events and
+        // must not disqualify ⌘1.
+        XCTAssertEqual(
+            QuickPanelViewModel.panelKeyCommand(
+                modifierFlags: [.command, .capsLock, .numericPad],
+                charactersIgnoringModifiers: "1"
+            ),
+            .executeEntry(number: 1)
+        )
+    }
+
+    func testPanelKeyCommandClosesOnBareEscape() {
+        XCTAssertEqual(
+            QuickPanelViewModel.panelKeyCommand(
+                keyCode: 53,
+                modifierFlags: [],
+                charactersIgnoringModifiers: "\u{1b}"
+            ),
+            .closePanel
+        )
+        // Modified Escape belongs to the system, not to the panel.
+        XCTAssertNil(
+            QuickPanelViewModel.panelKeyCommand(
+                keyCode: 53,
+                modifierFlags: [.command],
+                charactersIgnoringModifiers: "\u{1b}"
+            )
+        )
+    }
+
+    // MARK: - Main window ⌘ shortcuts
+
+    func testMainWindowKeyCommandMapsTheShortcutsTheLibraryAdvertises() {
+        XCTAssertEqual(
+            MainWindowViewModel.mainWindowKeyCommand(modifierFlags: [.command], charactersIgnoringModifiers: "f"),
+            .focusSearch
+        )
+        XCTAssertEqual(
+            MainWindowViewModel.mainWindowKeyCommand(modifierFlags: [.command], charactersIgnoringModifiers: "E"),
+            .editSelectedEntry
+        )
+        XCTAssertEqual(
+            MainWindowViewModel.mainWindowKeyCommand(
+                modifierFlags: [.command, .shift],
+                charactersIgnoringModifiers: "c"
+            ),
+            .copySelectedEntry
+        )
+    }
+
+    func testMainWindowNeverClaimsPlainCommandC() {
+        // The preview pane's content is selectable. Claiming ⌘C would mean a
+        // user who highlights part of a prompt silently copies the whole entry.
+        XCTAssertNil(
+            MainWindowViewModel.mainWindowKeyCommand(modifierFlags: [.command], charactersIgnoringModifiers: "c")
+        )
+    }
+
+    func testMainWindowKeyCommandLeavesOtherCombinationsAlone() {
+        XCTAssertNil(MainWindowViewModel.mainWindowKeyCommand(modifierFlags: [], charactersIgnoringModifiers: "f"))
+        XCTAssertNil(
+            MainWindowViewModel.mainWindowKeyCommand(modifierFlags: [.command, .shift], charactersIgnoringModifiers: "f")
+        )
+        XCTAssertNil(
+            MainWindowViewModel.mainWindowKeyCommand(modifierFlags: [.command, .option], charactersIgnoringModifiers: "e")
+        )
+        // ⌘V, ⌘W, ⌘Q and friends stay with the system.
+        XCTAssertNil(MainWindowViewModel.mainWindowKeyCommand(modifierFlags: [.command], charactersIgnoringModifiers: "v"))
+        XCTAssertNil(MainWindowViewModel.mainWindowKeyCommand(modifierFlags: [.command], charactersIgnoringModifiers: "w"))
+        XCTAssertNil(MainWindowViewModel.mainWindowKeyCommand(modifierFlags: [.command], charactersIgnoringModifiers: nil))
+    }
+
+    // MARK: - Execution in-flight guard
+
+    func testExecutionGuardBlocksASecondRunWhileOneIsInFlight() {
+        XCTAssertTrue(ExecuteService.shouldStartExecution(isExecuting: false, inFlightForMs: nil))
+        XCTAssertFalse(ExecuteService.shouldStartExecution(isExecuting: true, inFlightForMs: 0))
+        XCTAssertFalse(
+            ExecuteService.shouldStartExecution(
+                isExecuting: true,
+                inFlightForMs: ExecuteService.inFlightGuardTimeoutMs - 1
+            )
+        )
+    }
+
+    func testExecutionGuardReleasesItselfWhenAPreviousRunNeverFinished() {
+        // A guard that could stick forever would silently disable every later
+        // click and keystroke in the panel.
+        XCTAssertTrue(
+            ExecuteService.shouldStartExecution(
+                isExecuting: true,
+                inFlightForMs: ExecuteService.inFlightGuardTimeoutMs
+            )
+        )
+        XCTAssertTrue(ExecuteService.shouldStartExecution(isExecuting: true, inFlightForMs: 60_000))
+        XCTAssertTrue(ExecuteService.shouldStartExecution(isExecuting: true, inFlightForMs: nil))
+    }
+
     func testHotkeyRecorderCancelsOnBareEscape() {
         XCTAssertEqual(
             HotkeyRecorderModel.outcome(for: makeKeyStroke(keyCode: 53, modifiers: [])),
@@ -830,6 +971,23 @@ final class PromptPanelTests: XCTestCase {
     func testHotkeyRecorderAcceptsTheShippedDefaultCombination() {
         XCTAssertTrue(
             HotkeyRecorderModel.isAcceptableCombination(modifiers: [.option], isFunctionKey: false)
+        )
+    }
+
+    func testSecondaryInstancesNeverClaimTheGlobalHotkey() {
+        // Two processes registering the same Carbon shortcut makes which one
+        // answers a coin flip; the installed app then stops responding to its
+        // own hotkey for reasons the user cannot see.
+        XCTAssertTrue(AppLaunchCoordinator.shouldRegisterGlobalHotkey(environment: [:]))
+        XCTAssertTrue(
+            AppLaunchCoordinator.shouldRegisterGlobalHotkey(
+                environment: [AppLaunchCoordinator.allowExistingInstanceEnvironmentKey: "0"]
+            )
+        )
+        XCTAssertFalse(
+            AppLaunchCoordinator.shouldRegisterGlobalHotkey(
+                environment: [AppLaunchCoordinator.allowExistingInstanceEnvironmentKey: "1"]
+            )
         )
     }
 
@@ -1426,19 +1584,51 @@ final class PromptPanelTests: XCTestCase {
         XCTAssertFalse(
             ExecuteService.isTargetApplicationRestoreMismatch(
                 expectedBundleId: "com.example.target",
-                observedBundleId: nil
+                observedBundleId: nil,
+                ownBundleId: "com.promptpanel.app"
             )
         )
         XCTAssertFalse(
             ExecuteService.isTargetApplicationRestoreMismatch(
                 expectedBundleId: nil,
-                observedBundleId: "com.example.target"
+                observedBundleId: "com.example.target",
+                ownBundleId: "com.promptpanel.app"
             )
         )
         XCTAssertTrue(
             ExecuteService.isTargetApplicationRestoreMismatch(
                 expectedBundleId: "com.example.target",
-                observedBundleId: "com.example.other"
+                observedBundleId: "com.example.other",
+                ownBundleId: "com.promptpanel.app"
+            )
+        )
+    }
+
+    @MainActor
+    func testTargetApplicationRestoreRefusesToPasteIntoPromptPanelItself() {
+        // ⌘V goes to whatever is frontmost when it is posted. If that is still
+        // PromptPanel the content lands in our own window and the run would
+        // otherwise be logged as a success.
+        XCTAssertTrue(
+            ExecuteService.isTargetApplicationRestoreMismatch(
+                expectedBundleId: "com.promptpanel.app",
+                observedBundleId: "com.promptpanel.app",
+                ownBundleId: "com.promptpanel.app"
+            )
+        )
+        XCTAssertTrue(
+            ExecuteService.isTargetApplicationRestoreMismatch(
+                expectedBundleId: nil,
+                observedBundleId: "com.promptpanel.app",
+                ownBundleId: "com.promptpanel.app"
+            )
+        )
+        // A real target app is still pasted into.
+        XCTAssertFalse(
+            ExecuteService.isTargetApplicationRestoreMismatch(
+                expectedBundleId: "com.example.target",
+                observedBundleId: "com.example.target",
+                ownBundleId: "com.promptpanel.app"
             )
         )
     }

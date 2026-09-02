@@ -22,6 +22,26 @@ final class ExecuteService {
     private let targetApplicationProvider: () -> String?
     private let currentFrontApplicationProvider: () -> String?
     private var isExecuting = false
+    private var executionStartedAt: UInt64?
+
+    /// How long a single execution can legitimately stay in flight: the wait
+    /// for the target app to come back, plus the settle delay, plus slack.
+    static let inFlightGuardTimeoutMs =
+        Constants.targetAppRestoreTimeoutMs + Constants.targetAppPasteSettleDelayMs + 500
+
+    /// The in-flight guard stops a double-click from pasting twice. It is
+    /// deliberately time-bounded: if an execution ever fails to clear the flag,
+    /// a permanent guard would silently kill every later click and keystroke
+    /// with nothing but a log line to show for it.
+    static func shouldStartExecution(isExecuting: Bool, inFlightForMs: Int?) -> Bool {
+        guard isExecuting else {
+            return true
+        }
+        guard let inFlightForMs else {
+            return true
+        }
+        return inFlightForMs >= inFlightGuardTimeoutMs
+    }
 
     /// Callback to close/hide the panel before pasting.
     var onClosePanel: (() -> Void)?
@@ -49,13 +69,20 @@ final class ExecuteService {
 
     /// Execute an entry: clipboard → close panel → auto-paste → fallback.
     func execute(entry: Entry, currentProjectId: String, triggerSource: Constants.ExecutionTrigger) {
-        guard isExecuting == false else {
+        let inFlightForMs = executionStartedAt.map { elapsedMilliseconds(since: $0) }
+        guard Self.shouldStartExecution(isExecuting: isExecuting, inFlightForMs: inFlightForMs) else {
             PPLogger.execute.warning(
-                "Ignored execute request because another execution is still in flight: entry=\(entry.id), trigger=\(triggerSource.rawValue)"
+                "Ignored execute request because another execution is still in flight: entry=\(entry.id), trigger=\(triggerSource.rawValue), in_flight_ms=\(inFlightForMs ?? -1)"
             )
             return
         }
+        if isExecuting {
+            PPLogger.execute.error(
+                "Releasing a stuck in-flight execution guard after \(inFlightForMs ?? -1) ms so the panel stays usable"
+            )
+        }
         isExecuting = true
+        executionStartedAt = DispatchTime.now().uptimeNanoseconds
         PPLogger.execute.info(
             "Executing entry: \(entry.id), trigger=\(triggerSource.rawValue), project=\(currentProjectId)"
         )
@@ -85,7 +112,7 @@ final class ExecuteService {
                 totalDurationMs: elapsedMilliseconds(since: startTime)
             )
             onShowNotification?("复制失败，请重试", false)
-            isExecuting = false
+            finishExecution()
             return
         }
 
@@ -103,36 +130,51 @@ final class ExecuteService {
                 triggerSource: triggerSource,
                 startTime: startTime
             )
-            self.isExecuting = false
+            self.finishExecution()
         }
+    }
+
+    private func finishExecution() {
+        isExecuting = false
+        executionStartedAt = nil
     }
 
     private func waitForTargetApplicationRestore(expectedBundleId: String?) async -> TargetApplicationRestoreResult {
         let waitStartedAt = DispatchTime.now().uptimeNanoseconds
-        guard let expectedBundleId else {
-            return TargetApplicationRestoreResult(
-                observedBundleId: currentFrontApplicationProvider(),
-                durationMs: elapsedMilliseconds(since: waitStartedAt)
-            )
-        }
+        let ownBundleId = Bundle.main.bundleIdentifier
 
         var observedBundleId = currentFrontApplicationProvider()
         let timeoutNs = UInt64(Constants.targetAppRestoreTimeoutMs) * 1_000_000
         let pollNs = UInt64(Constants.targetAppRestorePollIntervalMs) * 1_000_000
         let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNs
 
-        while observedBundleId != expectedBundleId && DispatchTime.now().uptimeNanoseconds < deadline {
+        // Without a recorded target — the panel was opened from the tray, or
+        // while PromptPanel was already frontmost — there is still something to
+        // wait for: focus leaving PromptPanel. Returning immediately used to
+        // fire ⌘V into our own app microseconds after `orderOut`.
+        func hasSettled() -> Bool {
+            if let expectedBundleId {
+                return observedBundleId == expectedBundleId
+            }
+            guard let ownBundleId else {
+                return true
+            }
+            return observedBundleId != ownBundleId
+        }
+
+        while hasSettled() == false && DispatchTime.now().uptimeNanoseconds < deadline {
             try? await Task.sleep(nanoseconds: pollNs)
             observedBundleId = currentFrontApplicationProvider()
         }
 
-        if observedBundleId == expectedBundleId {
+        if hasSettled() {
             try? await Task.sleep(nanoseconds: UInt64(Constants.targetAppPasteSettleDelayMs) * 1_000_000)
+            observedBundleId = currentFrontApplicationProvider()
         }
 
         let durationMs = elapsedMilliseconds(since: waitStartedAt)
         PPLogger.execute.info(
-            "target_app_restore_completed expected=\(expectedBundleId) observed=\(observedBundleId ?? "unknown") duration_ms=\(durationMs)"
+            "target_app_restore_completed expected=\(expectedBundleId ?? "unknown") observed=\(observedBundleId ?? "unknown") duration_ms=\(durationMs)"
         )
         return TargetApplicationRestoreResult(
             observedBundleId: observedBundleId,
@@ -257,7 +299,22 @@ final class ExecuteService {
         }
     }
 
-    static func isTargetApplicationRestoreMismatch(expectedBundleId: String?, observedBundleId: String?) -> Bool {
+    /// Whether the keystroke would land somewhere other than the app the user
+    /// was in when the panel opened.
+    ///
+    /// `ownBundleId` matters as much as the expected target: the ⌘V is posted to
+    /// the HID event tap, so it goes to whatever is frontmost *at that instant*.
+    /// If PromptPanel has not yet yielded focus the paste lands back in our own
+    /// window — silently, and logged as a success. Refusing to paste into
+    /// ourselves is the only way that failure becomes visible to the user.
+    static func isTargetApplicationRestoreMismatch(
+        expectedBundleId: String?,
+        observedBundleId: String?,
+        ownBundleId: String? = Bundle.main.bundleIdentifier
+    ) -> Bool {
+        if let observedBundleId, let ownBundleId, observedBundleId == ownBundleId {
+            return true
+        }
         guard let expectedBundleId, let observedBundleId else {
             return false
         }

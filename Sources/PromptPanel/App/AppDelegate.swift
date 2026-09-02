@@ -20,6 +20,20 @@ enum AppLaunchCoordinator {
         environment[allowExistingInstanceEnvironmentKey] == "1"
     }
 
+    /// Whether this process may claim the system-wide hotkey.
+    ///
+    /// A secondary instance — one that was explicitly told to coexist with an
+    /// already running PromptPanel, i.e. QA capture runs and local debugging —
+    /// must not register it. Two processes can both register the same Carbon
+    /// shortcut, and which one answers becomes a coin flip: the user's
+    /// installed app stops responding to its own hotkey with nothing to
+    /// indicate why, and the panel that does open belongs to a build with a
+    /// throwaway library and no Accessibility grant, so nothing pastes.
+    /// The QA harness opens the panel directly instead, so it loses nothing.
+    static func shouldRegisterGlobalHotkey(environment: [String: String]) -> Bool {
+        shouldSkipDuplicateCheck(environment: environment) == false
+    }
+
     static func duplicateProcessIdentifier(
         currentProcessIdentifier: pid_t,
         runningProcessIdentifiers: [pid_t]
@@ -107,6 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private var mainWindow: NSWindow?
+    private var mainWindowKeyMonitor: Any?
     private let launchMaintenanceQueue = DispatchQueue(label: "PromptPanel.launch-maintenance", qos: .utility)
     private var panelOriginPersistWorkItem: DispatchWorkItem?
     private static let panelOriginPersistDebounceInterval: DispatchTimeInterval = .milliseconds(250)
@@ -213,6 +228,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// debouncing we would issue dozens of SQLite writes per drag. Coalesce into a single
     /// settle write 250ms after the last movement, and flush any pending write on terminate
     /// so we never lose the final position.
+    /// Resolve a raw key event from the quick panel into a panel command.
+    /// Returns `true` when the event was consumed.
+    private func handlePanelKeyEvent(_ event: NSEvent) -> Bool {
+        guard let command = QuickPanelViewModel.panelKeyCommand(
+            keyCode: event.keyCode,
+            modifierFlags: event.modifierFlags,
+            charactersIgnoringModifiers: event.charactersIgnoringModifiers
+        ) else {
+            return false
+        }
+        if command == .copySelection, PanelService.hasActiveTextSelection(in: event.window) {
+            return false
+        }
+        return quickPanelViewModel.handlePanelKeyCommand(command)
+    }
+
     private func schedulePanelOriginPersistence(_ origin: NSPoint) {
         panelOriginPersistWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
@@ -390,6 +421,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panelService.onPanelWindowOriginChanged = { [weak self] origin in
             self?.schedulePanelOriginPersistence(origin)
         }
+        panelService.onPanelKeyEvent = { [weak self] event in
+            self?.handlePanelKeyEvent(event) ?? false
+        }
 
         trayManager = TrayManager(
             onOpenMainWindow: { [weak self] in
@@ -415,7 +449,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             },
             panelOpenTracker: panelOpenTracker
         )
-        hotkeyService.start()
+        if AppLaunchCoordinator.shouldRegisterGlobalHotkey(environment: ProcessInfo.processInfo.environment) {
+            hotkeyService.start()
+        } else {
+            PPLogger.hotkey.notice(
+                "Skipping global hotkey registration: secondary instance (\(AppLaunchCoordinator.allowExistingInstanceEnvironmentKey)=1)"
+            )
+        }
     }
 
     private func scheduleLaunchMaintenance() {
@@ -519,6 +559,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.isOpaque = true
             window.delegate = self
             mainWindow = window
+            installMainWindowKeyMonitorIfNeeded()
         }
 
         mainWindowViewModel.load()
@@ -526,6 +567,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         updateAppActivationPolicy()
         mainWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// ⌘F / ⌘C / ⌘E for the library, resolved ahead of AppKit's key-equivalent
+    /// dispatch for the same reason the quick panel needs it: the Edit menu
+    /// owns ⌘C, and a focused text field owns the rest.
+    private func installMainWindowKeyMonitorIfNeeded() {
+        guard mainWindowKeyMonitor == nil else {
+            return
+        }
+        mainWindowKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let isClaimed = MainActor.assumeIsolated { self?.shouldSwallowMainWindowKeyDown(event) ?? false }
+            return isClaimed ? nil : event
+        }
+    }
+
+    private func shouldSwallowMainWindowKeyDown(_ event: NSEvent) -> Bool {
+        guard let mainWindow, mainWindow.isVisible, mainWindow.isKeyWindow else {
+            return false
+        }
+        guard event.window === mainWindow else {
+            return false
+        }
+        guard let command = MainWindowViewModel.mainWindowKeyCommand(
+            modifierFlags: event.modifierFlags,
+            charactersIgnoringModifiers: event.charactersIgnoringModifiers
+        ) else {
+            return false
+        }
+        return mainWindowViewModel.handleMainWindowKeyCommand(command)
     }
 
     private func refreshPermissionState() {

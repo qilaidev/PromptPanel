@@ -13,8 +13,8 @@ struct QuickPanelView: View {
 
             if let statusMessage = viewModel.statusMessage {
                 statusBanner(statusMessage, tone: viewModel.statusTone)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
+                    .padding(.horizontal, Design.Space.sm)
+                    .padding(.vertical, Design.Space.xs)
                     .overlay(dividerBottom, alignment: .bottom)
             }
 
@@ -33,33 +33,33 @@ struct QuickPanelView: View {
     private var dividerBottom: some View {
         Rectangle()
             .fill(Constants.VisualStyle.divider)
-            .frame(height: 0.5)
+            .frame(height: Constants.Layout.hairline)
     }
 
     private var dividerTop: some View {
         Rectangle()
             .fill(Constants.VisualStyle.divider)
-            .frame(height: 0.5)
+            .frame(height: Constants.Layout.hairline)
     }
 
     // MARK: - Header
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .center, spacing: Design.Space.md) {
             projectScope
 
             Rectangle()
                 .fill(Constants.VisualStyle.divider)
-                .frame(width: 1, height: 16)
+                .frame(width: Constants.Layout.hairline, height: 14)
 
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 12, weight: .medium))
+                .font(.icon(.base))
                 .foregroundStyle(Constants.VisualStyle.textTertiary)
 
             ZStack(alignment: .leading) {
                 if viewModel.query.isEmpty {
                     Text(searchPlaceholder)
-                        .font(.system(size: 12.5, weight: .medium))
+                        .font(.ui(.title, weight: .medium))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -77,19 +77,7 @@ struct QuickPanelView: View {
                     onMoveSelection: viewModel.moveSelection,
                     onSubmit: { viewModel.executeSelection(triggerSource: .keyboardSubmit) },
                     onEscape: viewModel.closePanel,
-                    onFocusResolved: viewModel.handleSearchFieldFocus,
-                    onCommandDigit: { digit in
-                        viewModel.executeEntry(atNumber: digit)
-                        return true
-                    },
-                    onCommandCopy: {
-                        viewModel.copySelectionOnly()
-                        return true
-                    },
-                    onCommandPin: {
-                        viewModel.togglePanelPinned()
-                        return true
-                    }
+                    onFocusResolved: viewModel.handleSearchFieldFocus
                 )
                 .id(viewModel.focusToken)
             }
@@ -100,7 +88,7 @@ struct QuickPanelView: View {
                     viewModel.query = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.icon(.small))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
                         .frame(width: Constants.Layout.compactControlHeight, height: Constants.Layout.compactControlHeight)
                         .roundedHitTarget(cornerRadius: 5)
@@ -111,9 +99,10 @@ struct QuickPanelView: View {
 
             pinButton
             settingsButton
+            closeButton
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, Design.Space.lg)
+        .padding(.vertical, Design.Space.sm)
     }
 
     private var searchPlaceholder: String {
@@ -143,16 +132,16 @@ struct QuickPanelView: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: "folder.fill")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.icon(.micro))
                     .foregroundStyle(Constants.VisualStyle.textTertiary)
                 Text(currentProjectName)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .font(.ui(.body, weight: .medium))
                     .foregroundStyle(Constants.VisualStyle.text)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 if viewModel.currentProjectId == appState.defaultProjectId {
                     Text("通用")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.ui(.micro, weight: .semibold))
                         .tracking(0.3)
                         .foregroundStyle(Constants.VisualStyle.accent)
                         .padding(.horizontal, 4)
@@ -163,7 +152,7 @@ struct QuickPanelView: View {
                         )
                 }
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.icon(.micro, weight: .semibold))
                     .foregroundStyle(Constants.VisualStyle.textTertiary)
             }
             .padding(.horizontal, 10)
@@ -174,7 +163,7 @@ struct QuickPanelView: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Design.pillCornerRadius, style: .continuous)
-                    .strokeBorder(Constants.VisualStyle.border, lineWidth: 0.5)
+                    .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
             )
             .roundedHitTarget(cornerRadius: Design.pillCornerRadius)
         }
@@ -188,7 +177,7 @@ struct QuickPanelView: View {
             viewModel.togglePanelPinned()
         } label: {
             Image(systemName: appState.isPanelPinned ? "pin.fill" : "pin")
-                .font(.system(size: 11, weight: .medium))
+                .font(.icon(.small))
                 .foregroundStyle(appState.isPanelPinned ? Constants.VisualStyle.warn : Constants.VisualStyle.textTertiary)
                 .frame(width: Constants.Layout.compactControlHeight, height: Constants.Layout.compactControlHeight)
                 .background(
@@ -198,8 +187,23 @@ struct QuickPanelView: View {
                 .roundedHitTarget(cornerRadius: 5)
         }
         .buttonStyle(.plain)
-        .keyboardShortcut("p", modifiers: .command)
         .help(appState.isPanelPinned ? "取消固定（⌘P）" : "固定面板（⌘P）")
+    }
+
+    /// The panel hides its titlebar buttons, and click-outside does not dismiss
+    /// a pinned panel — without this there is no pointer-only way to close it.
+    private var closeButton: some View {
+        Button {
+            viewModel.closePanel()
+        } label: {
+            Image(systemName: "xmark")
+                .font(.icon(.small, weight: .semibold))
+                .foregroundStyle(Constants.VisualStyle.textTertiary)
+                .frame(width: Constants.Layout.compactControlHeight, height: Constants.Layout.compactControlHeight)
+                .roundedHitTarget(cornerRadius: 5)
+        }
+        .buttonStyle(.plain)
+        .help("关闭面板（Esc）")
     }
 
     private var settingsButton: some View {
@@ -207,7 +211,7 @@ struct QuickPanelView: View {
             viewModel.openSettings()
         } label: {
             Image(systemName: "gearshape")
-                .font(.system(size: 11, weight: .medium))
+                .font(.icon(.small))
                 .foregroundStyle(Constants.VisualStyle.textTertiary)
                 .frame(width: Constants.Layout.compactControlHeight, height: Constants.Layout.compactControlHeight)
                 .roundedHitTarget(cornerRadius: 5)
@@ -243,8 +247,8 @@ struct QuickPanelView: View {
                         }
                     }
                 }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 6)
+                .padding(.horizontal, Design.Space.xs)
+                .padding(.vertical, Design.Space.xs)
             }
             .scrollIndicators(.hidden)
             .onChange(of: viewModel.selectedIndex) { _, _ in
@@ -262,25 +266,25 @@ struct QuickPanelView: View {
             ProgressView()
                 .controlSize(.small)
             Text("正在刷新当前词条…")
-                .font(.system(size: 12))
+                .font(.ui(.body))
                 .foregroundStyle(Constants.VisualStyle.textSecondary)
         }
-        .frame(maxWidth: .infinity, minHeight: 64)
-        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, minHeight: 52)
+        .padding(.vertical, Design.Space.md)
     }
 
     private var emptyState: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: Design.Space.xs) {
             Text(emptyStateTitle)
-                .font(.system(size: 12.5))
+                .font(.ui(.title))
                 .foregroundStyle(Constants.VisualStyle.textTertiary)
             Text(emptyStateSubtitle)
-                .font(.system(size: 11))
+                .font(.ui(.caption))
                 .foregroundStyle(Constants.VisualStyle.textQuaternary)
         }
         .multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity, minHeight: 72)
-        .padding(.vertical, 20)
+        .frame(maxWidth: .infinity, minHeight: 60)
+        .padding(.vertical, Design.Space.xl)
     }
 
     private var emptyStateTitle: String {
@@ -304,10 +308,10 @@ struct QuickPanelView: View {
     private func statusBanner(_ message: String, tone: QuickPanelViewModel.StatusTone) -> some View {
         HStack(spacing: 8) {
             Image(systemName: statusIcon(for: tone))
-                .font(.system(size: 11, weight: .medium))
+                .font(.icon(.small))
                 .foregroundStyle(statusAccent(for: tone))
             Text(displayStatusMessage(message, tone: tone))
-                .font(.system(size: 11.5))
+                .font(.ui(.body))
                 .foregroundStyle(Constants.VisualStyle.textSecondary)
                 .lineLimit(1)
             Spacer(minLength: 0)
@@ -316,15 +320,15 @@ struct QuickPanelView: View {
                     viewModel.openAccessibilitySettings()
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 11.5, weight: .medium))
+                .font(.ui(.body, weight: .medium))
                 .foregroundStyle(statusAccent(for: tone))
                 .padding(.horizontal, 6)
                 .frame(height: 22)
                 .roundedHitTarget(cornerRadius: 5)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 5)
+        .padding(.horizontal, Design.Space.lg)
+        .padding(.vertical, Design.Space.xs)
         .background(
             Rectangle()
                 .fill(statusBackground(for: tone))
@@ -332,7 +336,7 @@ struct QuickPanelView: View {
         .overlay(
             Rectangle()
                 .fill(statusBorder(for: tone))
-                .frame(height: 0.5),
+                .frame(height: Constants.Layout.hairline),
             alignment: .bottom
         )
     }
@@ -386,7 +390,7 @@ struct QuickPanelView: View {
     // MARK: - Footer
 
     private var footerHints: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: Design.Space.lg) {
             hint(keys: "↑↓", label: "选择")
             hint(keys: "Enter", label: "执行")
             hint(keys: "Esc", label: "关闭")
@@ -395,10 +399,10 @@ struct QuickPanelView: View {
             hint(keys: "⌘P", label: appState.isPanelPinned ? "取消固定" : "固定")
             Spacer(minLength: 0)
             Text("\(viewModel.entries.count) 条")
-                .font(.system(size: 10.5, weight: .regular, design: .monospaced))
+                .font(.ui(.caption, mono: true))
                 .foregroundStyle(Constants.VisualStyle.textTertiary)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, Design.Space.lg)
         .frame(height: Constants.Layout.footerHeight)
         .background(Constants.VisualStyle.scrim)
     }
@@ -407,7 +411,7 @@ struct QuickPanelView: View {
         HStack(spacing: 4) {
             KbdLabel(text: keys)
             Text(label)
-                .font(.system(size: 10.5))
+                .font(.ui(.caption))
                 .foregroundStyle(Constants.VisualStyle.textSecondary)
         }
     }
@@ -417,7 +421,7 @@ struct QuickPanelView: View {
             .fill(Constants.VisualStyle.surface)
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Constants.VisualStyle.borderStrong, lineWidth: 0.5)
+                    .strokeBorder(Constants.VisualStyle.borderStrong, lineWidth: Constants.Layout.hairline)
             )
     }
 }
@@ -437,43 +441,48 @@ private struct PanelRow: View {
         Button(action: onTap) {
             GeometryReader { geometry in
                 let titleWidth = titleColumnWidth(totalWidth: geometry.size.width)
-                HStack(spacing: 10) {
-                    Text(numberText)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(isSelected ? Constants.VisualStyle.accent : Constants.VisualStyle.textQuaternary)
-                        .frame(width: 24, alignment: .center)
+                HStack(spacing: Design.Space.md) {
+                    // Only reserve the ⌘1-9 gutter while the numbers are
+                    // actually shown; searching would otherwise leave a blank
+                    // column in every row.
+                    if showNumber {
+                        Text("\(index + 1)")
+                            .font(.ui(.micro, weight: .medium, mono: true))
+                            .foregroundStyle(isSelected ? Constants.VisualStyle.accent : Constants.VisualStyle.textQuaternary)
+                            .frame(width: 18, alignment: .center)
+                    }
 
                     Image(systemName: type.symbolName)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.icon(.base))
                         .foregroundStyle(level.color)
                         .frame(width: 16, height: 16)
 
-                    HStack(alignment: .firstTextBaseline, spacing: 12) {
-                        HStack(spacing: 5) {
+                    HStack(alignment: .firstTextBaseline, spacing: Design.Space.lg) {
+                        HStack(spacing: Design.Space.xs) {
                             Text(entry.title)
-                                .font(.system(size: 12.5, weight: .medium))
+                                .font(.ui(.title, weight: .medium))
                                 .foregroundStyle(Constants.VisualStyle.text)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                             if entry.isPinned {
                                 Image(systemName: "pin.fill")
-                                    .font(.system(size: 8, weight: .semibold))
+                                    .font(.icon(.micro, weight: .semibold))
                                     .foregroundStyle(Constants.VisualStyle.warn.opacity(0.85))
                             }
                         }
                         .frame(width: titleWidth, alignment: .leading)
 
                         Text(previewText)
-                            .font(.system(size: 11.5))
+                            .font(.ui(.body))
                             .foregroundStyle(Constants.VisualStyle.textSecondary)
                             .lineLimit(1)
                             .truncationMode(.tail)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    HStack(spacing: 8) {
+                    HStack(spacing: Design.Space.sm) {
                         Text("\(entry.useCount) 次")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .font(.ui(.micro, weight: .medium, mono: true))
                             .foregroundStyle(level.color)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
@@ -483,7 +492,7 @@ private struct PanelRow: View {
                             )
                         if showDefaultBadge {
                             Text("通用")
-                                .font(.system(size: 9.5, weight: .medium))
+                                .font(.ui(.micro, weight: .medium))
                                 .foregroundStyle(Constants.VisualStyle.textTertiary)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
@@ -493,14 +502,14 @@ private struct PanelRow: View {
                                 )
                         }
                         Text(type.displayName)
-                            .font(.system(size: 9.5, weight: .medium))
+                            .font(.ui(.micro, weight: .medium))
                             .foregroundStyle(isSelected ? Constants.VisualStyle.textSecondary : Constants.VisualStyle.textTertiary)
                     }
                     .layoutPriority(2)
                     .fixedSize(horizontal: true, vertical: false)
                 }
-                .padding(.leading, 8)
-                .padding(.trailing, 12)
+                .padding(.leading, Design.Space.sm)
+                .padding(.trailing, Design.Space.lg)
                 .frame(width: geometry.size.width, height: geometry.size.height)
                 .roundedHitTarget(cornerRadius: Design.rowCornerRadius)
             }
@@ -517,10 +526,6 @@ private struct PanelRow: View {
 
     private func titleColumnWidth(totalWidth: CGFloat) -> CGFloat {
         min(max(totalWidth * 0.28, 150), 260)
-    }
-
-    private var numberText: String {
-        showNumber ? "\(index + 1)" : ""
     }
 
     private var previewText: String {

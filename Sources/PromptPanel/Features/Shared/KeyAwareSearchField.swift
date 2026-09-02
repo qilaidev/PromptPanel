@@ -10,14 +10,6 @@ struct KeyAwareSearchField: NSViewRepresentable {
     let onSubmit: () -> Void
     let onEscape: () -> Void
     let onFocusResolved: (PanelFocusResult) -> Void
-    /// Optional handler for ⌘+digit (1-9). The `digit` passed is 1-indexed.
-    /// Return `true` to swallow the event.
-    var onCommandDigit: ((Int) -> Bool)? = nil
-    /// Optional handler for ⌘C. Return `true` to swallow the event (suppresses
-    /// the default text copy).
-    var onCommandCopy: (() -> Bool)? = nil
-    /// Optional handler for ⌘P. Return `true` to swallow the event.
-    var onCommandPin: (() -> Bool)? = nil
 
     func makeNSView(context: Context) -> PromptSearchField {
         let field = PromptSearchField()
@@ -28,34 +20,17 @@ struct KeyAwareSearchField: NSViewRepresentable {
                 .foregroundColor: NSColor.labelColor.withAlphaComponent(0.46)
             ]
         )
-        field.font = .systemFont(ofSize: 14)
+        // Must match the SwiftUI placeholder drawn on top of this field
+        // (`Design.TextSize.title`), otherwise the text jumps a point when the
+        // user starts typing.
+        field.font = .systemFont(ofSize: Design.TextSize.title.rawValue)
         field.sendsSearchStringImmediately = true
         field.sendsWholeSearchString = false
-        field.keyHandler = { [weak field] event in
-            if event.modifierFlags.contains(.command) {
-                // ⌘C — copy the selected entry and close.
-                if let characters = event.charactersIgnoringModifiers?.lowercased(), characters == "c",
-                   field?.stringValue.isEmpty == true || field?.currentEditor()?.selectedRange.length == 0 {
-                    if let onCommandCopy = field?.onCommandCopy, onCommandCopy() {
-                        return true
-                    }
-                }
-                // ⌘P — toggle the quick panel pinned state in place.
-                if let characters = event.charactersIgnoringModifiers?.lowercased(), characters == "p" {
-                    if let onCommandPin = field?.onCommandPin, onCommandPin() {
-                        return true
-                    }
-                }
-                // ⌘1…⌘9 — execute the Nth entry directly.
-                if let characters = event.charactersIgnoringModifiers,
-                   characters.count == 1,
-                   let digit = Int(characters),
-                   (1...9).contains(digit) {
-                    if let onCommandDigit = field?.onCommandDigit, onCommandDigit(digit) {
-                        return true
-                    }
-                }
-            }
+        // Arrow keys and Return only. ⌘-combinations and Esc are claimed by
+        // `PanelService`'s local event monitor, which runs ahead of this and
+        // keeps working after focus leaves the field; the cases below stay as a
+        // fallback for when the field itself is first responder.
+        field.keyHandler = { event in
             switch Int(event.keyCode) {
             case 126:
                 onMoveSelection(.up)
@@ -73,9 +48,6 @@ struct KeyAwareSearchField: NSViewRepresentable {
                 return false
             }
         }
-        field.onCommandDigit = onCommandDigit
-        field.onCommandCopy = onCommandCopy
-        field.onCommandPin = onCommandPin
         return field
     }
 
@@ -88,9 +60,6 @@ struct KeyAwareSearchField: NSViewRepresentable {
         context.coordinator.onSubmit = onSubmit
         context.coordinator.onEscape = onEscape
         context.coordinator.focusResolveHandler = onFocusResolved
-        nsView.onCommandDigit = onCommandDigit
-        nsView.onCommandCopy = onCommandCopy
-        nsView.onCommandPin = onCommandPin
 
         if context.coordinator.lastFocusToken != focusToken {
             context.coordinator.lastFocusToken = focusToken
@@ -291,9 +260,6 @@ extension PanelFocusResult {
 
 final class PromptSearchField: NSSearchField {
     var keyHandler: ((NSEvent) -> Bool)?
-    var onCommandDigit: ((Int) -> Bool)?
-    var onCommandCopy: (() -> Bool)?
-    var onCommandPin: (() -> Bool)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)

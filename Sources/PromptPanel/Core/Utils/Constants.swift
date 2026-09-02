@@ -127,16 +127,24 @@ enum Constants {
         }
     }
 
+    /// Layout metrics.
+    ///
+    /// The panel and the library are scanning surfaces: what matters is how
+    /// many entries fit on screen, so padding is kept to the minimum that still
+    /// separates rows, and control heights stay large enough to click.
+    /// `hairline` is the single line weight used by every divider and border —
+    /// 0.5pt renders as one physical pixel on Retina.
     enum Layout {
-        static let sectionSpacing: CGFloat = 14
-        static let sectionInset: CGFloat = 12
+        static let hairline: CGFloat = 0.5
+        static let sectionSpacing: CGFloat = 10
+        static let sectionInset: CGFloat = 10
         static let sectionCornerRadius: CGFloat = 9
         static let compactControlHeight: CGFloat = 24
-        static let regularControlHeight: CGFloat = 28
-        static let compactRowHeight: CGFloat = 26
-        static let regularRowHeight: CGFloat = 30
-        static let headerHeight: CGFloat = 34
-        static let footerHeight: CGFloat = 26
+        static let regularControlHeight: CGFloat = 26
+        static let compactRowHeight: CGFloat = 24
+        static let regularRowHeight: CGFloat = 28
+        static let headerHeight: CGFloat = 32
+        static let footerHeight: CGFloat = 24
         static let badgeCornerRadius: CGFloat = 4
         static let chipCornerRadius: CGFloat = 5
     }

@@ -48,15 +48,71 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Every QA instance this script launches, by pid. Killing by pid is the only
+# reliable way out: `pkill -f "$APP_PATH"` silently matches nothing when the
+# repo path contains non-ASCII characters, and a survivor keeps fighting the
+# user's installed PromptPanel for the global hotkey and the Accessibility
+# grant long after this script has exited.
+typeset -ga QA_APP_PIDS=()
+
 kill_qa_app() {
+    local pid
+    local alive
+
+    for pid in "${QA_APP_PIDS[@]}"; do
+        kill "$pid" >/dev/null 2>&1 || true
+    done
+
+    for _ in {1..20}; do
+        alive=0
+        for pid in "${QA_APP_PIDS[@]}"; do
+            if kill -0 "$pid" >/dev/null 2>&1; then
+                alive=1
+            fi
+        done
+        if [[ "$alive" -eq 0 ]]; then
+            break
+        fi
+        sleep 0.1
+    done
+
+    for pid in "${QA_APP_PIDS[@]}"; do
+        kill -9 "$pid" >/dev/null 2>&1 || true
+        wait "$pid" 2>/dev/null || true
+    done
+
+    # Belt and braces for anything launched by an earlier, interrupted run.
     pkill -f "$APP_PATH" >/dev/null 2>&1 || true
+    QA_APP_PIDS=()
 }
 
 cleanup() {
     kill_qa_app
 }
 
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
+
+# `screencapture` needs Screen Recording permission for whichever terminal runs
+# this script. Probe before building or launching anything, so a missing grant
+# costs a message instead of a half-finished run.
+require_screen_recording_permission() {
+    local probe="${TMPDIR%/}/promptpanel-screencapture-probe.png"
+    rm -f "$probe"
+    if screencapture -x "$probe" >/dev/null 2>&1 && [[ -s "$probe" ]]; then
+        rm -f "$probe"
+        return 0
+    fi
+    rm -f "$probe"
+    cat >&2 <<'PERMISSION_HELP'
+capture-ui-qa.sh needs Screen Recording permission for the terminal running it.
+
+  System Settings > Privacy & Security > Screen & System Audio Recording
+  enable your terminal (Terminal.app / iTerm / your IDE), then restart it.
+
+Nothing was built and no PromptPanel instance was launched.
+PERMISSION_HELP
+    return 1
+}
 
 build_app() {
     "${REPO_ROOT}/scripts/build-app.sh" --debug --no-archive --output-dir "$BUILD_OUTPUT_DIR" >/dev/null
@@ -72,9 +128,11 @@ bootstrap_database() {
         PROMPTPANEL_LOGS_DIR="$LOGS_DIR" \
         "$APP_PATH" >/dev/null 2>&1 &
     local pid=$!
+    QA_APP_PIDS+=("$pid")
     sleep 2
     kill "$pid" >/dev/null 2>&1 || true
     wait "$pid" 2>/dev/null || true
+    QA_APP_PIDS=("${(@)QA_APP_PIDS:#$pid}")
 }
 
 seed_sample_data() {
@@ -195,6 +253,7 @@ capture_window() {
         "$@" \
         "$APP_PATH" >/dev/null 2>&1 &
     local pid=$!
+    QA_APP_PIDS+=("$pid")
 
     local window_id
     window_id=$(wait_for_window_id "$pid" "$min_width" "$min_height")
@@ -204,6 +263,7 @@ capture_window() {
 
     kill "$pid" >/dev/null 2>&1 || true
     wait "$pid" 2>/dev/null || true
+    QA_APP_PIDS=("${(@)QA_APP_PIDS:#$pid}")
 }
 
 wait_for_valid_capture() {
@@ -245,6 +305,8 @@ rm -f \
     "$OUTPUT_DIR"/library-dark.png "$OUTPUT_DIR"/library-light.png \
     "$OUTPUT_DIR"/settings-dark.png "$OUTPUT_DIR"/settings-light.png
 # Legacy per-mode files above are cleaned so stale artifacts don't linger.
+
+require_screen_recording_permission
 
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
     build_app

@@ -382,6 +382,82 @@ final class QuickPanelViewModel: ObservableObject {
 
     // MARK: - Panel shortcuts
 
+    /// A ⌘-combination the quick panel owns.
+    ///
+    /// These cannot be expressed as SwiftUI `keyboardShortcut`s or as a
+    /// `keyDown` handler on the search field: while the field is being edited
+    /// the field editor is first responder, and AppKit resolves ⌘-combinations
+    /// through key-equivalent dispatch (main menu included) before any
+    /// `keyDown:` runs. `PanelService` therefore feeds raw key events here from
+    /// a local event monitor, which fires ahead of all of that.
+    enum PanelKeyCommand: Equatable {
+        case executeEntry(number: Int)
+        case copySelection
+        case togglePin
+        case closePanel
+    }
+
+    private static let escapeKeyCode: UInt16 = 53
+
+    /// Pure mapping from a key event to a panel command. Only a bare ⌘ counts —
+    /// ⌘⇧1 / ⌥⌘1 stay available to the system.
+    static func panelKeyCommand(
+        keyCode: UInt16 = .max,
+        modifierFlags: NSEvent.ModifierFlags,
+        charactersIgnoringModifiers: String?
+    ) -> PanelKeyCommand? {
+        // Esc is handled here rather than only on the search field: once focus
+        // moves off the field (a background click, a closed menu) the field's
+        // key handling stops running and the panel would have no way out.
+        if keyCode == escapeKeyCode, modifierFlags.isDisjoint(with: [.command, .shift, .option, .control]) {
+            return .closePanel
+        }
+        guard modifierFlags.contains(.command) else {
+            return nil
+        }
+        guard modifierFlags.isDisjoint(with: [.shift, .option, .control]) else {
+            return nil
+        }
+        guard let characters = charactersIgnoringModifiers?.lowercased(), characters.count == 1 else {
+            return nil
+        }
+        if let digit = Int(characters), (1...9).contains(digit) {
+            return .executeEntry(number: digit)
+        }
+        switch characters {
+        case "c":
+            return .copySelection
+        case "p":
+            return .togglePin
+        default:
+            return nil
+        }
+    }
+
+    /// Run a panel command. Returns `false` when the command does not apply
+    /// right now (for example ⌘4 with only three results), so the caller can
+    /// let AppKit handle the event normally instead of swallowing it.
+    @discardableResult
+    func handlePanelKeyCommand(_ command: PanelKeyCommand) -> Bool {
+        switch command {
+        case .executeEntry(let number):
+            guard entries.indices.contains(number - 1) else {
+                return false
+            }
+            executeEntry(atNumber: number)
+        case .copySelection:
+            guard selectedEntry != nil else {
+                return false
+            }
+            copySelectionOnly()
+        case .togglePin:
+            togglePanelPinned()
+        case .closePanel:
+            closePanel()
+        }
+        return true
+    }
+
     /// Execute the Nth visible entry (1-indexed). Used by ⌘1-9.
     func executeEntry(atNumber number: Int, triggerSource: Constants.ExecutionTrigger = .keyboardSubmit) {
         let index = number - 1

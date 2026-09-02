@@ -15,6 +15,7 @@ final class PanelService {
     private var panelDelegate: PanelDelegate?
     private var targetApplication: NSRunningApplication?
     private var activationObserver: NSObjectProtocol?
+    private var localKeyMonitor: Any?
     private var deactivateCloseGraceDeadline: Date?
     private let appState: AppState
     private let panelVisibilityCoordinator = PanelVisibilityCoordinator()
@@ -26,6 +27,9 @@ final class PanelService {
     var onDidStabilizeActivation: (() -> Void)?
     var onPanelContentSizeChanged: ((NSSize) -> Void)?
     var onPanelWindowOriginChanged: ((NSPoint) -> Void)?
+    /// Key events seen while the panel is key, before AppKit's own dispatch.
+    /// Return `true` to swallow the event.
+    var onPanelKeyEvent: ((NSEvent) -> Bool)?
 
     init(appState: AppState, panelOpenTracker: PanelOpenTracker? = nil) {
         self.appState = appState
@@ -36,6 +40,9 @@ final class PanelService {
     deinit {
         if let activationObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(activationObserver)
+        }
+        if let localKeyMonitor {
+            NSEvent.removeMonitor(localKeyMonitor)
         }
     }
 
@@ -199,7 +206,49 @@ final class PanelService {
         self.panel = panel
         self.panelDelegate = delegate
         panel.appearance = currentAppearance
+        installLocalKeyMonitorIfNeeded()
         PPLogger.panel.info("Panel created")
+    }
+
+    // MARK: - Panel key events
+
+    /// The panel has to intercept its ⌘-shortcuts before AppKit resolves key
+    /// equivalents: while the search field is being edited the field editor is
+    /// first responder, so a `keyDown:` override on the field never sees them,
+    /// and the main menu claims ⌘C outright. A local monitor runs inside
+    /// `NSApplication.sendEvent(_:)` ahead of both, which is the only place
+    /// where ⌘1-9 and ⌘C can reliably be claimed.
+    private func installLocalKeyMonitorIfNeeded() {
+        guard localKeyMonitor == nil else {
+            return
+        }
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            // The monitor always fires on the main thread.
+            let isClaimed = MainActor.assumeIsolated { self?.shouldSwallowPanelKeyDown(event) ?? false }
+            return isClaimed ? nil : event
+        }
+    }
+
+    private func shouldSwallowPanelKeyDown(_ event: NSEvent) -> Bool {
+        guard let panel, panel.isVisible, panel.isKeyWindow else {
+            return false
+        }
+        guard event.window === panel else {
+            return false
+        }
+        guard let onPanelKeyEvent else {
+            return false
+        }
+        return onPanelKeyEvent(event)
+    }
+
+    /// True when the focused editor holds a non-empty selection. ⌘C must keep
+    /// its "copy the highlighted text" meaning in that case.
+    static func hasActiveTextSelection(in window: NSWindow?) -> Bool {
+        guard let textView = window?.firstResponder as? NSTextView else {
+            return false
+        }
+        return textView.selectedRange().length > 0
     }
 
     private func configureWindowButtons(for panel: NSPanel) {
