@@ -33,7 +33,7 @@ final class ToastService {
 
     private func createPanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 320, height: 88),
+            contentRect: NSRect(x: 0, y: 0, width: 300, height: 60),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -55,25 +55,27 @@ private struct ToastView: View {
     let isSuccess: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: Design.Space.md) {
             Image(systemName: isSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                .font(.title3)
-                .foregroundStyle(isSuccess ? .green : .orange)
+                .font(.icon(.base, weight: .semibold))
+                .foregroundStyle(isSuccess ? Constants.VisualStyle.success : Constants.VisualStyle.warn)
 
             Text(message)
-                .font(.subheadline)
+                .font(.ui(.body))
+                .foregroundStyle(Constants.VisualStyle.text)
+                .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        .padding(.horizontal, Design.Space.lg)
+        .padding(.vertical, Design.Space.md)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: Design.cardCornerRadius, style: .continuous)
                 .fill(.ultraThinMaterial)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(.quaternary, lineWidth: 1)
+            RoundedRectangle(cornerRadius: Design.cardCornerRadius, style: .continuous)
+                .strokeBorder(Constants.VisualStyle.borderStrong, lineWidth: Constants.Layout.hairline)
         )
     }
 }

@@ -27,21 +27,27 @@ struct LibraryView: View {
     private var verticalDivider: some View {
         Rectangle()
             .fill(Constants.VisualStyle.divider)
-            .frame(width: 0.5)
+            .frame(width: Constants.Layout.hairline)
+    }
+
+    private var horizontalDivider: some View {
+        Rectangle()
+            .fill(Constants.VisualStyle.divider)
+            .frame(height: Constants.Layout.hairline)
     }
 
     // MARK: Projects column
 
     private var projectsColumn: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
+            HStack(spacing: Design.Space.sm) {
                 SectionHeading(text: "项目")
                 Spacer(minLength: 0)
                 Button {
                     viewModel.startCreateProject()
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.icon(.small, weight: .semibold))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
                         .frame(width: 22, height: 22)
                         .roundedHitTarget(cornerRadius: 5)
@@ -49,12 +55,12 @@ struct LibraryView: View {
                 .buttonStyle(.plain)
                 .help("新建项目")
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 14)
-            .padding(.bottom, 8)
+            .padding(.horizontal, Design.Space.lg)
+            .padding(.top, Design.Space.lg)
+            .padding(.bottom, Design.Space.sm)
 
             ScrollView {
-                LazyVStack(spacing: 2) {
+                LazyVStack(spacing: 1) {
                     ProjectRow(
                         title: "全部项目",
                         systemImage: "tray.full",
@@ -97,23 +103,21 @@ struct LibraryView: View {
                         }
                     }
                 }
-                .padding(.horizontal, 6)
+                .padding(.horizontal, Design.Space.sm)
             }
             .scrollIndicators(.hidden)
 
-            Rectangle()
-                .fill(Constants.VisualStyle.divider)
-                .frame(height: 0.5)
+            horizontalDivider
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: Design.Space.sm) {
                 Button {
                     viewModel.setCurrentProjectToSelected()
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: Design.Space.sm) {
                         Image(systemName: "scope")
-                            .font(.system(size: 10.5, weight: .medium))
+                            .font(.icon(.small))
                         Text(canMarkAsCurrent ? "设为当前项目" : selectedProjectFootnoteTitle)
-                            .font(.system(size: 11.5, weight: .medium))
+                            .font(.ui(.body, weight: .medium))
                             .lineLimit(1)
                             .truncationMode(.tail)
                         Spacer(minLength: 0)
@@ -132,12 +136,12 @@ struct LibraryView: View {
                 .disabled(!canMarkAsCurrent)
 
                 Text(selectedProjectFootnote)
-                    .font(.system(size: 10.5))
+                    .font(.ui(.caption))
                     .foregroundStyle(Constants.VisualStyle.textQuaternary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 10)
+            .padding(.horizontal, Design.Space.lg)
+            .padding(.vertical, Design.Space.md)
         }
     }
 
@@ -168,35 +172,31 @@ struct LibraryView: View {
     private var entriesColumn: some View {
         VStack(alignment: .leading, spacing: 0) {
             searchBar
-                .padding(.horizontal, 14)
-                .padding(.top, 12)
-                .padding(.bottom, 10)
+                .padding(.horizontal, Design.Space.lg)
+                .padding(.vertical, Design.Space.md)
 
-            Divider()
-                .background(Constants.VisualStyle.divider)
+            horizontalDivider
 
             if hasFilterChips {
                 filterChipsRow
-                Divider()
-                    .background(Constants.VisualStyle.divider)
+                horizontalDivider
             }
 
             countSortRow
-            Divider()
-                .background(Constants.VisualStyle.divider)
+            horizontalDivider
 
             entriesList
         }
     }
 
     private var searchBar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Design.Space.sm) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 11, weight: .medium))
+                .font(.icon(.small))
                 .foregroundStyle(Constants.VisualStyle.textTertiary)
             TextField("搜索标题或内容", text: $viewModel.entrySearchText)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12))
+                .font(.ui(.body))
                 .foregroundStyle(Constants.VisualStyle.text)
                 .focused($isEntrySearchFocused)
             if viewModel.entrySearchText.isEmpty {
@@ -206,7 +206,7 @@ struct LibraryView: View {
                     viewModel.entrySearchText = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.icon(.small))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
                         .frame(width: 22, height: 22)
                         .roundedHitTarget(cornerRadius: 5)
@@ -214,7 +214,7 @@ struct LibraryView: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, Design.Space.md)
         .frame(height: Constants.Layout.regularControlHeight)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -222,10 +222,13 @@ struct LibraryView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .strokeBorder(Constants.VisualStyle.border, lineWidth: 0.5)
+                .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
         )
         .roundedHitTarget(cornerRadius: 7)
         .onTapGesture {
+            isEntrySearchFocused = true
+        }
+        .onChange(of: viewModel.searchFocusToken) { _, _ in
             isEntrySearchFocused = true
         }
     }
@@ -236,7 +239,7 @@ struct LibraryView: View {
 
     private var filterChipsRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 2) {
+            HStack(spacing: Design.Space.xxs) {
                 FilterChip(
                     label: "全部",
                     count: viewModel.entries.count,
@@ -270,16 +273,16 @@ struct LibraryView: View {
                     }
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
+            .padding(.horizontal, Design.Space.md)
+            .padding(.vertical, 3)
         }
     }
 
     private var chipDivider: some View {
         Rectangle()
             .fill(Constants.VisualStyle.divider)
-            .frame(width: 1, height: 14)
-            .padding(.horizontal, 4)
+            .frame(width: Constants.Layout.hairline, height: 12)
+            .padding(.horizontal, Design.Space.xs)
     }
 
     private func kindCount(for kind: Constants.EntryType) -> Int {
@@ -289,7 +292,7 @@ struct LibraryView: View {
     private var countSortRow: some View {
         HStack(spacing: 0) {
             Text("\(viewModel.displayedEntries.count) 条")
-                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .font(.ui(.caption, weight: .medium, mono: true))
                 .tracking(0.8)
                 .foregroundStyle(Constants.VisualStyle.textQuaternary)
 
@@ -304,10 +307,10 @@ struct LibraryView: View {
             } label: {
                 HStack(spacing: 4) {
                     Text(viewModel.entrySortMode.title)
-                        .font(.system(size: 11))
+                        .font(.ui(.caption))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .semibold))
+                        .font(.icon(.micro, weight: .semibold))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
                 }
             }
@@ -320,9 +323,9 @@ struct LibraryView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.icon(.small))
                     Text("新建")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.ui(.caption, weight: .medium))
                 }
                 .foregroundStyle(Constants.VisualStyle.textSecondary)
                 .padding(.horizontal, 8)
@@ -335,8 +338,8 @@ struct LibraryView: View {
             .buttonStyle(.plain)
             .padding(.leading, 6)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
+        .padding(.horizontal, Design.Space.lg)
+        .padding(.vertical, Design.Space.xs)
     }
 
     private var entriesList: some View {
@@ -370,17 +373,17 @@ struct LibraryView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: Design.Space.sm) {
             Image(systemName: "tray")
-                .font(.system(size: 16, weight: .light))
+                .font(.icon(.large, weight: .light))
                 .foregroundStyle(Constants.VisualStyle.textQuaternary)
             Text(emptyStateTitle)
-                .font(.system(size: 12))
+                .font(.ui(.body))
                 .foregroundStyle(Constants.VisualStyle.textTertiary)
                 .multilineTextAlignment(.center)
         }
-        .frame(maxWidth: .infinity, minHeight: 160)
-        .padding(.vertical, 32)
+        .frame(maxWidth: .infinity, minHeight: 120)
+        .padding(.vertical, 20)
     }
 
     private var emptyStateTitle: String {
@@ -405,20 +408,20 @@ private struct ProjectRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: Design.Space.sm) {
                 Image(systemName: systemImage ?? (isCurrent ? "folder.fill" : "folder"))
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.icon(.base))
                     .foregroundStyle(isActive ? Constants.VisualStyle.textSecondary : Constants.VisualStyle.textTertiary)
                     .frame(width: 13)
                 Text(title)
-                    .font(.system(size: 12.5, weight: .medium))
+                    .font(.ui(.title, weight: .medium))
                     .foregroundStyle(isActive ? Constants.VisualStyle.text : Constants.VisualStyle.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 0)
                 if isCurrent {
                     Text("当前")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.ui(.micro, weight: .semibold))
                         .tracking(0.3)
                         .foregroundStyle(Constants.VisualStyle.accent)
                         .padding(.horizontal, 4)
@@ -430,11 +433,11 @@ private struct ProjectRow: View {
                 }
                 if let count {
                     Text("\(count)")
-                        .font(.system(size: 10.5, design: .monospaced))
+                        .font(.ui(.caption, mono: true))
                         .foregroundStyle(Constants.VisualStyle.textQuaternary)
                 }
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, Design.Space.md)
             .frame(height: Constants.Layout.regularRowHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
@@ -444,6 +447,23 @@ private struct ProjectRow: View {
             .roundedHitTarget(cornerRadius: 6)
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Date formatters are expensive to build. The entry list rebuilds every
+/// visible row on each keystroke, so the formatter is created once and reused.
+private enum EntryDateFormat {
+    static let relative: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter
+    }()
+
+    static func lastUsed(_ date: Date?) -> String {
+        guard let date else {
+            return "未使用"
+        }
+        return relative.localizedString(for: date, relativeTo: Date())
     }
 }
 
@@ -457,45 +477,45 @@ private struct EntryListRow: View {
         let type = Constants.EntryType.resolve(entry.type)
         let level = Constants.EntryLevel.resolve(useCount: entry.useCount)
         Button(action: onTap) {
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: Design.Space.md) {
                 Image(systemName: type.symbolName)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.icon(.base))
                     .foregroundStyle(level.color)
-                    .frame(width: 18, height: 18)
+                    .frame(width: 16, height: 16)
                     .padding(.top, 1)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: Design.Space.sm) {
                         Text(entry.title)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.ui(.title, weight: .medium))
                             .foregroundStyle(Constants.VisualStyle.text)
                             .lineLimit(1)
                             .truncationMode(.tail)
                         if entry.isPinned {
                             Image(systemName: "pin.fill")
-                                .font(.system(size: 9, weight: .semibold))
+                                .font(.icon(.micro, weight: .semibold))
                                 .foregroundStyle(Constants.VisualStyle.warn)
                         }
                         Spacer(minLength: 0)
                     }
                     Text(previewText(for: entry.content))
-                        .font(.system(size: 11.5))
+                        .font(.ui(.body))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                    HStack(spacing: 5) {
+                    HStack(spacing: Design.Space.xs) {
                         Text("\(entry.useCount) 次")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .font(.ui(.micro, weight: .medium, mono: true))
                             .foregroundStyle(level.color)
                         Text("·")
                             .opacity(0.5)
                         Text(lastUsedText)
-                            .font(.system(size: 10))
+                            .font(.ui(.micro))
                         if let projectName {
                             Text("·")
                                 .opacity(0.5)
                             Text(projectName)
-                                .font(.system(size: 10))
+                                .font(.ui(.micro))
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                         }
@@ -507,13 +527,13 @@ private struct EntryListRow: View {
                     .foregroundStyle(Constants.VisualStyle.textQuaternary)
                 }
             }
-            .padding(.vertical, 9)
-            .padding(.leading, 12)
-            .padding(.trailing, 14)
+            .padding(.vertical, Design.Space.sm)
+            .padding(.leading, Design.Space.lg)
+            .padding(.trailing, Design.Space.lg)
             .overlay(alignment: .leading) {
                 Rectangle()
                     .fill(isSelected ? Constants.VisualStyle.accent : Color.clear)
-                    .frame(width: 1.5)
+                    .frame(width: 2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(isSelected ? Constants.VisualStyle.tintSubtle : Color.clear)
@@ -523,10 +543,7 @@ private struct EntryListRow: View {
     }
 
     private var lastUsedText: String {
-        guard let lastUsedAt = entry.lastUsedAt else {
-            return "未使用"
-        }
-        return RelativeDateTimeFormatter().localizedString(for: lastUsedAt, relativeTo: Date())
+        EntryDateFormat.lastUsed(entry.lastUsedAt)
     }
 
     private func previewText(for content: String) -> String {
@@ -551,12 +568,12 @@ private struct PreviewPane: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: Design.Space.md) {
             Image(systemName: "doc.text.magnifyingglass")
-                .font(.system(size: 24, weight: .light))
+                .font(.icon(.hero, weight: .light))
                 .foregroundStyle(Constants.VisualStyle.textQuaternary)
             Text("选择一条词条查看")
-                .font(.system(size: 13))
+                .font(.ui(.title))
                 .foregroundStyle(Constants.VisualStyle.textQuaternary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -566,37 +583,36 @@ private struct PreviewPane: View {
         let type = Constants.EntryType.resolve(entry.type)
         return VStack(alignment: .leading, spacing: 0) {
             header(for: entry, type: type)
-                .padding(.horizontal, 20)
-                .padding(.top, 12)
-                .padding(.bottom, 12)
+                .padding(.horizontal, 16)
+                .padding(.vertical, Design.Space.lg)
                 .background(
                     VStack(spacing: 0) {
                         Spacer()
                         Rectangle()
                             .fill(Constants.VisualStyle.divider)
-                            .frame(height: 0.5)
+                            .frame(height: Constants.Layout.hairline)
                     }
                 )
 
             ScrollView {
                 Text(entry.content)
-                    .font(.system(size: 13))
+                    .font(.ui(.title))
                     .foregroundStyle(Constants.VisualStyle.text)
-                    .lineSpacing(4)
+                    .lineSpacing(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 16)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, Design.Space.lg)
             }
             .scrollIndicators(.hidden)
 
             footer(for: entry)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
+                .padding(.horizontal, 16)
+                .padding(.vertical, Design.Space.md)
                 .background(
                     Rectangle()
                         .fill(Constants.VisualStyle.divider)
-                        .frame(height: 0.5),
+                        .frame(height: Constants.Layout.hairline),
                     alignment: .top
                 )
         }
@@ -604,13 +620,13 @@ private struct PreviewPane: View {
 
     private func header(for entry: Entry, type: Constants.EntryType) -> some View {
         let level = Constants.EntryLevel.resolve(useCount: entry.useCount)
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                HStack(spacing: 4) {
+        return VStack(alignment: .leading, spacing: Design.Space.md) {
+            HStack(spacing: Design.Space.sm) {
+                HStack(spacing: Design.Space.xs) {
                     Image(systemName: type.symbolName)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.icon(.micro))
                     Text(type.displayName)
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.ui(.caption, weight: .medium))
                 }
                 .foregroundStyle(Constants.VisualStyle.textTertiary)
                 .padding(.horizontal, 7)
@@ -621,7 +637,7 @@ private struct PreviewPane: View {
                 )
 
                 Text(level.displayName)
-                    .font(.system(size: 10.5, weight: .semibold))
+                    .font(.ui(.caption, weight: .semibold))
                     .foregroundStyle(level.color)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
@@ -633,9 +649,9 @@ private struct PreviewPane: View {
                 if entry.isPinned {
                     HStack(spacing: 3) {
                         Image(systemName: "pin.fill")
-                            .font(.system(size: 10))
+                            .font(.icon(.micro))
                         Text("已置顶")
-                            .font(.system(size: 10.5, weight: .medium))
+                            .font(.ui(.caption, weight: .medium))
                     }
                     .foregroundStyle(Constants.VisualStyle.warn)
                     .padding(.horizontal, 7)
@@ -652,7 +668,7 @@ private struct PreviewPane: View {
                     Text("· \(lastUsedText(entry))")
                         .foregroundStyle(Constants.VisualStyle.textQuaternary)
                 }
-                .font(.system(size: 11))
+                .font(.ui(.caption))
 
                 Spacer(minLength: 0)
 
@@ -664,7 +680,7 @@ private struct PreviewPane: View {
                     Button("删除", role: .destructive) { viewModel.requestDeleteEntry(entry) }
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.icon(.base))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
                         .frame(width: Constants.Layout.compactControlHeight, height: Constants.Layout.compactControlHeight)
                 }
@@ -674,13 +690,13 @@ private struct PreviewPane: View {
             }
 
             Text(entry.title)
-                .font(.system(size: 18, weight: .semibold))
+                .font(.ui(.display, weight: .semibold))
                 .foregroundStyle(Constants.VisualStyle.text)
                 .lineLimit(2)
                 .truncationMode(.tail)
 
-            HStack(spacing: 6) {
-                PrimaryActionButton(title: "复制", systemImage: "doc.on.doc", shortcut: "⌘C") {
+            HStack(spacing: Design.Space.sm) {
+                PrimaryActionButton(title: "复制", systemImage: "doc.on.doc", shortcut: "⇧⌘C") {
                     viewModel.copyEntryContent(entry)
                 }
                 GhostActionButton(title: "编辑", systemImage: "pencil", shortcut: "⌘E") {
@@ -702,24 +718,22 @@ private struct PreviewPane: View {
     }
 
     private func footer(for entry: Entry) -> some View {
-        HStack(spacing: 16) {
+        HStack(spacing: Design.Space.xl) {
             MetaInline(label: "项目", value: projectName(for: entry) ?? "未归属")
-            Rectangle()
-                .fill(Constants.VisualStyle.divider)
-                .frame(width: 1, height: 16)
-            HStack(spacing: 8) {
+            footerSeparator
+            HStack(spacing: Design.Space.sm) {
                 Text("标签")
-                    .font(.system(size: 11))
+                    .font(.ui(.caption))
                     .foregroundStyle(Constants.VisualStyle.textQuaternary)
                 if entry.tags.isEmpty {
                     Text("无")
-                        .font(.system(size: 11.5))
+                        .font(.ui(.body))
                         .foregroundStyle(Constants.VisualStyle.textQuaternary)
                 } else {
                     HStack(spacing: 4) {
                         ForEach(entry.tags, id: \.self) { tag in
                             Text("#\(tag)")
-                                .font(.system(size: 10.5, weight: .medium))
+                                .font(.ui(.caption, weight: .medium))
                                 .foregroundStyle(Constants.VisualStyle.textSecondary)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 1)
@@ -731,12 +745,16 @@ private struct PreviewPane: View {
                     }
                 }
             }
-            Rectangle()
-                .fill(Constants.VisualStyle.divider)
-                .frame(width: 1, height: 16)
+            footerSeparator
             MetaInline(label: "更新时间", value: formattedUpdatedAt(entry))
             Spacer(minLength: 0)
         }
+    }
+
+    private var footerSeparator: some View {
+        Rectangle()
+            .fill(Constants.VisualStyle.divider)
+            .frame(width: Constants.Layout.hairline, height: 14)
     }
 
     private func projectName(for entry: Entry) -> String? {
@@ -744,10 +762,7 @@ private struct PreviewPane: View {
     }
 
     private func lastUsedText(_ entry: Entry) -> String {
-        guard let lastUsedAt = entry.lastUsedAt else {
-            return "未使用"
-        }
-        return RelativeDateTimeFormatter().localizedString(for: lastUsedAt, relativeTo: Date())
+        EntryDateFormat.lastUsed(entry.lastUsedAt)
     }
 
     private func formattedUpdatedAt(_ entry: Entry) -> String {
@@ -770,7 +785,7 @@ struct TagChipsInline: View {
         HStack(spacing: 4) {
             ForEach(shown, id: \.self) { tag in
                 Text(tag)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.ui(.micro, weight: .medium))
                     .foregroundStyle(Constants.VisualStyle.textTertiary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
@@ -781,7 +796,7 @@ struct TagChipsInline: View {
             }
             if rest > 0 {
                 Text("+\(rest)")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.ui(.micro, weight: .medium, mono: true))
                     .foregroundStyle(Constants.VisualStyle.textQuaternary)
             }
         }
@@ -793,12 +808,12 @@ private struct MetaInline: View {
     let value: String
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Design.Space.sm) {
             Text(label)
-                .font(.system(size: 11))
+                .font(.ui(.caption))
                 .foregroundStyle(Constants.VisualStyle.textQuaternary)
             Text(value)
-                .font(.system(size: 11.5))
+                .font(.ui(.body))
                 .foregroundStyle(Constants.VisualStyle.textSecondary)
                 .lineLimit(1)
                 .truncationMode(.middle)

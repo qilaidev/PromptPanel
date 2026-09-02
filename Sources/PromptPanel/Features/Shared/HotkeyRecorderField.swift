@@ -231,7 +231,7 @@ struct HotkeyRecorderField: View {
                 model.toggleRecording()
             } label: {
                 Text(model.displayText)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.ui(.body, weight: .medium))
                     .foregroundStyle(
                         model.isRecording
                             ? Constants.VisualStyle.accent
@@ -253,7 +253,7 @@ struct HotkeyRecorderField: View {
                                 model.isRecording
                                     ? Constants.VisualStyle.accentBorder
                                     : Constants.VisualStyle.border,
-                                lineWidth: 0.5
+                                lineWidth: Constants.Layout.hairline
                             )
                     )
                     .roundedHitTarget(cornerRadius: 5)
@@ -265,7 +265,7 @@ struct HotkeyRecorderField: View {
                 model.clearShortcut()
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 12))
+                    .font(.icon(.base))
                     .foregroundStyle(Constants.VisualStyle.textQuaternary)
                     .frame(width: 18, height: 18)
                     .contentShape(Rectangle())

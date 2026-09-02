@@ -100,11 +100,11 @@ struct MainWindowView: View {
             Spacer(minLength: 0)
 
             Text(Constants.appName)
-                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .font(.ui(.caption, weight: .medium, mono: true))
                 .foregroundStyle(Constants.VisualStyle.textQuaternary)
                 .frame(width: 72, alignment: .trailing)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, Design.Space.lg)
         .frame(height: Constants.Layout.headerHeight)
         .background(
             Rectangle()
@@ -112,7 +112,7 @@ struct MainWindowView: View {
                 .overlay(
                     Rectangle()
                         .fill(Constants.VisualStyle.divider)
-                        .frame(height: 0.5),
+                        .frame(height: Constants.Layout.hairline),
                     alignment: .bottom
                 )
         )
@@ -131,7 +131,7 @@ struct MainWindowView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(Constants.VisualStyle.border, lineWidth: 0.5)
+                .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
         )
     }
 
@@ -148,10 +148,10 @@ struct MainWindowView: View {
             viewModel.selectedTab = tab
         } label: {
             Text(title)
-                .font(.system(size: 11.5, weight: .medium))
+                .font(.ui(.body, weight: .medium))
                 .foregroundStyle(isActive ? Constants.VisualStyle.text : Constants.VisualStyle.textTertiary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
+                .padding(.horizontal, Design.Space.lg)
+                .padding(.vertical, 3)
                 .background(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(isActive ? Constants.VisualStyle.tintMedium : Color.clear)
@@ -206,16 +206,16 @@ private struct ProjectEditorSheet: View {
         VStack(spacing: 0) {
             SheetHeader(title: draft.existingProject == nil ? "新建项目" : "重命名项目")
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: Design.Space.md) {
                 SheetField(label: "项目名称") {
                     TextField("项目名称", text: $draft.name)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 13))
+                        .font(.ui(.title))
                         .focused($isNameFocused)
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
+            .padding(.horizontal, 18)
+            .padding(.vertical, Design.Space.xl)
 
             SheetActionFooter(
                 primaryTitle: "保存",
@@ -257,15 +257,15 @@ private struct EntryEditorSheet: View {
         VStack(spacing: 0) {
             SheetHeader(title: draft.existingEntry == nil ? "新建词条" : "编辑词条")
 
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: Design.Space.lg) {
                 SheetField(label: "标题") {
                     TextField("给这条内容起个短标题", text: $draft.title)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 13))
+                        .font(.ui(.title))
                         .focused($focusedField, equals: .title)
                 }
 
-                HStack(alignment: .top, spacing: 14) {
+                HStack(alignment: .top, spacing: Design.Space.lg) {
                     SheetField(label: "所属项目") {
                         Picker("", selection: $draft.projectId) {
                             ForEach(projects) { project in
@@ -290,10 +290,11 @@ private struct EntryEditorSheet: View {
 
                     Toggle(isOn: $draft.isPinned) {
                         Text("置顶")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.ui(.title, weight: .medium))
                     }
                     .toggleStyle(.checkbox)
-                    .padding(.top, 23)
+                    // Sits level with the pickers, below their field labels.
+                    .padding(.top, 21)
 
                     Spacer(minLength: 0)
                 }
@@ -304,13 +305,13 @@ private struct EntryEditorSheet: View {
                 ) {
                     TextField("用逗号分隔，例如：发布, 检查清单", text: $draft.tagsText)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 13))
+                        .font(.ui(.title))
                 }
 
                 contentEditor
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
+            .padding(.horizontal, 18)
+            .padding(.vertical, Design.Space.xl)
 
             SheetActionFooter(
                 primaryTitle: "保存",
@@ -327,34 +328,36 @@ private struct EntryEditorSheet: View {
     }
 
     private var contentEditor: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+        VStack(alignment: .leading, spacing: Design.Space.sm) {
+            HStack(alignment: .firstTextBaseline, spacing: Design.Space.sm) {
                 SheetFieldLabel(text: "内容")
                 Spacer(minLength: 0)
                 Text("\(draft.content.count) 字")
-                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .font(.ui(.caption, weight: .medium, mono: true))
                     .foregroundStyle(Constants.VisualStyle.textQuaternary)
             }
 
             ZStack(alignment: .topLeading) {
                 TextEditor(text: $draft.content)
-                    .font(.system(size: 13))
+                    .font(.ui(.title))
                     .scrollContentBackground(.hidden)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, Design.Space.xs)
+                    .padding(.vertical, 3)
                     .background(Constants.VisualStyle.surface)
                     .focused($focusedField, equals: .content)
 
                 if draft.content.isEmpty {
                     Text("粘贴或输入要执行的内容")
-                        .font(.system(size: 13))
+                        .font(.ui(.title))
                         .foregroundStyle(Constants.VisualStyle.textQuaternary)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 10)
+                        .padding(.horizontal, Design.Space.md)
+                        .padding(.vertical, Design.Space.sm)
                         .allowsHitTesting(false)
                 }
             }
-            .frame(height: 230)
+            // The tighter chrome around it buys the editor extra rows, which is
+            // where the height actually matters.
+            .frame(height: 264)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(Constants.VisualStyle.surface)
@@ -393,9 +396,9 @@ private struct ProjectMigrationSheet: View {
         VStack(spacing: 0) {
             SheetHeader(title: "删除前先迁移词条")
 
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: Design.Space.lg) {
                 Text("项目 “\(state.project.name)” 下还有 \(state.entryCount) 条词条，必须先迁移到其他项目。")
-                    .font(.system(size: 13))
+                    .font(.ui(.title))
                     .foregroundStyle(Constants.VisualStyle.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -409,8 +412,8 @@ private struct ProjectMigrationSheet: View {
                     .fixedSize()
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
+            .padding(.horizontal, 18)
+            .padding(.vertical, Design.Space.xl)
 
             SheetActionFooter(
                 primaryTitle: "迁移并删除",
@@ -436,17 +439,17 @@ private struct SheetHeader: View {
 
     var body: some View {
         Text(title)
-            .font(.system(size: 16, weight: .semibold))
+            .font(.ui(.heading, weight: .semibold))
             .foregroundStyle(Constants.VisualStyle.text)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 12)
+            .padding(.horizontal, 18)
+            .padding(.top, Design.Space.xl)
+            .padding(.bottom, Design.Space.lg)
             .background(Constants.VisualStyle.surfaceRaised)
             .overlay(
                 Rectangle()
                     .fill(Constants.VisualStyle.divider)
-                    .frame(height: 0.5),
+                    .frame(height: Constants.Layout.hairline),
                 alignment: .bottom
             )
     }
@@ -464,12 +467,12 @@ private struct SheetField<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Design.Space.xs) {
             SheetFieldLabel(text: label)
             content()
             if let footer {
                 Text(footer)
-                    .font(.system(size: 11))
+                    .font(.ui(.caption))
                     .foregroundStyle(Constants.VisualStyle.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -482,7 +485,7 @@ private struct SheetFieldLabel: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 12.5, weight: .semibold))
+            .font(.ui(.title, weight: .semibold))
             .foregroundStyle(Constants.VisualStyle.text)
     }
 }
@@ -496,10 +499,10 @@ private struct SheetActionFooter: View {
     let onPrimary: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: Design.Space.md) {
             if let message {
                 Text(message)
-                    .font(.system(size: 11.5))
+                    .font(.ui(.body))
                     .foregroundStyle(Constants.VisualStyle.textSecondary)
                     .lineLimit(1)
             }
@@ -519,13 +522,13 @@ private struct SheetActionFooter: View {
             .disabled(!canSubmit)
         }
         .controlSize(.regular)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 18)
+        .padding(.vertical, Design.Space.lg)
         .background(Constants.VisualStyle.surfaceRaised)
         .overlay(
             Rectangle()
                 .fill(Constants.VisualStyle.divider)
-                .frame(height: 0.5),
+                .frame(height: Constants.Layout.hairline),
             alignment: .top
         )
     }

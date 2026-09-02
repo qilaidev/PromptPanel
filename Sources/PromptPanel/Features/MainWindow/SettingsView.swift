@@ -5,7 +5,7 @@ struct SettingsView: View {
     @ObservedObject var viewModel: MainWindowViewModel
     @State private var selectedArea: SettingsArea = .preferences
 
-    private let columnSpacing: CGFloat = 14
+    private let columnSpacing: CGFloat = Constants.Layout.sectionSpacing
 
     var body: some View {
         ScrollView {
@@ -20,9 +20,9 @@ struct SettingsView: View {
 
                 selectedAreaContent
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 14)
-            .padding(.bottom, 24)
+            .padding(.horizontal, 16)
+            .padding(.top, Design.Space.lg)
+            .padding(.bottom, 16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.hidden)
@@ -113,7 +113,7 @@ private struct SettingsAreaPicker: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(Constants.VisualStyle.border, lineWidth: 0.5)
+                .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
         )
     }
 
@@ -124,13 +124,13 @@ private struct SettingsAreaPicker: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: area.systemImage)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.icon(.small))
                 Text(area.title)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .font(.ui(.body, weight: .medium))
             }
             .foregroundStyle(isActive ? Constants.VisualStyle.text : Constants.VisualStyle.textTertiary)
-            .padding(.horizontal, 12)
-            .frame(height: 26)
+            .padding(.horizontal, Design.Space.lg)
+            .frame(height: Constants.Layout.compactControlHeight)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(isActive ? Constants.VisualStyle.tintStrong : Color.clear)
@@ -168,7 +168,7 @@ struct SettingsCard<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: Design.Space.md) {
             SettingsSectionHeader(title: title)
             VStack(alignment: .leading, spacing: 0) {
                 content()
@@ -182,7 +182,7 @@ struct SettingsCard<Content: View>: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: Constants.Layout.sectionCornerRadius, style: .continuous)
-                .strokeBorder(Constants.VisualStyle.border, lineWidth: 0.5)
+                .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
         )
     }
 }
@@ -193,23 +193,23 @@ struct SettingsBanner: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "info.circle.fill")
-                .font(.system(size: 12, weight: .medium))
+                .font(.icon(.base))
                 .foregroundStyle(Constants.VisualStyle.accent)
             Text(message)
-                .font(.system(size: 11.5))
+                .font(.ui(.body))
                 .foregroundStyle(Constants.VisualStyle.textSecondary)
                 .lineLimit(2)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
+        .padding(.horizontal, Design.Space.lg)
+        .padding(.vertical, Design.Space.sm)
         .background(
             RoundedRectangle(cornerRadius: Constants.Layout.sectionCornerRadius, style: .continuous)
                 .fill(Constants.VisualStyle.infoBannerFill)
         )
         .overlay(
             RoundedRectangle(cornerRadius: Constants.Layout.sectionCornerRadius, style: .continuous)
-                .strokeBorder(Constants.VisualStyle.infoBannerBorder, lineWidth: 0.5)
+                .strokeBorder(Constants.VisualStyle.infoBannerBorder, lineWidth: Constants.Layout.hairline)
         )
     }
 }
@@ -222,22 +222,22 @@ private struct SettingsHealthStrip: View {
             if let issue = primaryIssue {
                 HStack(spacing: 8) {
                     Image(systemName: issue.systemImage)
-                        .font(.system(size: 11.5, weight: .medium))
+                        .font(.icon(.base))
                         .foregroundStyle(issue.color)
                     Text(issue.message)
-                        .font(.system(size: 11.5, weight: .medium))
+                        .font(.ui(.body, weight: .medium))
                         .foregroundStyle(Constants.VisualStyle.textSecondary)
                     Spacer(minLength: 0)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
+                .padding(.horizontal, Design.Space.lg)
+                .padding(.vertical, Design.Space.sm)
                 .background(
                     RoundedRectangle(cornerRadius: Constants.Layout.sectionCornerRadius, style: .continuous)
                         .fill(issue.background)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: Constants.Layout.sectionCornerRadius, style: .continuous)
-                        .strokeBorder(issue.color.opacity(0.25), lineWidth: 0.5)
+                        .strokeBorder(issue.color.opacity(0.25), lineWidth: Constants.Layout.hairline)
                 )
             } else {
                 HStack(spacing: 8) {
@@ -245,11 +245,11 @@ private struct SettingsHealthStrip: View {
                         .fill(Constants.VisualStyle.success)
                         .frame(width: 6, height: 6)
                     Text(summaryText)
-                        .font(.system(size: 11.5))
+                        .font(.ui(.body))
                         .foregroundStyle(Constants.VisualStyle.textSecondary)
                     Spacer(minLength: 0)
                     Text(versionText)
-                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .font(.ui(.caption, weight: .medium, mono: true))
                         .foregroundStyle(Constants.VisualStyle.textQuaternary)
                 }
                 .padding(.vertical, 2)
@@ -303,7 +303,7 @@ struct SettingsSectionHeader: View {
 
     var body: some View {
         Text(title)
-            .font(.system(size: 10.5, weight: .semibold))
+            .font(.ui(.caption, weight: .semibold))
             .tracking(0.8)
             .foregroundStyle(Constants.VisualStyle.textQuaternary)
             .textCase(.uppercase)
@@ -324,14 +324,14 @@ struct SettingsRow<Control: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(alignment: .top, spacing: Design.Space.lg) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text(label)
-                    .font(.system(size: 12.5, weight: .medium))
+                    .font(.ui(.title, weight: .medium))
                     .foregroundStyle(Constants.VisualStyle.text)
                 if let hint {
                     Text(hint)
-                        .font(.system(size: 11))
+                        .font(.ui(.caption))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -339,11 +339,11 @@ struct SettingsRow<Control: View>: View {
             Spacer(minLength: 10)
             control
         }
-        .padding(.vertical, dense ? 6 : 8)
+        .padding(.vertical, dense ? Design.Space.xs : Design.Space.sm)
         .overlay(
             Rectangle()
                 .fill(Constants.VisualStyle.divider)
-                .frame(height: 0.5),
+                .frame(height: Constants.Layout.hairline),
             alignment: .bottom
         )
     }
@@ -381,10 +381,10 @@ struct SettingsPillButton: View {
             HStack(spacing: 5) {
                 if let systemImage {
                     Image(systemName: systemImage)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.icon(.small))
                 }
                 Text(title)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .font(.ui(.body, weight: .medium))
                     .lineLimit(1)
             }
             .foregroundStyle(foreground)
@@ -397,7 +397,7 @@ struct SettingsPillButton: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(borderColor, lineWidth: 0.5)
+                    .strokeBorder(borderColor, lineWidth: Constants.Layout.hairline)
             )
             .roundedHitTarget(cornerRadius: 6)
         }
@@ -465,7 +465,7 @@ private struct ThemeSegmentedPicker: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .strokeBorder(Constants.VisualStyle.border, lineWidth: 0.5)
+                .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
         )
     }
 
@@ -476,13 +476,13 @@ private struct ThemeSegmentedPicker: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: theme.systemImageName)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.icon(.small))
                 Text(theme.title)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .font(.ui(.body, weight: .medium))
             }
             .foregroundStyle(isActive ? Constants.VisualStyle.text : Constants.VisualStyle.textTertiary)
-            .padding(.horizontal, 10)
-            .frame(height: 24)
+            .padding(.horizontal, Design.Space.md)
+            .frame(height: 22)
             .background(
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
                     .fill(isActive ? Constants.VisualStyle.tintStrong : Color.clear)
@@ -527,7 +527,7 @@ private struct EntrySortSegmentedPicker: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .strokeBorder(Constants.VisualStyle.border, lineWidth: 0.5)
+                .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
         )
     }
 
@@ -537,10 +537,10 @@ private struct EntrySortSegmentedPicker: View {
             selection = mode
         } label: {
             Text(mode.title)
-                .font(.system(size: 11.5, weight: .medium))
+                .font(.ui(.body, weight: .medium))
                 .foregroundStyle(isActive ? Constants.VisualStyle.text : Constants.VisualStyle.textTertiary)
-                .padding(.horizontal, 10)
-                .frame(height: 24)
+                .padding(.horizontal, Design.Space.md)
+                .frame(height: 22)
                 .background(
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
                         .fill(isActive ? Constants.VisualStyle.tintStrong : Color.clear)
@@ -618,8 +618,8 @@ private struct PanelSizeControls: View {
     @ObservedObject var viewModel: MainWindowViewModel
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 7) {
-            HStack(spacing: 8) {
+        VStack(alignment: .trailing, spacing: Design.Space.sm) {
+            HStack(spacing: Design.Space.sm) {
                 dimensionStepper(
                     label: "宽",
                     value: Binding(
@@ -648,10 +648,10 @@ private struct PanelSizeControls: View {
         Stepper(value: value, in: bounds, step: 20) {
             HStack(spacing: 4) {
                 Text(label)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .font(.ui(.body, weight: .medium))
                     .foregroundStyle(Constants.VisualStyle.textTertiary)
                 Text("\(value.wrappedValue)")
-                    .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                    .font(.ui(.body, weight: .medium, mono: true))
                     .foregroundStyle(Constants.VisualStyle.text)
                     .frame(width: 38, alignment: .trailing)
             }
@@ -716,9 +716,9 @@ private struct PermissionSection: View {
         let dim: Color = granted ? Constants.VisualStyle.successDim : Constants.VisualStyle.warnDim
         return HStack(spacing: 4) {
             Image(systemName: granted ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.icon(.micro, weight: .semibold))
             Text(granted ? "已授权" : "未授权")
-                .font(.system(size: 11.5, weight: .medium))
+                .font(.ui(.body, weight: .medium))
         }
         .foregroundStyle(color)
         .padding(.horizontal, 7)
@@ -742,7 +742,7 @@ private struct OperationOverviewSection: View {
             }
             SettingsRow(label: "更新状态", dense: true) {
                 Text(viewModel.updaterStatusMessage)
-                    .font(.system(size: 11.5))
+                    .font(.ui(.body))
                     .foregroundStyle(Constants.VisualStyle.textSecondary)
                     .lineLimit(2)
                     .multilineTextAlignment(.trailing)
@@ -765,9 +765,9 @@ private struct OperationOverviewSection: View {
             }
 
             if let summary = viewModel.executionHealthSummary {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: Design.Space.sm) {
                     Text("近 7 天执行")
-                        .font(.system(size: 10.5))
+                        .font(.ui(.caption))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
                     HStack(spacing: 6) {
                         summaryPill(title: "执行", value: "\(summary.totalCount)", tone: .neutral)
@@ -776,11 +776,11 @@ private struct OperationOverviewSection: View {
                         summaryPill(title: "失败", value: "\(summary.failedCount)", tone: .danger)
                     }
                 }
-                .padding(.vertical, 8)
+                .padding(.vertical, Design.Space.sm)
                 .overlay(
                     Rectangle()
                         .fill(Constants.VisualStyle.divider)
-                        .frame(height: 0.5),
+                        .frame(height: Constants.Layout.hairline),
                     alignment: .bottom
                 )
 
@@ -792,9 +792,9 @@ private struct OperationOverviewSection: View {
                 }
             } else {
                 Text("最近 7 天还没有执行记录。")
-                    .font(.system(size: 11.5))
+                    .font(.ui(.body))
                     .foregroundStyle(Constants.VisualStyle.textTertiary)
-                    .padding(.vertical, 10)
+                    .padding(.vertical, Design.Space.md)
             }
         }
     }
@@ -807,7 +807,7 @@ private struct OperationOverviewSection: View {
 
     private func valueText(_ value: String, monospaced: Bool = false) -> some View {
         Text(value)
-            .font(.system(size: 11.5, weight: .medium, design: monospaced ? .monospaced : .default))
+            .font(.ui(.body, weight: .medium, mono: monospaced))
             .foregroundStyle(Constants.VisualStyle.textSecondary)
             .lineLimit(1)
             .truncationMode(.middle)
@@ -839,25 +839,25 @@ private struct OperationOverviewSection: View {
             case .danger: return Constants.VisualStyle.danger
             }
         }()
-        return VStack(alignment: .leading, spacing: 2) {
+        return VStack(alignment: .leading, spacing: 1) {
             Text(title)
-                .font(.system(size: 9.5))
+                .font(.ui(.micro))
                 .foregroundStyle(Constants.VisualStyle.textTertiary)
             Text(value)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.ui(.title, weight: .semibold))
                 .foregroundStyle(color)
                 .monospacedDigit()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, Design.Space.md)
+        .padding(.vertical, 3)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(color.opacity(0.08))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .strokeBorder(color.opacity(0.18), lineWidth: 0.5)
+                .strokeBorder(color.opacity(0.18), lineWidth: Constants.Layout.hairline)
         )
     }
 }
@@ -869,12 +869,12 @@ private struct MaintenanceSection: View {
         SettingsCard("维护操作") {
             LazyVGrid(
                 columns: [
-                    GridItem(.flexible(), spacing: 6),
-                    GridItem(.flexible(), spacing: 6),
-                    GridItem(.flexible(), spacing: 6)
+                    GridItem(.flexible(), spacing: Design.Space.xs),
+                    GridItem(.flexible(), spacing: Design.Space.xs),
+                    GridItem(.flexible(), spacing: Design.Space.xs)
                 ],
                 alignment: .leading,
-                spacing: 6
+                spacing: Design.Space.xs
             ) {
                 SettingsPillButton("刷新状态", systemImage: "arrow.clockwise", fillsAvailableWidth: true) {
                     viewModel.refreshOperationalStatus()
@@ -911,10 +911,10 @@ private struct MaintenanceSection: View {
                     viewModel.cleanupLogs()
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, Design.Space.xxs)
 
             Text("导入词库前会自动创建本地数据库备份；Sparkle 只在 feed 和公钥都配置完成后启用。")
-                .font(.system(size: 11))
+                .font(.ui(.caption))
                 .foregroundStyle(Constants.VisualStyle.textTertiary)
                 .padding(.top, 4)
         }
@@ -930,11 +930,11 @@ private struct DataLocationSection: View {
         SettingsCard("数据位置") {
             if let snapshot = viewModel.storageHealthSnapshot {
                 Text("落盘路径、备份和恢复隔离目录。复制路径可直接粘贴到终端。")
-                    .font(.system(size: 11))
+                    .font(.ui(.caption))
                     .foregroundStyle(Constants.VisualStyle.textTertiary)
-                    .padding(.bottom, 6)
+                    .padding(.bottom, Design.Space.sm)
 
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: Design.Space.sm) {
                     pathRow(title: "数据库", value: snapshot.databaseURL.path)
                     pathRow(title: "备份目录", value: snapshot.backupDirectoryURL.path)
                     pathRow(title: "恢复隔离", value: snapshot.recoveryDirectoryURL.path)
@@ -945,26 +945,26 @@ private struct DataLocationSection: View {
                 }
             } else {
                 Text("尚未加载数据目录信息。")
-                    .font(.system(size: 11.5))
+                    .font(.ui(.body))
                     .foregroundStyle(Constants.VisualStyle.textTertiary)
             }
         }
     }
 
     private func pathRow(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 1) {
             Text(title)
-                .font(.system(size: 10.5))
+                .font(.ui(.caption))
                 .tracking(0.3)
                 .foregroundStyle(Constants.VisualStyle.textQuaternary)
-            HStack(spacing: 6) {
+            HStack(spacing: Design.Space.sm) {
                 Text(value)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.ui(.caption, mono: true))
                     .foregroundStyle(Constants.VisualStyle.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, Design.Space.md)
+                    .padding(.vertical, 3)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
                         RoundedRectangle(cornerRadius: 5, style: .continuous)
@@ -974,7 +974,7 @@ private struct DataLocationSection: View {
                     copyPath(value)
                 } label: {
                     Image(systemName: "doc.on.doc")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.icon(.small))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
                         .frame(width: 24, height: 24)
                         .roundedHitTarget(cornerRadius: 5)
@@ -998,23 +998,23 @@ private struct RecentExecutionsSection: View {
     var body: some View {
         SettingsCard("最近执行记录") {
             if viewModel.recentExecutionLogs.isEmpty {
-                HStack(spacing: 10) {
+                HStack(spacing: Design.Space.md) {
                     Image(systemName: "tray")
-                        .font(.system(size: 16, weight: .light))
+                        .font(.icon(.large, weight: .light))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
                     Text("当前还没有执行记录。按下全局快捷键选一条词条后，这里会立即出现。")
-                        .font(.system(size: 11.5))
+                        .font(.ui(.body))
                         .foregroundStyle(Constants.VisualStyle.textSecondary)
                     Spacer(minLength: 0)
                 }
-                .padding(.vertical, 8)
+                .padding(.vertical, Design.Space.sm)
             } else {
-                VStack(spacing: 6) {
+                VStack(spacing: Design.Space.xs) {
                     ForEach(viewModel.recentExecutionLogs.prefix(6)) { log in
                         ExecutionLogRow(log: log, projectName: viewModel.projectName(for: log.projectId))
                     }
                 }
-                .padding(.top, 2)
+                .padding(.top, 1)
             }
         }
     }
@@ -1025,20 +1025,20 @@ private struct ExecutionLogRow: View {
     let projectName: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: Design.Space.xs) {
+            HStack(spacing: Design.Space.sm) {
                 Text(resultTitle)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.ui(.body, weight: .semibold))
                     .foregroundStyle(resultColor)
                 Text(projectName)
-                    .font(.system(size: 11))
+                    .font(.ui(.caption))
                     .foregroundStyle(Constants.VisualStyle.textSecondary)
                 Spacer(minLength: 0)
                 Text(log.createdAt.formatted(date: .abbreviated, time: .standard))
-                    .font(.system(size: 10.5))
+                    .font(.ui(.caption))
                     .foregroundStyle(Constants.VisualStyle.textTertiary)
             }
-            HStack(spacing: 8) {
+            HStack(spacing: Design.Space.sm) {
                 infoPill(title: "目标应用", value: log.frontAppBundleId ?? "未知")
                 if let durationText {
                     infoPill(title: "耗时", value: durationText)
@@ -1051,7 +1051,7 @@ private struct ExecutionLogRow: View {
                 infoPill(title: "失败原因", value: failureReasonTitle)
             }
         }
-        .padding(9)
+        .padding(Design.Space.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -1059,7 +1059,7 @@ private struct ExecutionLogRow: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .strokeBorder(Constants.VisualStyle.border, lineWidth: 0.5)
+                .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
         )
     }
 
@@ -1096,18 +1096,18 @@ private struct ExecutionLogRow: View {
     }
 
     private func infoPill(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 1) {
             Text(title)
-                .font(.system(size: 9.5))
+                .font(.ui(.micro))
                 .foregroundStyle(Constants.VisualStyle.textQuaternary)
             Text(value)
-                .font(.system(size: 10.5))
+                .font(.ui(.caption))
                 .foregroundStyle(Constants.VisualStyle.textSecondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
+        .padding(.horizontal, Design.Space.sm)
+        .padding(.vertical, Design.Space.xxs)
         .background(Capsule().fill(Constants.VisualStyle.tintSubtle))
     }
 }
