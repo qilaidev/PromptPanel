@@ -336,31 +336,14 @@ final class QuickPanelViewModel: ObservableObject {
 
     /// Order panel results by the same stable keys as the repository so shortcut
     /// numbers do not drift between browsing, searching, and project switching.
-    nonisolated static func applyPanelRankingSort(_ entries: [Entry], currentProjectId: String) -> [Entry] {
+    /// `EntryRanking` owns the keys; this only supplies the panel's context.
+    nonisolated static func applyPanelRankingSort(
+        _ entries: [Entry],
+        currentProjectId: String,
+        now: Date = Date()
+    ) -> [Entry] {
         entries.sorted { lhs, rhs in
-            if lhs.isPinned != rhs.isPinned {
-                return lhs.isPinned
-            }
-            if lhs.sortOrder != rhs.sortOrder {
-                return lhs.sortOrder > rhs.sortOrder
-            }
-            let lhsLastUsedAt = lhs.lastUsedAt ?? .distantPast
-            let rhsLastUsedAt = rhs.lastUsedAt ?? .distantPast
-            if lhsLastUsedAt != rhsLastUsedAt {
-                return lhsLastUsedAt > rhsLastUsedAt
-            }
-            if lhs.useCount != rhs.useCount {
-                return lhs.useCount > rhs.useCount
-            }
-            let lhsCurrent = lhs.projectId == currentProjectId
-            let rhsCurrent = rhs.projectId == currentProjectId
-            if lhsCurrent != rhsCurrent {
-                return lhsCurrent
-            }
-            if lhs.updatedAt != rhs.updatedAt {
-                return lhs.updatedAt > rhs.updatedAt
-            }
-            return lhs.id < rhs.id
+            EntryRanking.isOrderedBefore(lhs, rhs, currentProjectId: currentProjectId, now: now)
         }
     }
 

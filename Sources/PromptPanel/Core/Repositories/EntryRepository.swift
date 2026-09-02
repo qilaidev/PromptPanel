@@ -25,33 +25,26 @@ final class EntryRepository: @unchecked Sendable {
         }
 
         return try dbQueue.read { db in
-            try Entry
-                .filter(ids.contains(Entry.Columns.projectId))
-                .order(
-                    Entry.Columns.isPinned.desc,
-                    Entry.Columns.sortOrder.desc,
-                    Entry.Columns.lastUsedAt.desc,
-                    Entry.Columns.useCount.desc,
-                    Entry.Columns.updatedAt.desc,
-                    Entry.Columns.id.asc
-                )
-                .fetchAll(db)
+            let placeholders = ids.map { _ in "?" }.joined(separator: ", ")
+            let sql = """
+                SELECT entries.*
+                FROM entries
+                WHERE entries.project_id IN (\(placeholders))
+                \(EntryRanking.sqlOrderByClause(includeProjectPriority: false))
+                """
+            return try Entry.fetchAll(db, sql: sql, arguments: StatementArguments(ids))
         }
     }
 
     /// Fetch all entries for management views.
     func fetchAll() throws -> [Entry] {
         try dbQueue.read { db in
-            try Entry
-                .order(
-                    Entry.Columns.isPinned.desc,
-                    Entry.Columns.sortOrder.desc,
-                    Entry.Columns.lastUsedAt.desc,
-                    Entry.Columns.useCount.desc,
-                    Entry.Columns.updatedAt.desc,
-                    Entry.Columns.id.asc
-                )
-                .fetchAll(db)
+            let sql = """
+                SELECT entries.*
+                FROM entries
+                \(EntryRanking.sqlOrderByClause(includeProjectPriority: false))
+                """
+            return try Entry.fetchAll(db, sql: sql)
         }
     }
 
@@ -65,14 +58,7 @@ final class EntryRepository: @unchecked Sendable {
                        CASE WHEN entries.project_id = ? THEN 0 ELSE 1 END AS project_priority
                 FROM entries
                 WHERE entries.project_id IN (?, ?)
-                ORDER BY
-                    entries.is_pinned DESC,
-                    entries.sort_order DESC,
-                    entries.last_used_at DESC,
-                    entries.use_count DESC,
-                    project_priority ASC,
-                    entries.updated_at DESC,
-                    entries.id ASC
+                \(EntryRanking.sqlOrderByClause(includeProjectPriority: true))
                 """
             let rows = try Row.fetchAll(db, sql: sql, arguments: [currentProjectId, currentProjectId, defaultProjectId])
             return try rows.map { try Entry(row: $0) }
@@ -105,7 +91,6 @@ final class EntryRepository: @unchecked Sendable {
             let escapedQuery = Self.makeFTS5PrefixQuery(from: trimmed)
 
             let placeholders = ids.map { _ in "?" }.joined(separator: ", ")
-            let orderByProjectPriority = currentProjectId == nil ? "" : ", project_priority ASC"
             let sql = """
                 SELECT entries.*,
                        CASE
@@ -116,13 +101,7 @@ final class EntryRepository: @unchecked Sendable {
                 JOIN entries_fts ON entries_fts.rowid = entries.rowid
                 WHERE entries_fts MATCH ?
                   AND entries.project_id IN (\(placeholders))
-                ORDER BY
-                    entries.is_pinned DESC,
-                    entries.sort_order DESC,
-                    entries.last_used_at DESC,
-                    entries.use_count DESC\(orderByProjectPriority),
-                    entries.updated_at DESC,
-                    entries.id ASC
+                \(EntryRanking.sqlOrderByClause(includeProjectPriority: currentProjectId != nil))
                 LIMIT 100
                 """
             var arguments: StatementArguments = [currentProjectId, currentProjectId, escapedQuery]
