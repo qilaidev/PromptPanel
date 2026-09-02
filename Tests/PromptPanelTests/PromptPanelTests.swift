@@ -17,6 +17,81 @@ final class PromptPanelTests: XCTestCase {
         XCTAssertEqual(Constants.panelWindowSize.height, Constants.panelContentSize.height + Constants.panelContentInsets.top + Constants.panelContentInsets.bottom)
     }
 
+    func testDefaultWindowSizesArePortraitPanelAndLandscapeMainWindow() {
+        // The quick panel is a single-column scanner (taller than wide); the
+        // main window is a three-column master/detail surface (wider than tall).
+        XCTAssertLessThan(Constants.panelContentSize.width, Constants.panelContentSize.height)
+        XCTAssertGreaterThan(
+            Constants.MainWindowLayout.defaultContentSize.width,
+            Constants.MainWindowLayout.defaultContentSize.height
+        )
+        XCTAssertEqual(Constants.panelContentSize.width / Constants.panelContentSize.height, 0.8, accuracy: 0.001)
+
+        // Defaults have to sit inside the range the settings steppers expose.
+        XCTAssertGreaterThanOrEqual(Constants.panelContentSize.width, Constants.panelMinContentSize.width)
+        XCTAssertGreaterThanOrEqual(Constants.panelContentSize.height, Constants.panelMinContentSize.height)
+        XCTAssertLessThanOrEqual(Constants.panelContentSize.width, Constants.panelMaxContentSize.width)
+        XCTAssertLessThanOrEqual(Constants.panelContentSize.height, Constants.panelMaxContentSize.height)
+        XCTAssertGreaterThanOrEqual(
+            Constants.MainWindowLayout.defaultContentSize.width,
+            Constants.MainWindowLayout.minContentSize.width
+        )
+        XCTAssertGreaterThanOrEqual(
+            Constants.MainWindowLayout.defaultContentSize.height,
+            Constants.MainWindowLayout.minContentSize.height
+        )
+    }
+
+    func testFittedSizeShrinksOnlyWhenTheScreenIsTooSmall() {
+        let roomy = NSRect(x: 0, y: 0, width: 1512, height: 944)
+        let requested = Constants.panelWindowSize
+        XCTAssertEqual(
+            Constants.WindowPlacement.fittedSize(
+                requested,
+                minimum: Constants.panelWindowContentSize(for: Constants.panelMinContentSize),
+                in: roomy
+            ),
+            requested
+        )
+
+        // A 700pt-tall panel must not hang off a short display.
+        let cramped = NSRect(x: 0, y: 0, width: 1280, height: 600)
+        let fitted = Constants.WindowPlacement.fittedSize(
+            requested,
+            minimum: Constants.panelWindowContentSize(for: Constants.panelMinContentSize),
+            in: cramped
+        )
+        XCTAssertEqual(fitted.width, requested.width)
+        XCTAssertEqual(fitted.height, 600 - Constants.WindowPlacement.screenMargin * 2)
+
+        // When even the minimum does not fit, the screen wins over the minimum.
+        let tiny = NSRect(x: 0, y: 0, width: 300, height: 240)
+        let squeezed = Constants.WindowPlacement.fittedSize(
+            requested,
+            minimum: Constants.panelWindowContentSize(for: Constants.panelMinContentSize),
+            in: tiny
+        )
+        XCTAssertEqual(squeezed.width, 300)
+        XCTAssertEqual(squeezed.height, 240)
+    }
+
+    func testDefaultPanelOriginIsCentredAndAnchoredInTheUpperThird() {
+        let screenFrame = NSRect(x: 0, y: 0, width: 1440, height: 875)
+        let panelSize = Constants.panelWindowSize
+        let origin = Constants.WindowPlacement.defaultPanelOrigin(panelSize: panelSize, screenFrame: screenFrame)
+
+        XCTAssertEqual(origin.x, screenFrame.midX - panelSize.width / 2, accuracy: 0.001)
+        // Top edge sits 12% of the visible height below the top of the screen.
+        XCTAssertEqual(origin.y + panelSize.height, screenFrame.maxY - 875 * 0.12, accuracy: 0.001)
+
+        let clamped = Constants.WindowPlacement.clampedOrigin(
+            NSPoint(x: -500, y: -500),
+            size: panelSize,
+            screenFrame: screenFrame
+        )
+        XCTAssertEqual(clamped, NSPoint(x: screenFrame.minX, y: screenFrame.minY))
+    }
+
     func testEntryLevelResolvesBoundaries() {
         // Locks the leveling thresholds so future churn doesn't silently
         // shift the visual tiers (rookie → master) users see in the UI.
@@ -2268,6 +2343,66 @@ func constantsExist() {
     #expect(Constants.defaultProjectName == "通用项目")
     #expect(Constants.panelWindowSize.width == Constants.panelContentSize.width + Constants.panelContentInsets.left + Constants.panelContentInsets.right)
     #expect(Constants.panelWindowSize.height == Constants.panelContentSize.height + Constants.panelContentInsets.top + Constants.panelContentInsets.bottom)
+}
+
+@Test
+func defaultWindowSizesArePortraitPanelAndLandscapeMainWindow() {
+    #expect(Constants.panelContentSize.width < Constants.panelContentSize.height)
+    #expect(Constants.MainWindowLayout.defaultContentSize.width > Constants.MainWindowLayout.defaultContentSize.height)
+    #expect(abs(Constants.panelContentSize.width / Constants.panelContentSize.height - 0.8) < 0.001)
+    #expect(Constants.panelContentSize.width >= Constants.panelMinContentSize.width)
+    #expect(Constants.panelContentSize.height >= Constants.panelMinContentSize.height)
+    #expect(Constants.panelContentSize.width <= Constants.panelMaxContentSize.width)
+    #expect(Constants.panelContentSize.height <= Constants.panelMaxContentSize.height)
+    #expect(Constants.MainWindowLayout.defaultContentSize.width >= Constants.MainWindowLayout.minContentSize.width)
+    #expect(Constants.MainWindowLayout.defaultContentSize.height >= Constants.MainWindowLayout.minContentSize.height)
+}
+
+@Test
+func fittedSizeShrinksOnlyWhenTheScreenIsTooSmall() {
+    let minimum = Constants.panelWindowContentSize(for: Constants.panelMinContentSize)
+    let requested = Constants.panelWindowSize
+
+    #expect(
+        Constants.WindowPlacement.fittedSize(
+            requested,
+            minimum: minimum,
+            in: NSRect(x: 0, y: 0, width: 1512, height: 944)
+        ) == requested
+    )
+
+    let fitted = Constants.WindowPlacement.fittedSize(
+        requested,
+        minimum: minimum,
+        in: NSRect(x: 0, y: 0, width: 1280, height: 600)
+    )
+    #expect(fitted.width == requested.width)
+    #expect(fitted.height == 600 - Constants.WindowPlacement.screenMargin * 2)
+
+    let squeezed = Constants.WindowPlacement.fittedSize(
+        requested,
+        minimum: minimum,
+        in: NSRect(x: 0, y: 0, width: 300, height: 240)
+    )
+    #expect(squeezed.width == 300)
+    #expect(squeezed.height == 240)
+}
+
+@Test
+func defaultPanelOriginIsCentredAndAnchoredInTheUpperThird() {
+    let screenFrame = NSRect(x: 0, y: 0, width: 1440, height: 875)
+    let panelSize = Constants.panelWindowSize
+    let origin = Constants.WindowPlacement.defaultPanelOrigin(panelSize: panelSize, screenFrame: screenFrame)
+
+    #expect(origin.x == screenFrame.midX - panelSize.width / 2)
+    #expect(origin.y + panelSize.height == screenFrame.maxY - 875 * 0.12)
+    #expect(
+        Constants.WindowPlacement.clampedOrigin(
+            NSPoint(x: -500, y: -500),
+            size: panelSize,
+            screenFrame: screenFrame
+        ) == NSPoint(x: screenFrame.minX, y: screenFrame.minY)
+    )
 }
 
 @Test
