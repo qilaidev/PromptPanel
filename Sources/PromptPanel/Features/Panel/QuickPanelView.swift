@@ -497,9 +497,15 @@ private struct PanelRow: View {
                                         .fill(Constants.VisualStyle.tintSubtle)
                                 )
                         }
-                        if metrics.showsTypeLabel {
-                            Text(type.displayName)
-                                .font(.ui(.micro, weight: .medium))
+                        // Recency, not the type name. Ranking is use count decayed by how
+                        // long an entry has sat untouched, and the count was the only half
+                        // of that the row showed — so "6 次" above "19 次" looked broken.
+                        // The type name earned its slot even less: it is the same word on
+                        // every row in a prompt library, and the leading icon already
+                        // carries it.
+                        if metrics.showsRecency {
+                            Text(recencyLabel)
+                                .font(.ui(.micro, weight: .medium, mono: true))
                                 .foregroundStyle(isSelected ? Constants.VisualStyle.textSecondary : Constants.VisualStyle.textTertiary)
                         }
                     }
@@ -546,12 +552,36 @@ private struct PanelRow: View {
         /// happens once the preview text is no longer shown.
         let titleWidth: CGFloat?
         let showsPreview: Bool
-        let showsTypeLabel: Bool
+        let showsRecency: Bool
 
         init(totalWidth: CGFloat) {
             showsPreview = totalWidth >= 470
-            showsTypeLabel = totalWidth >= 400
+            showsRecency = totalWidth >= 400
             titleWidth = showsPreview ? min(max(totalWidth * 0.28, 150), 260) : nil
+        }
+    }
+
+    /// Compact relative age for the recency column: "今天" / "3天" / "5周" / "7月".
+    /// Deliberately not `RelativeDateTimeFormatter` — its output ("3 天前", "上个月") is too
+    /// long and too variable for a column that has to stay the same width on every row.
+    private var recencyLabel: String {
+        guard let lastUsedAt = entry.lastUsedAt else {
+            return "未用"
+        }
+        let days = Int(max(Date().timeIntervalSince(lastUsedAt), 0) / 86_400)
+        switch days {
+        case 0:
+            return "今天"
+        case 1:
+            return "昨天"
+        case 2..<7:
+            return "\(days)天"
+        case 7..<31:
+            return "\(days / 7)周"
+        case 31..<365:
+            return "\(days / 30)月"
+        default:
+            return "\(days / 365)年"
         }
     }
 
