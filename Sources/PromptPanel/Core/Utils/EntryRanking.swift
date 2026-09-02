@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 
 /// How entries are ranked in the quick panel and the library.
 ///
@@ -13,96 +14,93 @@ import Foundation
 ///    from an import were nailed above the list forever, no matter how little they were
 ///    used, with no way to clear them.
 ///
-/// The order is now `是否置顶 → frecency → 最近使用时间 → 使用次数 → …`. Frecency multiplies
-/// how often an entry is used by how recently it was used, so a prompt used 600 times this
-/// week outranks one used 3 times in July, while a once-hot prompt that has not been touched
-/// in half a year sinks on its own instead of holding the top slot forever.
+/// The order is now `是否置顶 → frecency → 最近使用时间 → 使用次数 → …`, where frecency decays
+/// an entry's use count by how long it has been sitting untouched:
 ///
-/// The weights are deliberately coarse integer buckets rather than a continuous decay
-/// curve: the same table generates both the SQL used for `ORDER BY` and the Swift
-/// comparator used by the panel, so the two orderings cannot drift, and neither depends on
-/// SQLite being built with the optional math extension (`pow`/`exp` are not guaranteed).
+///     score = use_count × 2 ^ (−age_in_days / halfLifeDays)
+///
+/// One parameter with one meaning: after `halfLifeDays` without use, an entry counts for
+/// half as much. A prompt used 600 times this week outranks one used 3 times in July, and a
+/// once-hot prompt nobody has touched in a year sinks on its own instead of holding the top
+/// slot forever on historical volume alone.
+///
+/// A continuous curve rather than coarse age buckets, because buckets have cliffs: an entry
+/// that crossed a boundary overnight jumped several places for no reason the user could see,
+/// and the boundaries themselves were six unexplainable magic numbers.
+///
+/// **SQL and Swift run the same code.** `databaseFunction` registers `score(useCount:…)` with
+/// SQLite, so the repository's `ORDER BY` and the panel's in-memory comparator apply the same
+/// formula — not "generated from one table", literally the same function. That also keeps the
+/// ordering independent of whether this SQLite was built with the optional math extension
+/// (`pow`/`exp` are not guaranteed to exist).
+///
+/// The one thing that is not bit-identical between the two is `now`: SQL binds it through
+/// GRDB, which round-trips a `Date` at millisecond precision, while the in-memory sort passes
+/// a full-precision `Date`. That shifts every score by the same sub-millisecond factor, so it
+/// can only reorder entries whose scores already agree to ~10 significant digits — entries
+/// that are interchangeable to the user by construction.
 enum EntryRanking {
-    /// Recency multipliers, ordered by ascending age. The first bucket whose `maxAgeDays`
-    /// exceeds the entry's age wins; anything older falls through to `staleWeight`.
+    /// Days without use after which an entry counts for half as much.
     ///
-    /// The 100 → 1 spread means recency dominates within a season and frequency decides
-    /// inside a bucket: 4 days is "this week", 31 is "this month", 180 is "still remembered".
-    static let recencyBuckets: [(maxAgeDays: Int, weight: Int)] = [
-        (maxAgeDays: 4, weight: 100),
-        (maxAgeDays: 14, weight: 70),
-        (maxAgeDays: 31, weight: 50),
-        (maxAgeDays: 90, weight: 30),
-        (maxAgeDays: 180, weight: 10),
-    ]
+    /// 90 days is tuned against a real library: it lets "19 uses, three months ago" stay
+    /// ahead of "6 uses, today" — frequency still leads — while "500 uses, two years ago"
+    /// finally drops below a prompt used a handful of times this week. Shorter half-lives
+    /// (30 days) let a single recent use outrank months of accumulated usage, which is the
+    /// complaint this replaced.
+    static let halfLifeDays: Double = 90
 
-    /// Weight for an entry older than every bucket. Not zero: a rarely-touched entry should
-    /// still outrank one that has never been used at all.
-    static let staleWeight = 1
+    /// Score for an entry that has never been used. Zero, so it sorts below everything with
+    /// any history and falls through to the `updated_at` tiebreaker.
+    static let neverUsedScore: Double = 0
 
-    /// Weight for an entry that has never been used. Zero, so it sorts below everything
-    /// with any history and falls through to the `updated_at` tiebreaker.
-    static let neverUsedScore = 0
+    /// Name of the SQL function that exposes `score` to `ORDER BY`.
+    static let sqlFunctionName = "pp_frecency"
 
-    static func recencyWeight(ageDays: Int) -> Int {
-        for bucket in recencyBuckets where ageDays < bucket.maxAgeDays {
-            return bucket.weight
-        }
-        return staleWeight
+    static func ageInDays(from lastUsedAt: Date, to now: Date) -> Double {
+        now.timeIntervalSince(lastUsedAt) / 86_400
     }
 
-    /// Age in whole days, truncated toward zero to match SQLite's
-    /// `CAST(julianday(now) - julianday(last_used_at) AS INTEGER)`.
-    ///
-    /// A negative age (a clock that moved backwards, or an imported future timestamp) is
-    /// left negative on purpose so it lands in the freshest bucket in both implementations
-    /// rather than being clamped differently on each side.
-    static func ageInDays(from lastUsedAt: Date, to now: Date) -> Int {
-        Int(now.timeIntervalSince(lastUsedAt) / 86_400)
-    }
-
-    static func score(useCount: Int, lastUsedAt: Date?, now: Date) -> Int {
+    static func score(useCount: Int, lastUsedAt: Date?, now: Date) -> Double {
         guard let lastUsedAt else {
             return neverUsedScore
         }
-        return useCount * recencyWeight(ageDays: ageInDays(from: lastUsedAt, to: now))
+        // A negative age (a clock that moved backwards, or an imported future timestamp)
+        // is clamped rather than amplified: without this, a timestamp a year in the future
+        // would score 4× its use count and park itself at the top.
+        let ageDays = max(ageInDays(from: lastUsedAt, to: now), 0)
+        return Double(useCount) * pow(2, -ageDays / halfLifeDays)
     }
 
-    /// The same score as a SQL expression, generated from `recencyBuckets` so the table
-    /// stays the single source of truth.
+    /// `score` as a SQLite scalar function: `pp_frecency(use_count, last_used_at, now)`.
     ///
-    /// - Parameter nowJulianDay: SQL that evaluates to the current Julian day. Production
-    ///   passes SQLite's own `julianday('now')` (UTC, matching how GRDB stores dates); tests
-    ///   pin it to a literal so the expected order is stable.
-    static func sqlScoreExpression(
-        useCountColumn: String = "entries.use_count",
-        lastUsedAtColumn: String = "entries.last_used_at",
-        nowJulianDay: String = "julianday('now')"
-    ) -> String {
-        let age = "CAST(\(nowJulianDay) - julianday(\(lastUsedAtColumn)) AS INTEGER)"
-        var branches = ["WHEN \(lastUsedAtColumn) IS NULL THEN \(neverUsedScore)"]
-        branches += recencyBuckets.map { bucket in
-            "WHEN \(age) < \(bucket.maxAgeDays) THEN \(bucket.weight)"
+    /// `now` is passed in rather than read from the clock inside the function so a query is
+    /// reproducible and the tests can pin it.
+    static let databaseFunction = DatabaseFunction(
+        sqlFunctionName,
+        argumentCount: 3,
+        pure: true
+    ) { values in
+        let useCount = Int.fromDatabaseValue(values[0]) ?? 0
+        let lastUsedAt = Date.fromDatabaseValue(values[1])
+        guard let now = Date.fromDatabaseValue(values[2]) else {
+            return neverUsedScore
         }
-        return """
-            (\(useCountColumn) * (CASE
-                \(branches.joined(separator: "\n    "))
-                ELSE \(staleWeight)
-            END))
-            """
+        return score(useCount: useCount, lastUsedAt: lastUsedAt, now: now)
     }
 
-    /// `ORDER BY` for every list the user reads, generated once so the four repository
-    /// queries and the panel's in-memory sort cannot fall out of step.
+    /// `ORDER BY` for every list the user reads, so the four repository queries stay in step.
     ///
-    /// `sort_order` is deliberately absent — see the type documentation. The column is kept
-    /// so import/export round-trips stay compatible, but nothing ranks by it any more.
-    static func sqlOrderByClause(includeProjectPriority: Bool, nowJulianDay: String = "julianday('now')") -> String {
+    /// The clause carries exactly one bind parameter — `now`, for `pp_frecency` — which the
+    /// caller must append after its own arguments.
+    ///
+    /// `sort_order` is deliberately absent; see the type documentation. The column is kept so
+    /// import/export round-trips stay compatible, but nothing ranks by it any more.
+    static func sqlOrderByClause(includeProjectPriority: Bool) -> String {
         let projectPriority = includeProjectPriority ? "\n    project_priority ASC," : ""
         return """
             ORDER BY
                 entries.is_pinned DESC,
-                \(sqlScoreExpression(nowJulianDay: nowJulianDay)) DESC,
+                \(sqlFunctionName)(entries.use_count, entries.last_used_at, ?) DESC,
                 entries.last_used_at DESC,
                 entries.use_count DESC,\(projectPriority)
                 entries.updated_at DESC,

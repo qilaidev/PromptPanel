@@ -32,7 +32,9 @@ final class EntryRepository: @unchecked Sendable {
                 WHERE entries.project_id IN (\(placeholders))
                 \(EntryRanking.sqlOrderByClause(includeProjectPriority: false))
                 """
-            return try Entry.fetchAll(db, sql: sql, arguments: StatementArguments(ids))
+            var arguments = StatementArguments(ids)
+            arguments += [Date()] // pp_frecency's `now`, appended after the WHERE binds
+            return try Entry.fetchAll(db, sql: sql, arguments: arguments)
         }
     }
 
@@ -44,7 +46,7 @@ final class EntryRepository: @unchecked Sendable {
                 FROM entries
                 \(EntryRanking.sqlOrderByClause(includeProjectPriority: false))
                 """
-            return try Entry.fetchAll(db, sql: sql)
+            return try Entry.fetchAll(db, sql: sql, arguments: [Date()])
         }
     }
 
@@ -60,7 +62,11 @@ final class EntryRepository: @unchecked Sendable {
                 WHERE entries.project_id IN (?, ?)
                 \(EntryRanking.sqlOrderByClause(includeProjectPriority: true))
                 """
-            let rows = try Row.fetchAll(db, sql: sql, arguments: [currentProjectId, currentProjectId, defaultProjectId])
+            let rows = try Row.fetchAll(
+                db,
+                sql: sql,
+                arguments: [currentProjectId, currentProjectId, defaultProjectId, Date()]
+            )
             return try rows.map { try Entry(row: $0) }
         }
     }
@@ -106,6 +112,7 @@ final class EntryRepository: @unchecked Sendable {
                 """
             var arguments: StatementArguments = [currentProjectId, currentProjectId, escapedQuery]
             arguments += StatementArguments(ids)
+            arguments += [Date()] // pp_frecency's `now`
             let rows = try Row.fetchAll(db, sql: sql, arguments: arguments)
             return try rows.map { try Entry(row: $0) }
         }

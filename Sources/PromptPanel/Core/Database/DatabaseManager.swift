@@ -103,11 +103,15 @@ final class DatabaseManager {
         try fileManager.setAttributes([.posixPermissions: Constants.secureDirectoryPermissions], ofItemAtPath: directory.path)
 
         var config = Configuration()
-        #if DEBUG
         config.prepareDatabase { db in
+            // Ranking runs through a Swift function rather than a SQL expression so the
+            // repository's ORDER BY and the panel's in-memory sort cannot drift apart.
+            // It has to be registered on every connection, not just the first.
+            db.add(function: EntryRanking.databaseFunction)
+            #if DEBUG
             db.trace { PPLogger.database.debug("\($0)") }
+            #endif
         }
-        #endif
 
         var lastError: Error?
         for attempt in 0...openRetryMaxAttempts {
