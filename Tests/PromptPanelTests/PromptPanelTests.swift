@@ -853,6 +853,7 @@ final class PromptPanelTests: XCTestCase {
 
     // MARK: - Quick panel ⌘ shortcuts
 
+    @MainActor
     func testPanelKeyCommandMapsCommandDigitsToDirectExecution() {
         for digit in 1...9 {
             XCTAssertEqual(
@@ -865,6 +866,7 @@ final class PromptPanelTests: XCTestCase {
         }
     }
 
+    @MainActor
     func testPanelKeyCommandMapsCopyAndPin() {
         XCTAssertEqual(
             QuickPanelViewModel.panelKeyCommand(modifierFlags: [.command], charactersIgnoringModifiers: "c"),
@@ -880,6 +882,7 @@ final class PromptPanelTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testPanelKeyCommandIgnoresUnhandledCombinations() {
         // No ⌘ at all.
         XCTAssertNil(QuickPanelViewModel.panelKeyCommand(modifierFlags: [], charactersIgnoringModifiers: "1"))
@@ -893,6 +896,7 @@ final class PromptPanelTests: XCTestCase {
         XCTAssertNil(QuickPanelViewModel.panelKeyCommand(modifierFlags: [.command], charactersIgnoringModifiers: nil))
     }
 
+    @MainActor
     func testPanelKeyCommandIgnoresCapsLockAndFunctionNoise() {
         // Caps lock / numeric-keypad flags ride along on real key events and
         // must not disqualify ⌘1.
@@ -905,6 +909,7 @@ final class PromptPanelTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testPanelKeyCommandClosesOnBareEscape() {
         XCTAssertEqual(
             QuickPanelViewModel.panelKeyCommand(
@@ -926,6 +931,7 @@ final class PromptPanelTests: XCTestCase {
 
     // MARK: - Main window ⌘ shortcuts
 
+    @MainActor
     func testMainWindowKeyCommandMapsTheShortcutsTheLibraryAdvertises() {
         XCTAssertEqual(
             MainWindowViewModel.mainWindowKeyCommand(modifierFlags: [.command], charactersIgnoringModifiers: "f"),
@@ -944,6 +950,7 @@ final class PromptPanelTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testMainWindowNeverClaimsPlainCommandC() {
         // The preview pane's content is selectable. Claiming ⌘C would mean a
         // user who highlights part of a prompt silently copies the whole entry.
@@ -952,6 +959,7 @@ final class PromptPanelTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testMainWindowKeyCommandLeavesOtherCombinationsAlone() {
         XCTAssertNil(MainWindowViewModel.mainWindowKeyCommand(modifierFlags: [], charactersIgnoringModifiers: "f"))
         XCTAssertNil(
@@ -968,6 +976,7 @@ final class PromptPanelTests: XCTestCase {
 
     // MARK: - Execution in-flight guard
 
+    @MainActor
     func testExecutionGuardBlocksASecondRunWhileOneIsInFlight() {
         XCTAssertTrue(ExecuteService.shouldStartExecution(isExecuting: false, inFlightForMs: nil))
         XCTAssertFalse(ExecuteService.shouldStartExecution(isExecuting: true, inFlightForMs: 0))
@@ -979,6 +988,7 @@ final class PromptPanelTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testExecutionGuardReleasesItselfWhenAPreviousRunNeverFinished() {
         // A guard that could stick forever would silently disable every later
         // click and keystroke in the panel.
