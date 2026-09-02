@@ -440,7 +440,7 @@ private struct PanelRow: View {
         let level = Constants.EntryLevel.resolve(useCount: entry.useCount)
         Button(action: onTap) {
             GeometryReader { geometry in
-                let titleWidth = titleColumnWidth(totalWidth: geometry.size.width)
+                let metrics = RowMetrics(totalWidth: geometry.size.width)
                 HStack(spacing: Design.Space.md) {
                     // Only reserve the ⌘1-9 gutter while the numbers are
                     // actually shown; searching would otherwise leave a blank
@@ -458,26 +458,22 @@ private struct PanelRow: View {
                         .frame(width: 16, height: 16)
 
                     HStack(alignment: .firstTextBaseline, spacing: Design.Space.lg) {
-                        HStack(spacing: Design.Space.xs) {
-                            Text(entry.title)
-                                .font(.ui(.title, weight: .medium))
-                                .foregroundStyle(Constants.VisualStyle.text)
+                        if let titleWidth = metrics.titleWidth {
+                            titleLabel
+                                .frame(width: titleWidth, alignment: .leading)
+                        } else {
+                            titleLabel
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        if metrics.showsPreview {
+                            Text(previewText)
+                                .font(.ui(.body))
+                                .foregroundStyle(Constants.VisualStyle.textSecondary)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
-                            if entry.isPinned {
-                                Image(systemName: "pin.fill")
-                                    .font(.icon(.micro, weight: .semibold))
-                                    .foregroundStyle(Constants.VisualStyle.warn.opacity(0.85))
-                            }
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .frame(width: titleWidth, alignment: .leading)
-
-                        Text(previewText)
-                            .font(.ui(.body))
-                            .foregroundStyle(Constants.VisualStyle.textSecondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
                     HStack(spacing: Design.Space.sm) {
@@ -501,9 +497,11 @@ private struct PanelRow: View {
                                         .fill(Constants.VisualStyle.tintSubtle)
                                 )
                         }
-                        Text(type.displayName)
-                            .font(.ui(.micro, weight: .medium))
-                            .foregroundStyle(isSelected ? Constants.VisualStyle.textSecondary : Constants.VisualStyle.textTertiary)
+                        if metrics.showsTypeLabel {
+                            Text(type.displayName)
+                                .font(.ui(.micro, weight: .medium))
+                                .foregroundStyle(isSelected ? Constants.VisualStyle.textSecondary : Constants.VisualStyle.textTertiary)
+                        }
                     }
                     .layoutPriority(2)
                     .fixedSize(horizontal: true, vertical: false)
@@ -524,8 +522,37 @@ private struct PanelRow: View {
         .contentShape(RoundedRectangle(cornerRadius: Design.rowCornerRadius, style: .continuous))
     }
 
-    private func titleColumnWidth(totalWidth: CGFloat) -> CGFloat {
-        min(max(totalWidth * 0.28, 150), 260)
+    private var titleLabel: some View {
+        HStack(spacing: Design.Space.xs) {
+            Text(entry.title)
+                .font(.ui(.title, weight: .medium))
+                .foregroundStyle(Constants.VisualStyle.text)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            if entry.isPinned {
+                Image(systemName: "pin.fill")
+                    .font(.icon(.micro, weight: .semibold))
+                    .foregroundStyle(Constants.VisualStyle.warn.opacity(0.85))
+            }
+        }
+    }
+
+    /// How a row spends the width it is given. A portrait panel is narrow by
+    /// design, so the secondary columns drop out in order of importance —
+    /// content preview first, then the type label — instead of squeezing the
+    /// title down to an ellipsis.
+    private struct RowMetrics {
+        /// `nil` means the title takes the whole flexible column, which is what
+        /// happens once the preview text is no longer shown.
+        let titleWidth: CGFloat?
+        let showsPreview: Bool
+        let showsTypeLabel: Bool
+
+        init(totalWidth: CGFloat) {
+            showsPreview = totalWidth >= 470
+            showsTypeLabel = totalWidth >= 400
+            titleWidth = showsPreview ? min(max(totalWidth * 0.28, 150), 260) : nil
+        }
     }
 
     private var previewText: String {
