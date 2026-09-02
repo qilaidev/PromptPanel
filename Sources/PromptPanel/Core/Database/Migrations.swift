@@ -11,6 +11,7 @@ enum Migrations {
         registerV3ExecutionLogInteractionDiagnostics(migrator: &migrator)
         registerV4EntryTags(migrator: &migrator)
         registerV5DropUnusedEntryTagsIndex(migrator: &migrator)
+        registerV6RetireEntrySortOrder(migrator: &migrator)
     }
 
     // MARK: - V1: Initial Schema
@@ -153,6 +154,26 @@ enum Migrations {
         migrator.registerMigration("v5_drop_unused_entry_tags_index") { db in
             PPLogger.database.info("Running migration: v5_drop_unused_entry_tags_index")
             try db.execute(sql: "DROP INDEX IF EXISTS index_entries_on_tags")
+        }
+    }
+
+    // MARK: - V6: Retire entries.sort_order
+
+    /// `sort_order` used to outrank everything but pinning, and nothing in the app ever
+    /// wrote it — `updateSortOrder` was only reachable from tests. Entries that picked up a
+    /// value from an import were therefore stuck above the whole list no matter how rarely
+    /// they were used, with no way for the user to clear them. Ranking now uses frecency
+    /// (see `EntryRanking`) and ignores the column, so the stale values are zeroed here to
+    /// keep exports honest about a field that no longer means anything.
+    ///
+    /// The column itself stays: `LibraryTransferService` reads and writes a `Sort Order:`
+    /// line, and dropping it would break round-trips with archives exported by 1.x.
+    private static func registerV6RetireEntrySortOrder(migrator: inout DatabaseMigrator) {
+        migrator.registerMigration("v6_retire_entry_sort_order") { db in
+            PPLogger.database.info("Running migration: v6_retire_entry_sort_order")
+            let cleared = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM entries WHERE sort_order <> 0") ?? 0
+            try db.execute(sql: "UPDATE entries SET sort_order = 0 WHERE sort_order <> 0")
+            PPLogger.database.info("Cleared stale sort_order on \(cleared) entries")
         }
     }
 }
