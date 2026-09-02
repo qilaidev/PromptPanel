@@ -338,18 +338,25 @@ enum Constants {
         case pointerClick = "pointer_click"
     }
 
-    // MARK: - Panel Performance
+    // MARK: - Window Layout
 
+    /// The main window is a three-column master/detail surface (projects →
+    /// entries → preview), so it stays landscape by construction; the default
+    /// is only tightened towards 4:3 so it reads as a document window rather
+    /// than a wide dashboard.
     enum MainWindowLayout {
-        static let defaultContentSize = NSSize(width: 1100, height: 740)
-        static let minContentSize = NSSize(width: 1020, height: 680)
+        static let defaultContentSize = NSSize(width: 1040, height: 760)
+        static let minContentSize = NSSize(width: 920, height: 620)
     }
 
     static let panelContentInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
-    /// Unified default panel size (matches `frontend-draft/index.html` width=780).
-    static let panelContentSize = NSSize(width: 780, height: 440)
-    static let panelMinContentSize = NSSize(width: 560, height: 300)
-    static let panelMaxContentSize = NSSize(width: 1120, height: 760)
+    /// The quick panel is a single-column scanner: width only has to hold one
+    /// row, height decides how many candidates are visible at a glance. So the
+    /// default is portrait 4:5 rather than the old landscape 780×440 — the same
+    /// pixels buy roughly twice as many visible rows.
+    static let panelContentSize = NSSize(width: 560, height: 700)
+    static let panelMinContentSize = NSSize(width: 440, height: 320)
+    static let panelMaxContentSize = NSSize(width: 1120, height: 1040)
     static func panelWindowContentSize(for panelContentSize: NSSize) -> NSSize {
         NSSize(
             width: panelContentSize.width + panelContentInsets.left + panelContentInsets.right,
@@ -359,6 +366,61 @@ enum Constants {
     static var panelWindowSize: NSSize {
         panelWindowContentSize(for: panelContentSize)
     }
+
+    /// Pure geometry shared by the quick panel and the main window so both
+    /// surfaces degrade the same way on small displays.
+    enum WindowPlacement {
+        /// Breathing room kept between a window and the edge of the screen's
+        /// visible frame. A default size larger than the display shrinks to fit
+        /// instead of hanging off the bottom.
+        static let screenMargin: CGFloat = 24
+
+        /// Share of the visible height left above the panel. Launcher-style
+        /// upper-third anchoring reads better than dead-center for a tall list,
+        /// and keeps the search field near where the eye already is.
+        static let panelTopBias: CGFloat = 0.12
+
+        /// Shrink `size` until it fits `visibleFrame` (minus `margin`), never
+        /// going below `minimum` — unless the minimum itself does not fit, in
+        /// which case the screen wins. AppKit still enforces the window's own
+        /// `contentMinSize` on top of this, so a display smaller than the
+        /// minimum is clipped rather than shrunk further.
+        static func fittedSize(
+            _ size: NSSize,
+            minimum: NSSize,
+            in visibleFrame: NSRect,
+            margin: CGFloat = screenMargin
+        ) -> NSSize {
+            func fit(_ value: CGFloat, _ minimumValue: CGFloat, _ available: CGFloat) -> CGFloat {
+                let roomy = max(available - margin * 2, 0)
+                return max(min(value, roomy), min(minimumValue, available))
+            }
+            return NSSize(
+                width: fit(size.width, minimum.width, visibleFrame.width),
+                height: fit(size.height, minimum.height, visibleFrame.height)
+            )
+        }
+
+        /// Where the panel lands the first time, before the user drags it:
+        /// horizontally centred, anchored in the upper third.
+        static func defaultPanelOrigin(panelSize: NSSize, screenFrame: NSRect) -> NSPoint {
+            NSPoint(
+                x: screenFrame.midX - panelSize.width / 2,
+                y: screenFrame.maxY - panelSize.height - screenFrame.height * panelTopBias
+            )
+        }
+
+        /// Keep a window's origin inside the visible frame.
+        static func clampedOrigin(_ origin: NSPoint, size: NSSize, screenFrame: NSRect) -> NSPoint {
+            NSPoint(
+                x: min(max(origin.x, screenFrame.minX), max(screenFrame.minX, screenFrame.maxX - size.width)),
+                y: min(max(origin.y, screenFrame.minY), max(screenFrame.minY, screenFrame.maxY - size.height))
+            )
+        }
+    }
+
+    // MARK: - Panel Performance
+
     static let panelOpenLatencyTargetMs = 300
     static let panelExecutionUnlockDelayMs = 50
     static let panelActivationRetryDelayMs = 60

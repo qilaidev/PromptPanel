@@ -17,6 +17,10 @@ final class PanelService {
     private var activationObserver: NSObjectProtocol?
     private var localKeyMonitor: Any?
     private var deactivateCloseGraceDeadline: Date?
+    /// True while the panel frame is being adjusted to fit the current screen.
+    /// Those adjustments are presentation-only and must not be written back
+    /// over the size / position the user chose.
+    private var isApplyingScreenFit = false
     private let appState: AppState
     private let panelVisibilityCoordinator = PanelVisibilityCoordinator()
     private let panelOpenTracker: PanelOpenTracker?
@@ -282,6 +286,9 @@ final class PanelService {
     }
 
     private func handlePanelResize(contentSize: NSSize) {
+        guard isApplyingScreenFit == false else {
+            return
+        }
         let panelContentSize = NSSize(
             width: max(Constants.panelMinContentSize.width, contentSize.width - Constants.panelContentInsets.left - Constants.panelContentInsets.right),
             height: max(Constants.panelMinContentSize.height, contentSize.height - Constants.panelContentInsets.top - Constants.panelContentInsets.bottom)
@@ -298,6 +305,9 @@ final class PanelService {
     }
 
     private func handlePanelMove(origin: NSPoint) {
+        guard isApplyingScreenFit == false else {
+            return
+        }
         guard appState.panelWindowOrigin != origin else {
             return
         }
@@ -306,14 +316,36 @@ final class PanelService {
     }
 
     private func positionPanelForPresentation(_ panel: NSPanel) {
-        let panelSize = panel.frame.size
-        let screen = screenForPanelPlacement(panelSize: panelSize)
+        let screen = screenForPanelPlacement(panelSize: panel.frame.size)
         let screenFrame = screen.visibleFrame
+        let panelSize = fittedPanelSize(for: screenFrame)
         let origin = resolvedPanelOrigin(panelSize: panelSize, screenFrame: screenFrame)
-        guard panel.frame.origin != origin else {
+        let frame = NSRect(origin: origin, size: panelSize)
+        guard panel.frame != frame else {
             return
         }
-        panel.setFrameOrigin(origin)
+        // The fit-to-screen shrink is presentation-only: a laptop display must
+        // not overwrite the size the user picked on their large monitor, so the
+        // resulting `windowDidResize` is not allowed to persist.
+        withoutPersistingResize {
+            panel.setFrame(frame, display: true, animate: false)
+        }
+    }
+
+    /// The stored content size clamped to whatever screen the panel is about to
+    /// appear on, so a tall default never hangs off a small display.
+    private func fittedPanelSize(for screenFrame: NSRect) -> NSSize {
+        Constants.WindowPlacement.fittedSize(
+            Constants.panelWindowContentSize(for: appState.panelContentSize),
+            minimum: Constants.panelWindowContentSize(for: Constants.panelMinContentSize),
+            in: screenFrame
+        )
+    }
+
+    private func withoutPersistingResize(_ body: () -> Void) {
+        isApplyingScreenFit = true
+        defer { isApplyingScreenFit = false }
+        body()
     }
 
     private func screenForPanelPlacement(panelSize: NSSize) -> NSScreen {
@@ -325,22 +357,9 @@ final class PanelService {
     }
 
     private func resolvedPanelOrigin(panelSize: NSSize, screenFrame: NSRect) -> NSPoint {
-        let candidate = appState.panelWindowOrigin ?? defaultPanelOrigin(panelSize: panelSize, screenFrame: screenFrame)
-        return clampPanelOrigin(candidate, panelSize: panelSize, screenFrame: screenFrame)
-    }
-
-    private func defaultPanelOrigin(panelSize: NSSize, screenFrame: NSRect) -> NSPoint {
-        NSPoint(
-            x: screenFrame.midX - panelSize.width / 2 - screenFrame.width * 0.12,
-            y: screenFrame.midY - panelSize.height / 2 - screenFrame.height * 0.08
-        )
-    }
-
-    private func clampPanelOrigin(_ origin: NSPoint, panelSize: NSSize, screenFrame: NSRect) -> NSPoint {
-        NSPoint(
-            x: min(max(origin.x, screenFrame.minX), max(screenFrame.minX, screenFrame.maxX - panelSize.width)),
-            y: min(max(origin.y, screenFrame.minY), max(screenFrame.minY, screenFrame.maxY - panelSize.height))
-        )
+        let candidate = appState.panelWindowOrigin
+            ?? Constants.WindowPlacement.defaultPanelOrigin(panelSize: panelSize, screenFrame: screenFrame)
+        return Constants.WindowPlacement.clampedOrigin(candidate, size: panelSize, screenFrame: screenFrame)
     }
 
     private func applyPinnedWindowBehavior(to panel: NSPanel) {

@@ -537,7 +537,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if mainWindow == nil {
             let contentView = MainWindowView(viewModel: mainWindowViewModel)
-            let defaultSize = Constants.MainWindowLayout.defaultContentSize
+            let defaultSize = Self.fittedMainWindowContentSize()
             let windowChromeColor = NSColor(name: nil) { appearance in
                 appearance.isDark
                     ? NSColor(srgbRed: 30 / 255, green: 31 / 255, blue: 35 / 255, alpha: 1)
@@ -550,6 +550,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 defer: false
             )
             window.title = Constants.appName
+            window.contentMinSize = NSSize(
+                width: min(Constants.MainWindowLayout.minContentSize.width, defaultSize.width),
+                height: min(Constants.MainWindowLayout.minContentSize.height, defaultSize.height)
+            )
             window.center()
             window.contentView = NSHostingView(rootView: contentView)
             window.isReleasedWhenClosed = false
@@ -567,6 +571,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         updateAppActivationPolicy()
         mainWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// The default main-window size, shrunk to whatever screen it opens on so
+    /// a 1040×760 window never opens larger than a small display.
+    private static func fittedMainWindowContentSize() -> NSSize {
+        guard let visibleFrame = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame else {
+            return Constants.MainWindowLayout.defaultContentSize
+        }
+        return Constants.WindowPlacement.fittedSize(
+            Constants.MainWindowLayout.defaultContentSize,
+            minimum: Constants.MainWindowLayout.minContentSize,
+            in: visibleFrame
+        )
     }
 
     /// ⌘F / ⌘C / ⌘E for the library, resolved ahead of AppKit's key-equivalent
