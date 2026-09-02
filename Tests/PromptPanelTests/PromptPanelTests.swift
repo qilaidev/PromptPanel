@@ -1616,14 +1616,22 @@ final class PromptPanelTests: XCTestCase {
         XCTAssertEqual(fromSQL.map(\.id), fromSwift.map(\.id))
 
         // And the order is the one the user asked for: pinned first, then frecency.
+        // Scores, for the record: a=600*100, g=40*70, h=40*50, c=10*100, b=500*1,
+        // d=3*30, e=0 — note that "used 40 times this month" outranks "used 10 times
+        // today", and that the 500-use entry untouched for over a year sinks below both.
         XCTAssertEqual(fromSQL.first?.id, "f-pinned-cold")
-        let unpinned = fromSQL.dropFirst().map(\.id)
-        XCTAssertEqual(Array(unpinned.prefix(3)), ["a-hot-today", "c-modest-today", "g-week-old"])
-        XCTAssertEqual(unpinned.last, "e-never-used")
-        // The 500-use entry untouched for over a year is no longer near the top.
-        let staleIndex = try XCTUnwrap(unpinned.firstIndex(of: "b-hot-but-stale"))
-        let modestIndex = try XCTUnwrap(unpinned.firstIndex(of: "c-modest-today"))
-        XCTAssertGreaterThan(staleIndex, modestIndex)
+        XCTAssertEqual(
+            fromSQL.dropFirst().map(\.id),
+            [
+                "a-hot-today",
+                "g-week-old",
+                "h-month-old",
+                "c-modest-today",
+                "b-hot-but-stale",
+                "d-rare-and-old",
+                "e-never-used",
+            ]
+        )
     }
 
     func testMigrationClearsRetiredSortOrderValues() throws {
