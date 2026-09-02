@@ -18,9 +18,9 @@ Usage: scripts/capture-ui-qa.sh [--skip-build] [--output-dir <path>]
 
 Captures six window-cropped QA screenshots (dark + light for each surface)
 at the unified default sizes:
-  - panel-dark.png    / panel-light.png       (快捷面板 780x440)
-  - library-dark.png  / library-light.png     (主窗口 · 内容库 1100x740)
-  - settings-dark.png / settings-light.png    (主窗口 · 设置 1100x740)
+  - panel-dark.png    / panel-light.png       (快捷面板 560x700)
+  - library-dark.png  / library-light.png     (主窗口 · 内容库 1040x760)
+  - settings-dark.png / settings-light.png    (主窗口 · 设置 1040x760)
 EOF
 }
 
@@ -315,24 +315,24 @@ fi
 bootstrap_database
 seed_sample_data
 
-# Unified default panel size (matches Constants.panelContentSize = 780x440).
-set_panel_size 780 440
+# Unified default panel size (matches Constants.panelContentSize = 560x700).
+set_panel_size 560 700
 
 # Capture a full set (panel / library / settings) for each theme so the QA
 # folder mirrors the design-baseline dark + light variants 1:1.
 for theme in dark light; do
     set_app_theme "$theme"
 
-    capture_window "$OUTPUT_DIR/panel-$theme.png" 740 400 \
+    capture_window "$OUTPUT_DIR/panel-$theme.png" 500 560 \
         PROMPTPANEL_QA_OPEN_PANEL_ON_LAUNCH=1 \
         PROMPTPANEL_QA_OPEN_PANEL_DELAY_MS=700
 
-    capture_window "$OUTPUT_DIR/library-$theme.png" 1000 660 \
+    capture_window "$OUTPUT_DIR/library-$theme.png" 960 700 \
         PROMPTPANEL_QA_OPEN_MAIN_WINDOW_ON_LAUNCH=1 \
         PROMPTPANEL_QA_OPEN_MAIN_WINDOW_DELAY_MS=500 \
         PROMPTPANEL_QA_MAIN_WINDOW_TAB=library
 
-    capture_window "$OUTPUT_DIR/settings-$theme.png" 1000 660 \
+    capture_window "$OUTPUT_DIR/settings-$theme.png" 960 700 \
         PROMPTPANEL_QA_OPEN_MAIN_WINDOW_ON_LAUNCH=1 \
         PROMPTPANEL_QA_OPEN_MAIN_WINDOW_DELAY_MS=500 \
         PROMPTPANEL_QA_MAIN_WINDOW_TAB=settings
