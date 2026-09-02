@@ -4,7 +4,11 @@ All notable changes to PromptPanel are tracked here.
 
 The format is based on Keep a Changelog, and this project uses Conventional Commits for commit messages.
 
-## [Unreleased]
+## [1.2.0] - 2026-09-02
+
+窗口与交互可靠性版本。快捷面板从横版改为竖版，尺寸与落点按屏幕自适应；⌘1-9 / ⌘C / ⌘P
+等面板快捷键此前走的是一条 AppKit 永远不会到达的代码路径，现在真正生效；自动粘贴不再
+可能打回 PromptPanel 自己并被记成成功。日常使用方式没有变化。
 
 ### Fixed
 
@@ -162,7 +166,8 @@ First public release. Aligns the `Info.plist`, `codemeta.json`, and `docs/search
 
 - No remote authentication, telemetry, or cloud sync paths are introduced. Prompt content remains local in SQLite; the only network traffic is the optional Sparkle update check.
 
-[Unreleased]: https://github.com/tytsxai/PromptPanel/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/tytsxai/PromptPanel/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/tytsxai/PromptPanel/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/tytsxai/PromptPanel/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/tytsxai/PromptPanel/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/tytsxai/PromptPanel/compare/v1.0.1...v1.1.0
