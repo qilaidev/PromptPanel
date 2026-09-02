@@ -100,13 +100,30 @@ EntryRepository.search(query:projectIds:currentProjectId:)
 
 ```text
 is_pinned DESC
-sort_order DESC
+frecency DESC            -- use_count * recency weight, see EntryRanking
 last_used_at DESC
 use_count DESC
 current project before default project when tied
 updated_at DESC
 id ASC
 ```
+
+`frecency` 展开后是：
+
+```sql
+entries.use_count * (CASE
+    WHEN entries.last_used_at IS NULL THEN 0
+    WHEN age_days <   4 THEN 100
+    WHEN age_days <  14 THEN  70
+    WHEN age_days <  31 THEN  50
+    WHEN age_days <  90 THEN  30
+    WHEN age_days < 180 THEN  10
+    ELSE 1
+END)
+-- age_days = CAST(julianday('now') - julianday(entries.last_used_at) AS INTEGER)
+```
+
+`sort_order` 自 v1.3.0 起不参与排序，列保留仅为兼容导入导出格式。
 
 FTS 查询规则：
 

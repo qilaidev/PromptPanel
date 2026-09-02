@@ -4,6 +4,16 @@ All notable changes to PromptPanel are tracked here.
 
 The format is based on Keep a Changelog, and this project uses Conventional Commits for commit messages.
 
+## [1.3.0] - 2026-09-02
+
+### Changed
+
+- **常用词条现在会自己浮到前面。** 排序改为 frecency：`使用次数 × 最近使用时间的权重`（4 / 14 / 31 / 90 / 180 天分档取 100 / 70 / 50 / 30 / 10，更旧取 1）。此前的规则是 `置顶 → 手动排序值 → 最近使用时间 → 使用次数`，其中**「使用次数」永远不会生效**：它排在 `last_used_at` 后面，而那是个精确到秒的时间戳，两条词条几乎不可能相同，所以频次对顺序毫无影响。实际效果是一条用了 3 次的词条能压在用了 595 次的上面。现在高频词条排在前面，而半年没碰过的旧热词会自己沉下去，不会靠历史总量永久占位。
+
+### Removed
+
+- **退役了 `sort_order`（手动排序值）。** 它的优先级仅次于置顶，却没有任何界面能修改——`updateSortOrder` 全仓库只有测试在调用。从导入档案带进来的值会把词条永久钉在列表顶部，用户既没设过也清不掉。排序不再读这个字段，v6 迁移会把历史值清零；列本身保留，因为 `LibraryTransferService` 的导入导出格式里有 `Sort Order:` 行，删掉会破坏与 1.x 归档的往返兼容。置顶请用词条右键菜单里已有的「置顶」（`is_pinned`）。
+
 ## [1.2.0] - 2026-09-02
 
 窗口与交互可靠性版本。快捷面板从横版改为竖版，尺寸与落点按屏幕自适应；⌘1-9 / ⌘C / ⌘P
@@ -166,7 +176,8 @@ First public release. Aligns the `Info.plist`, `codemeta.json`, and `docs/search
 
 - No remote authentication, telemetry, or cloud sync paths are introduced. Prompt content remains local in SQLite; the only network traffic is the optional Sparkle update check.
 
-[Unreleased]: https://github.com/tytsxai/PromptPanel/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/tytsxai/PromptPanel/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/tytsxai/PromptPanel/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/tytsxai/PromptPanel/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/tytsxai/PromptPanel/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/tytsxai/PromptPanel/compare/v1.1.0...v1.1.1
