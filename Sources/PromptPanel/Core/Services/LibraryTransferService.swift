@@ -109,7 +109,10 @@ final class LibraryTransferService: @unchecked Sendable {
             throw TransferError.unsupportedFormatVersion(payload.formatVersion)
         }
 
-        let backupURL = try storageMaintenanceService.createManualBackup()
+        // Not `createManualBackup()`: that class is never pruned by design, and an
+        // import snapshot is machine-made, so routing them together made every import
+        // leave a permanent full-database copy behind.
+        let backupURL = try storageMaintenanceService.createImportSafetyBackup()
         var summary = LibraryTransferSummary(backupURL: backupURL)
         try projectRepository.writeInTransaction { db in
             let localProjects = try Project

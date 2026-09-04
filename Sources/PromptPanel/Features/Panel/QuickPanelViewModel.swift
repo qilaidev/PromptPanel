@@ -15,9 +15,29 @@ final class QuickPanelViewModel: ObservableObject {
         case error
     }
 
+    /// Why a results refresh was requested — which decides whether what is currently
+    /// on screen may stay there while the new query runs.
+    ///
+    /// This distinction is a safety property, not a cosmetic one. When the query text
+    /// or the project scope changes, the visible rows no longer answer the current
+    /// input; leaving them up means Enter or ⌘1-9 during the debounce window pastes an
+    /// entry the user is no longer looking at, silently and into their document.
+    /// `.scopeChanged` therefore blanks the list, exactly as it always has —
+    /// `testQuickPanelClearsResultsWhileAsyncSearchIsPending` pins that behavior, and it
+    /// is not a flicker to be optimized away.
+    ///
+    /// `.dataChanged` is the other case: same query, same scope, the rows underneath
+    /// just changed (a use count bumped after an execution, an edit made in the
+    /// library). There the old rows are still the right answer, so blanking the list
+    /// and flashing a spinner for one debounce window is pure churn.
+    private enum EntriesRefreshReason {
+        case scopeChanged
+        case dataChanged
+    }
+
     @Published var query: String = "" {
         didSet {
-            scheduleEntriesRefresh(delayMs: Constants.panelSearchDebounceMs)
+            scheduleEntriesRefresh(delayMs: Constants.panelSearchDebounceMs, reason: .scopeChanged)
         }
     }
     @Published private(set) var entries: [Entry] = []
@@ -97,7 +117,7 @@ final class QuickPanelViewModel: ObservableObject {
         isExecutionReady = false
         focusToken += 1
         loadProjects()
-        scheduleEntriesRefresh(delayMs: 0)
+        scheduleEntriesRefresh(delayMs: 0, reason: .scopeChanged)
     }
 
     func handleSearchFieldFocus(_ result: PanelFocusResult) {
@@ -198,7 +218,7 @@ final class QuickPanelViewModel: ObservableObject {
             appState.currentProjectId = id
             currentProjectId = id
             NotificationCenter.default.post(name: .currentProjectDidChange, object: nil)
-            scheduleEntriesRefresh(delayMs: 0)
+            scheduleEntriesRefresh(delayMs: 0, reason: .scopeChanged)
         } catch {
             PPLogger.project.error("Failed to switch current project: \(error.localizedDescription)")
             setStatus("切换项目失败，请重试。", tone: .error)
@@ -209,14 +229,16 @@ final class QuickPanelViewModel: ObservableObject {
         NotificationCenter.default.publisher(for: .projectsDidChange)
             .merge(with: NotificationCenter.default.publisher(for: .currentProjectDidChange))
             .sink { [weak self] _ in
+                // The project list or the active project moved: the visible rows may
+                // belong to a scope the user is no longer in.
                 self?.loadProjects()
-                self?.scheduleEntriesRefresh(delayMs: 0)
+                self?.scheduleEntriesRefresh(delayMs: 0, reason: .scopeChanged)
             }
             .store(in: &cancellables)
 
         NotificationCenter.default.publisher(for: .entriesDidChange)
             .sink { [weak self] _ in
-                self?.scheduleEntriesRefresh(delayMs: 0)
+                self?.scheduleEntriesRefresh(delayMs: 0, reason: .dataChanged)
             }
             .store(in: &cancellables)
     }
@@ -234,7 +256,7 @@ final class QuickPanelViewModel: ObservableObject {
         }
     }
 
-    private func scheduleEntriesRefresh(delayMs: Int) {
+    private func scheduleEntriesRefresh(delayMs: Int, reason: EntriesRefreshReason) {
         pendingSearchWorkItem?.cancel()
 
         guard !appState.effectiveProjectId.isEmpty || !currentProjectId.isEmpty else {
@@ -252,10 +274,10 @@ final class QuickPanelViewModel: ObservableObject {
         let searchQueue = self.searchQueue
 
         appState.currentProjectId = effectiveCurrentProjectId
-        // Deliberately *not* clearing `entries` here. Blanking the list on every
-        // keystroke tore the panel down and rebuilt it a debounce later, so typing
-        // read as a flicker between the old results and an empty list; the spinner
-        // is only for the case where there is nothing to keep showing.
+        if reason == .scopeChanged {
+            entries = []
+            selectedIndex = 0
+        }
         isLoadingEntries = entries.isEmpty
         searchGeneration += 1
         let generation = searchGeneration

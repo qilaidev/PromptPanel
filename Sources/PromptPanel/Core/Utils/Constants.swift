@@ -219,10 +219,15 @@ enum Constants {
     }
 
     static let automaticBackupRetentionCount = 7
-    /// Manual backups ("立即备份" and the pre-import snapshot) used to be kept
-    /// forever: pruning only ever matched the `-launch-` filenames, so every
-    /// click and every library import left another full database copy behind.
-    static let manualBackupRetentionCount = 5
+    /// Snapshots taken automatically before a library import.
+    ///
+    /// These used to be created through `createManualBackup()`, which meant they
+    /// inherited the "never prune" policy that exists to protect backups the user
+    /// asked for by hand — so every import left another full database copy behind,
+    /// forever. They are machine-made safety copies, not the user's archive, so they
+    /// get their own bounded retention. Backups from the 立即备份 button are still
+    /// never pruned; see `StorageMaintenanceService.pruneCollectableBackups()`.
+    static let importBackupRetentionCount = 5
     static let automaticBackupMinimumInterval: TimeInterval = 12 * 60 * 60
     static let executionLogRetentionDays = 30
     static let recoveryDirectoryRetentionCount = 5

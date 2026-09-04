@@ -981,7 +981,7 @@ private struct MaintenanceSection: View {
         if let task = viewModel.activeMaintenanceTask {
             return "\(task)完成前，其余维护操作会暂时停用。"
         }
-        return "导入词库前会自动创建本地数据库备份；备份目录只保留最近 \(Constants.automaticBackupRetentionCount) 份启动备份和 \(Constants.manualBackupRetentionCount) 份手动备份。"
+        return "导入词库前会自动创建本地数据库备份。启动备份保留最近 \(Constants.automaticBackupRetentionCount) 份、导入前备份保留最近 \(Constants.importBackupRetentionCount) 份；你手动点「立即备份」创建的副本不会被自动清理。"
     }
 
     @ViewBuilder

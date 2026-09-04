@@ -20,8 +20,8 @@ The format is based on Keep a Changelog, and this project uses Conventional Comm
 - **列表行每帧都在处理整条词条正文。** 面板行和词条库行的预览文本对**完整** `content` 做两次 `replacingOccurrences`，再 `components(separatedBy:)` + `joined`。几 KB 的提示词乘以可见行数，就是每次按键几 MB 的字符串搬运，而行本身只显示一行、超出即截断。现在只扫描前 240 个字符，一趟归一化空白。
 - **筛选芯片的统计每帧全量重算。** `availableEntryKinds` 和 `topTags()` 都是从 `body` 直接调用的计算属性，各自遍历全部已加载词条，`topTags()` 一帧调三次，`kindCount(for:)` 每个芯片调一次。现在在 `entries` 变化时一趟算完并发布；项目名也改成用 id→name 字典查，不再每行线性扫描项目列表。
 - **面板每一行内嵌一个 `GeometryReader`。** 行宽是列表的属性而不是行的属性，把 GeometryReader 放进 `LazyVStack` 的每个 cell 里，等于每次滚动、每次按键都为每行多做一次布局。现在整个列表只测量一次，宽度传给行。
-- **面板每敲一个字就先把结果清空。** `scheduleEntriesRefresh` 在防抖开始前就 `entries = []`，于是输入过程是「旧结果 → 空列表 → 新结果」的闪烁，而且整个列表被拆掉重建。现在保留旧结果直到新结果到达，只有确实无内容可显示时才出加载态；刷新后高亮也会尽量留在同一条词条上。
-- **手动备份从来不会被清理。** `createManualBackup()` 调的 `pruneBackups(reason: "launch", …)` 只匹配 `-launch-` 文件名，所以每次点「立即备份」、每次导入词库（导入前会自动备份）都会在备份目录里永久留下一份完整数据库副本。现在两类备份各自按保留数清理（启动 7 份、手动 5 份）。
+- **面板在「数据变了」时也会把结果清空重建。** `scheduleEntriesRefresh` 无条件 `entries = []`，包括执行完一条词条后仅仅是使用次数变了触发的那次刷新——列表被整个拆掉重建，闪一下再回来。现在按刷新原因区分：查询词或项目范围变化仍然立即清空（这是安全属性，不是闪烁：留着旧结果意味着防抖窗口内按 Enter 或 ⌘1-9 会把用户已经看不到的词条粘进文档，`testQuickPanelClearsResultsWhileAsyncSearchIsPending` 钉住这条）；只有查询和范围都没变、单纯是底层行变了的刷新才保留当前结果并把高亮留在同一条词条上。
+- **每次导入词库都会永久留下一份完整数据库副本。** 导入前的安全快照走的是 `createManualBackup()`，于是继承了「手动备份永不自动清理」这条策略——而那条策略是为用户点「立即备份」显式创建的存档准备的，不是为机器自动生成的快照。安全快照现在有自己的 `createImportSafetyBackup()` 和保留数（5 份）；用户手动创建的备份仍然永不自动删除（`testStorageMaintenanceKeepsManualBackupsBeyondAutomaticRetention` 钉住这条）。
 - **内容库里发出的状态提示全部被丢弃。** `bannerMessage` 只画在设置页里，所以「已复制到剪贴板」「词条已删除」「保存词条失败」这些在内容库触发的消息，用户一条都看不到。横幅现在由 `MainWindowView` 承载，两个 Tab 共用，可手动关闭，并在 8 秒后自动消失（维护任务进行中除外）。
 - **窗口标题栏右侧的「PromptPanel」在 72pt 里折成两行。** 这个标签和系统标题栏本来就重复，直接删掉，只留占位保证分段控件居中。
 - **「授权操作」的三个按钮全部被截断成「请…」「系统…」「重新…」。** 带图标的文字胶囊塞不进设置分栏里标签旁边剩下的宽度。授权相关动作现在整宽两列排列。

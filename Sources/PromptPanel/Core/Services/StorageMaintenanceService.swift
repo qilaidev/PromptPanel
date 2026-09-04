@@ -53,7 +53,7 @@ final class StorageMaintenanceService: @unchecked Sendable {
         if try shouldCreateAutomaticBackup() {
             _ = try createBackup(reason: "launch")
         }
-        try pruneAllBackupClasses()
+        try pruneCollectableBackups()
         pruneRecoveryDirectories(keeping: Constants.recoveryDirectoryRetentionCount)
         return try healthSnapshot()
     }
@@ -66,24 +66,38 @@ final class StorageMaintenanceService: @unchecked Sendable {
         }
     }
 
+    /// A backup the user explicitly asked for (立即备份).
+    ///
+    /// Deliberately **never** pruned: it is the user's own archive, and silently
+    /// deleting the copy someone made right before doing something risky is the
+    /// worst possible failure mode for a backup feature. Only the two machine-made
+    /// classes below are collectable.
     func createManualBackup() throws -> URL {
         try ensureStorageDirectories()
         try checkpointWal()
         let backupURL = try createBackup(reason: "manual")
-        try pruneAllBackupClasses()
+        try pruneCollectableBackups()
         return backupURL
     }
 
-    /// Prune each backup class against its own retention.
+    /// The safety snapshot taken automatically before a library import.
     ///
-    /// This used to prune `-launch-` only, from both the launch path *and*
-    /// `createManualBackup()`. Manual backups — every "立即备份" click plus the
-    /// snapshot taken before every library import — were therefore never
-    /// collected, so the backup directory grew by a full database copy per
-    /// import, forever.
-    private func pruneAllBackupClasses() throws {
+    /// This used to go through `createManualBackup()`, so it inherited the
+    /// never-prune policy above and every import left another full database copy
+    /// behind, forever. Nobody asked for these individually, so they are bounded.
+    func createImportSafetyBackup() throws -> URL {
+        try ensureStorageDirectories()
+        try checkpointWal()
+        let backupURL = try createBackup(reason: "import")
+        try pruneCollectableBackups()
+        return backupURL
+    }
+
+    /// Prune only the backup classes the app creates on its own initiative.
+    /// `-manual-` is absent on purpose — see `createManualBackup()`.
+    private func pruneCollectableBackups() throws {
         try pruneBackups(reason: "launch", keeping: Constants.automaticBackupRetentionCount)
-        try pruneBackups(reason: "manual", keeping: Constants.manualBackupRetentionCount)
+        try pruneBackups(reason: "import", keeping: Constants.importBackupRetentionCount)
     }
 
     /// Read-only: it reports what is on disk and must not create or chmod
