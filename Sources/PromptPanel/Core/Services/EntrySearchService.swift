@@ -73,7 +73,9 @@ final class EntrySearchService: @unchecked Sendable {
     ) {
         let queryLength = query.count
         let tokenCount = tokenCount(for: query)
-        PPLogger.search.info(
+        // Debug, not info: this fires on every debounced keystroke in both the panel
+        // and the library. The latency warning below is the line that matters.
+        PPLogger.search.debug(
             "Search completed scope=\(scope) duration_ms=\(durationMs) result_count=\(resultCount) query_length=\(queryLength) token_count=\(tokenCount) includes_default_project=\(includesDefaultProject)"
         )
 

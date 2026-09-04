@@ -25,9 +25,17 @@ final class PermissionService: ObservableObject, AccessibilityPermissionProvidin
     }
 
     /// Refresh the current accessibility permission status.
+    ///
+    /// Called on every app activation, every panel presentation and every paste, so
+    /// it only logs when the answer actually changes — an unconditional `info` line
+    /// here buried the rest of the permission category in noise.
     func refresh() {
-        isAccessibilityGranted = AXIsProcessTrusted()
-        PPLogger.permission.info("Accessibility permission: \(self.isAccessibilityGranted)")
+        let trusted = AXIsProcessTrusted()
+        guard trusted != isAccessibilityGranted else {
+            return
+        }
+        isAccessibilityGranted = trusted
+        PPLogger.permission.info("Accessibility permission changed to: \(trusted)")
     }
 
     /// Prompt the user to grant accessibility permission.

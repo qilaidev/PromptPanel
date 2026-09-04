@@ -36,7 +36,7 @@ final class SettingsRepository: @unchecked Sendable {
 
     func setCurrentProjectId(_ id: String) throws {
         try set(Constants.SettingsKey.currentProjectId, value: id)
-        PPLogger.project.info("Current project set to: \(id)")
+        PPLogger.project.debug("Current project set to: \(id)")
     }
 
     func getBool(_ key: String, default defaultValue: Bool = false) throws -> Bool {
@@ -64,7 +64,7 @@ final class SettingsRepository: @unchecked Sendable {
 
     func setPanelPinned(_ isPinned: Bool) throws {
         try setBool(Constants.SettingsKey.panelPinned, value: isPinned)
-        PPLogger.panel.info("Panel pinned set to: \(isPinned)")
+        PPLogger.panel.debug("Panel pinned set to: \(isPinned)")
     }
 
     func getPanelContentSize() throws -> NSSize {
@@ -79,7 +79,7 @@ final class SettingsRepository: @unchecked Sendable {
             try Self.persist(Constants.SettingsKey.panelContentWidth, value: String(Int(normalizedSize.width.rounded())), in: db)
             try Self.persist(Constants.SettingsKey.panelContentHeight, value: String(Int(normalizedSize.height.rounded())), in: db)
         }
-        PPLogger.panel.info("Panel content size set to: \(Int(normalizedSize.width))x\(Int(normalizedSize.height))")
+        PPLogger.panel.debug("Panel content size set to: \(Int(normalizedSize.width))x\(Int(normalizedSize.height))")
     }
 
     func getPanelWindowOrigin() throws -> NSPoint? {
@@ -99,7 +99,7 @@ final class SettingsRepository: @unchecked Sendable {
             try Self.persist(Constants.SettingsKey.panelWindowOriginX, value: String(Int(origin.x.rounded())), in: db)
             try Self.persist(Constants.SettingsKey.panelWindowOriginY, value: String(Int(origin.y.rounded())), in: db)
         }
-        PPLogger.panel.info("Panel window origin set to: \(Int(origin.x)),\(Int(origin.y))")
+        PPLogger.panel.debug("Panel window origin set to: \(Int(origin.x)),\(Int(origin.y))")
     }
 
     private static func persist(_ key: String, value: String?, in db: Database) throws {
@@ -122,7 +122,7 @@ final class SettingsRepository: @unchecked Sendable {
 
     func setPanelFooterVisible(_ isVisible: Bool) throws {
         try setBool(Constants.SettingsKey.panelShowFooter, value: isVisible)
-        PPLogger.panel.info("Panel footer visibility set to: \(isVisible)")
+        PPLogger.panel.debug("Panel footer visibility set to: \(isVisible)")
     }
 
     func isPanelCompactRows() throws -> Bool {
@@ -131,7 +131,7 @@ final class SettingsRepository: @unchecked Sendable {
 
     func setPanelCompactRows(_ isCompact: Bool) throws {
         try setBool(Constants.SettingsKey.panelCompactRows, value: isCompact)
-        PPLogger.panel.info("Panel compact rows set to: \(isCompact)")
+        PPLogger.panel.debug("Panel compact rows set to: \(isCompact)")
     }
 
     // MARK: - Theme
@@ -153,6 +153,6 @@ final class SettingsRepository: @unchecked Sendable {
 
     func setEntrySortMode(_ rawValue: String) throws {
         try set(Constants.SettingsKey.entrySortMode, value: rawValue)
-        PPLogger.entry.info("Entry sort mode set to: \(rawValue)")
+        PPLogger.entry.debug("Entry sort mode set to: \(rawValue)")
     }
 }

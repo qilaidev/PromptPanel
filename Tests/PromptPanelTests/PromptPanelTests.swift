@@ -514,15 +514,11 @@ final class PromptPanelTests: XCTestCase {
 
     func testEntryRepositoryMutationsFailWhenEntryIsMissing() throws {
         let databaseManager = try makeDatabaseManager()
-        let projectRepository = ProjectRepository(dbQueue: databaseManager.dbQueue)
         let entryRepository = EntryRepository(dbQueue: databaseManager.dbQueue)
-        let defaultProject = try XCTUnwrap(projectRepository.fetchDefault())
 
         for action in [
             { try entryRepository.recordExecution(id: "missing-entry") },
-            { try entryRepository.updateSortOrder(id: "missing-entry", sortOrder: 10) },
-            { try entryRepository.togglePin(id: "missing-entry") },
-            { try entryRepository.moveToProject(entryId: "missing-entry", projectId: defaultProject.id) }
+            { try entryRepository.delete(id: "missing-entry") }
         ] {
             XCTAssertThrowsError(try action()) { error in
                 guard case RepositoryError.notFound(let entity) = error else {
@@ -2883,15 +2879,11 @@ func deletingNonEmptyProjectFailsWithEntryCount() throws {
 @Test
 func entryRepositoryMutationsFailWhenEntryIsMissing() throws {
     let databaseManager = try makeDatabaseManager()
-    let projectRepository = ProjectRepository(dbQueue: databaseManager.dbQueue)
     let entryRepository = EntryRepository(dbQueue: databaseManager.dbQueue)
-    let defaultProject = try #require(projectRepository.fetchDefault())
 
     for action in [
         { try entryRepository.recordExecution(id: "missing-entry") },
-        { try entryRepository.updateSortOrder(id: "missing-entry", sortOrder: 10) },
-        { try entryRepository.togglePin(id: "missing-entry") },
-        { try entryRepository.moveToProject(entryId: "missing-entry", projectId: defaultProject.id) }
+        { try entryRepository.delete(id: "missing-entry") }
     ] {
         do {
             try action()

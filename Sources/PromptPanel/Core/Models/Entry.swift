@@ -60,6 +60,35 @@ struct Entry: Identifiable, Codable, Equatable {
         case tags
     }
 
+    /// How much of `content` a one-line preview is allowed to look at.
+    /// Well past what fits in a single truncated row at any panel width.
+    static let previewScanLimit = 240
+
+    /// Single-line preview of `content` for list rows.
+    ///
+    /// Bounded on purpose. The row views used to normalize the *whole* body —
+    /// `replacingOccurrences` twice, then `components(separatedBy:)` and `joined`
+    /// — on every render pass, for every visible row. With multi-kilobyte prompts
+    /// that is megabytes of string churn per keystroke, and none of it is visible:
+    /// the row truncates after one line anyway.
+    var previewLine: String {
+        var out = ""
+        out.reserveCapacity(Entry.previewScanLimit)
+        var pendingSpace = false
+        for character in content.prefix(Entry.previewScanLimit) {
+            if character.isWhitespace || character.isNewline {
+                pendingSpace = !out.isEmpty
+                continue
+            }
+            if pendingSpace {
+                out.append(" ")
+                pendingSpace = false
+            }
+            out.append(character)
+        }
+        return out
+    }
+
     static func normalizeTags(_ tags: [String]) -> [String] {
         var seen = Set<String>()
         var out: [String] = []
@@ -128,9 +157,18 @@ extension Entry: FetchableRecord, PersistableRecord {
 /// JSON <-> `[String]` codec for the `entries.tags` column.
 /// Malformed JSON falls back to an empty list so a single bad row cannot crash the app.
 enum EntryTagsCodec {
+    // Reused rather than allocated per row: `decode` runs once for every entry in
+    // every fetch, and building a fresh coder each time is measurable on a full
+    // library load.
+    private static let encoder = JSONEncoder()
+    private static let decoder = JSONDecoder()
+    private static let lock = NSLock()
+
     static func encode(_ tags: [String]) -> String {
         let normalized = Entry.normalizeTags(tags)
-        guard let data = try? JSONEncoder().encode(normalized),
+        lock.lock()
+        defer { lock.unlock() }
+        guard let data = try? encoder.encode(normalized),
               let string = String(data: data, encoding: .utf8) else {
             return "[]"
         }
@@ -138,9 +176,20 @@ enum EntryTagsCodec {
     }
 
     static func decode(_ raw: String?) -> [String] {
-        guard let raw,
-              let data = raw.data(using: .utf8),
-              let decoded = try? JSONDecoder().decode([String].self, from: data) else {
+        guard let raw else {
+            return []
+        }
+        // Overwhelmingly the common case for a library with no tags; skip JSON entirely.
+        if raw.isEmpty || raw == "[]" {
+            return []
+        }
+        guard let data = raw.data(using: .utf8) else {
+            return []
+        }
+        lock.lock()
+        let decoded = try? decoder.decode([String].self, from: data)
+        lock.unlock()
+        guard let decoded else {
             return []
         }
         return Entry.normalizeTags(decoded)

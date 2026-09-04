@@ -154,19 +154,41 @@ enum Constants {
     static let appName = "PromptPanel"
     static let bundleIdentifier = "com.promptpanel.app"
 
+    /// `1.4.0 (8)` — read from `Info.plist` once, not on every SwiftUI pass.
+    /// Two settings cards used to derive this independently from `Bundle.main`
+    /// inside `body`, in two slightly different shapes.
+    static let appVersionDisplay: String = {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let shortVersion = (info["CFBundleShortVersionString"] as? String) ?? "未知"
+        let buildVersion = (info["CFBundleVersion"] as? String) ?? "未知"
+        return "\(shortVersion) (\(buildVersion))"
+    }()
+
     // MARK: - Data Directories
 
-    static var applicationSupportDirectory: URL {
+    /// Resolved once per process.
+    ///
+    /// This used to be a computed property that ran `createDirectory` + `chmod`
+    /// on *every* read. `databaseURL`, `backupDirectory(for:)` and
+    /// `recoveryDirectory(for:)` all route through it, and those are read from
+    /// SwiftUI `body` and from every storage health refresh — so a settings
+    /// repaint cost dozens of filesystem syscalls on the main thread. The
+    /// environment override is fixed for the lifetime of the process, so
+    /// resolving (and securing) the directory once is equivalent and free.
+    private static let resolvedApplicationSupportDirectory: URL = {
         let url = environmentURL(for: appSupportOverrideEnv)
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
                 .appendingPathComponent(appName)
         ensureSecureDirectory(at: url)
         return url
+    }()
+
+    static var applicationSupportDirectory: URL {
+        resolvedApplicationSupportDirectory
     }
 
-    static var databaseURL: URL {
-        applicationSupportDirectory.appendingPathComponent("promptpanel.db")
-    }
+    static let databaseURL: URL = resolvedApplicationSupportDirectory
+        .appendingPathComponent("promptpanel.db")
 
     static func backupDirectory(for databaseURL: URL) -> URL {
         storageRoot(for: databaseURL).appendingPathComponent("Backups", isDirectory: true)
@@ -178,16 +200,29 @@ enum Constants {
 
     // MARK: - Log Directories
 
-    static var logsDirectory: URL {
+    /// PromptPanel logs through `os.Logger` (see `PPLogger`), i.e. into the unified log —
+    /// it does **not** write log files. This directory exists as the documented place to
+    /// drop anything a maintainer collects by hand (`log collect`, a diagnostics bundle),
+    /// and as the isolation point `PROMPTPANEL_LOGS_DIR` moves during QA runs. If you go
+    /// looking for the code that writes here, there isn't any, and that is intentional.
+    private static let resolvedLogsDirectory: URL = {
         let url = environmentURL(for: logsOverrideEnv)
             ?? FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
                 .appendingPathComponent("Logs")
                 .appendingPathComponent(appName)
         ensureSecureDirectory(at: url)
         return url
+    }()
+
+    static var logsDirectory: URL {
+        resolvedLogsDirectory
     }
 
     static let automaticBackupRetentionCount = 7
+    /// Manual backups ("立即备份" and the pre-import snapshot) used to be kept
+    /// forever: pruning only ever matched the `-launch-` filenames, so every
+    /// click and every library import left another full database copy behind.
+    static let manualBackupRetentionCount = 5
     static let automaticBackupMinimumInterval: TimeInterval = 12 * 60 * 60
     static let executionLogRetentionDays = 30
     static let recoveryDirectoryRetentionCount = 5
@@ -484,7 +519,9 @@ extension NSAppearance {
     /// True when the appearance resolves to a dark variant. Used by the
     /// dynamic color providers in `Constants.VisualStyle`.
     var isDark: Bool {
-        bestMatch(from: [.aqua, .vibrantLight, .darkAqua, .vibrantDark]) == .darkAqua
-            || bestMatch(from: [.aqua, .vibrantLight, .darkAqua, .vibrantDark]) == .vibrantDark
+        // Resolved once: every dynamic color in `Constants.VisualStyle` calls
+        // this on each appearance change, and `bestMatch` is not free.
+        let match = bestMatch(from: [.aqua, .vibrantLight, .darkAqua, .vibrantDark])
+        return match == .darkAqua || match == .vibrantDark
     }
 }

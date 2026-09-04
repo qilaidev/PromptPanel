@@ -40,14 +40,14 @@ final class PasteService: PasteDispatching {
         keyDownEvent.post(tap: .cghidEventTap)
         keyUpEvent.post(tap: .cghidEventTap)
 
-        PPLogger.paste.info("Auto-paste Cmd+V events dispatched")
+        PPLogger.paste.debug("Auto-paste Cmd+V events dispatched")
         return .dispatched
     }
 
     /// Check if accessibility permission is granted.
     func checkAccessibility() -> Bool {
         let trusted = AXIsProcessTrusted()
-        PPLogger.paste.info("Accessibility check: \(trusted)")
+        PPLogger.paste.debug("Accessibility check: \(trusted)")
         return trusted
     }
 }

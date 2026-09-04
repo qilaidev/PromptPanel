@@ -23,7 +23,7 @@ final class LogRepository: @unchecked Sendable {
         try dbQueue.write { db in
             try log.insert(db)
         }
-        PPLogger.execute.info("Execution logged: entry=\(log.entryId), result=\(log.result)")
+        PPLogger.execute.debug("Execution logged: entry=\(log.entryId), result=\(log.result)")
     }
 
     /// Fetch recent execution logs (for debugging).

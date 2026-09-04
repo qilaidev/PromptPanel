@@ -163,7 +163,7 @@ final class EntryRepository: @unchecked Sendable {
         try dbQueue.write { db in
             try entry.insert(db)
         }
-        PPLogger.entry.info("Entry created: \(entry.id)")
+        PPLogger.entry.debug("Entry created: \(entry.id)")
     }
 
     /// Update an existing entry.
@@ -173,7 +173,7 @@ final class EntryRepository: @unchecked Sendable {
         try dbQueue.write { db in
             try updated.update(db)
         }
-        PPLogger.entry.info("Entry updated: \(entry.id)")
+        PPLogger.entry.debug("Entry updated: \(entry.id)")
     }
 
     /// Delete an entry by ID.
@@ -184,7 +184,7 @@ final class EntryRepository: @unchecked Sendable {
             }
             try entry.delete(db)
         }
-        PPLogger.entry.info("Entry deleted: \(id)")
+        PPLogger.entry.debug("Entry deleted: \(id)")
     }
 
     /// Record an execution: increment use_count and set last_used_at.
@@ -202,41 +202,7 @@ final class EntryRepository: @unchecked Sendable {
             )
             try Self.requireChangedRow(in: db, entity: "Entry \(id)")
         }
-        PPLogger.entry.info("Execution recorded for entry: \(id)")
-    }
-
-    /// Update the sort order for an entry.
-    func updateSortOrder(id: String, sortOrder: Int) throws {
-        try dbQueue.write { db in
-            try db.execute(
-                sql: "UPDATE entries SET sort_order = ?, updated_at = ? WHERE id = ?",
-                arguments: [sortOrder, Date(), id]
-            )
-            try Self.requireChangedRow(in: db, entity: "Entry \(id)")
-        }
-    }
-
-    /// Toggle pin status.
-    func togglePin(id: String) throws {
-        try dbQueue.write { db in
-            try db.execute(
-                sql: "UPDATE entries SET is_pinned = NOT is_pinned, updated_at = ? WHERE id = ?",
-                arguments: [Date(), id]
-            )
-            try Self.requireChangedRow(in: db, entity: "Entry \(id)")
-        }
-    }
-
-    /// Move an entry to a different project.
-    func moveToProject(entryId: String, projectId: String) throws {
-        try dbQueue.write { db in
-            try db.execute(
-                sql: "UPDATE entries SET project_id = ?, updated_at = ? WHERE id = ?",
-                arguments: [projectId, Date(), entryId]
-            )
-            try Self.requireChangedRow(in: db, entity: "Entry \(entryId)")
-        }
-        PPLogger.entry.info("Entry \(entryId) moved to project \(projectId)")
+        PPLogger.entry.debug("Execution recorded for entry: \(id)")
     }
 
     private static func requireChangedRow(in db: Database, entity: String) throws {

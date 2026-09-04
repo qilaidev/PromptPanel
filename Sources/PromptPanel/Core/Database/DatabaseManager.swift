@@ -108,9 +108,11 @@ final class DatabaseManager {
             // repository's ORDER BY and the panel's in-memory sort cannot drift apart.
             // It has to be registered on every connection, not just the first.
             db.add(function: EntryRanking.databaseFunction)
-            #if DEBUG
-            db.trace { PPLogger.database.debug("\($0)") }
-            #endif
+            // Opt-in rather than on for every debug build: tracing emits a log line
+            // per statement, which on a library load is one line per row fetched.
+            if ProcessInfo.processInfo.environment["PROMPTPANEL_TRACE_SQL"] == "1" {
+                db.trace { PPLogger.database.debug("\($0)") }
+            }
         }
 
         var lastError: Error?
