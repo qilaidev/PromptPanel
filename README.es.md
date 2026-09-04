@@ -201,7 +201,7 @@ Puedes cambiar el proyecto activo desde dentro del panel sin abrir la ventana pr
 |---|---|---|
 | Atajo global | `设置 → 偏好 → 快捷键 → 呼出面板` | Un único atajo. Comportamiento de alternancia: la misma tecla lo descarta |
 | Tema | `设置 → 偏好 → 外观 → 主题` | Claro / oscuro / seguir al sistema |
-| Inicio al abrir sesión | `设置 → 权限 → 权限与启动` | Usa `SMAppService` |
+| Inicio al abrir sesión | `设置 → 偏好 → 权限与启动` | Usa `SMAppService` |
 | Canal de actualización | GitHub Releases (manual) | Sparkle 2 está integrado pero desactivado hasta que se aloje un appcast firmado; suscríbete a las notificaciones de versiones y reemplaza el `.app` |
 | Ubicación de la base de datos | `~/Library/Application Support/PromptPanel/promptpanel.db` | SQLite de un único archivo, fácil de respaldar |
 | Registros | `~/Library/Logs/PromptPanel/` | Se inspeccionan mediante el "Runtime Health" de la ventana principal |

@@ -201,7 +201,7 @@ GitHub Releases는 현재 소스/문서 릴리스 노트만 담고 있으며, �
 |---|---|---|
 | 전역 단축키 | `设置 → 偏好 → 快捷键 → 呼出面板` | 단축키 하나. 토글 동작: 같은 키로 닫힘 |
 | 테마 | `设置 → 偏好 → 外观 → 主题` | 라이트 / 다크 / 시스템 따르기 |
-| 로그인 시 실행 | `设置 → 权限 → 权限与启动` | `SMAppService` 사용 |
+| 로그인 시 실행 | `设置 → 偏好 → 权限与启动` | `SMAppService` 사용 |
 | 업데이트 채널 | GitHub Releases (수동) | Sparkle 2가 연결되어 있으나 서명된 appcast가 호스팅되기 전까지는 비활성. 릴리스 알림을 구독하고 `.app`을 교체하세요 |
 | 데이터베이스 위치 | `~/Library/Application Support/PromptPanel/promptpanel.db` | 단일 파일 SQLite, 백업이 쉬움 |
 | 로그 | `~/Library/Logs/PromptPanel/` | 메인 창의 "Runtime Health"에서 확인 |

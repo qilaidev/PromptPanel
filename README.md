@@ -166,7 +166,7 @@ GitHub Releases currently carry source/documentation release notes only; no nota
 
 ### First-run setup
 
-1. **Grant Accessibility permission** when prompted (`设置 → 权限`). macOS uses this to allow synthetic `⌘V` keystrokes. Without it, PromptPanel still copies to clipboard reliably; you just paste manually.
+1. **Grant Accessibility permission** when prompted (`设置 → 偏好 → 权限与启动`). macOS uses this to allow synthetic `⌘V` keystrokes. Without it, PromptPanel still copies to clipboard reliably; you just paste manually.
 2. **Set your hotkey** in Settings → Hotkey (`设置 → 偏好 → 快捷键 → 呼出面板`). The current default is `⌥2`; pick another shortcut if it conflicts with your setup.
 3. **Create a project** or start adding entries to `Universal` (`通用项目`) in the Library tab (`内容库`).
 
@@ -175,7 +175,7 @@ GitHub Releases currently carry source/documentation release notes only; no nota
 | Chinese label | English meaning |
 |---|---|
 | `内容库` / `设置` | Library / Settings (main window tabs) |
-| `偏好` · `权限` · `维护` | Preferences · Permissions · Maintenance (settings tabs) |
+| `偏好` · `维护` | Preferences · Maintenance (settings tabs) |
 | `呼出面板` | Toggle quick panel (the global hotkey) |
 | `通用项目` | The built-in `Universal` project |
 | `词条` | Entry (one prompt / snippet) |
@@ -221,8 +221,8 @@ You can switch the active project from inside the panel without opening the main
 | Theme | `设置 → 偏好 → 外观 → 主题` | Light / dark / follow system |
 | Entry sort order | `设置 → 偏好 → 词条排序` | By use count, by level tier, by recency, or alphabetical |
 | Panel behavior | `设置 → 偏好 → 面板行为` | Pin panel open, key-hint bar, compact rows, exact panel width/height |
-| Launch at login | `设置 → 权限 → 权限与启动` | Uses `SMAppService` |
-| Accessibility permission | `设置 → 权限 → 权限与启动` | Required only for auto-paste |
+| Launch at login | `设置 → 偏好 → 权限与启动` | Uses `SMAppService` |
+| Accessibility permission | `设置 → 偏好 → 权限与启动` | Required only for auto-paste |
 | Backup / import / export | `设置 → 维护 → 维护操作` | `立即备份`, `导出/导入 JSON`, `导出/导入 MD`, `导出诊断` |
 | Update channel | GitHub Releases (manual) | Sparkle 2 is wired in but disabled until a signed appcast is hosted; subscribe to release notifications and replace the `.app` |
 | Database location | `~/Library/Application Support/PromptPanel/promptpanel.db` | Single-file SQLite, easy to back up. `Backups/` keeps 7 automatic backups; `Recovery/` keeps 5 artifacts |

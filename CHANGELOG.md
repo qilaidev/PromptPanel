@@ -4,6 +4,49 @@ All notable changes to PromptPanel are tracked here.
 
 The format is based on Keep a Changelog, and this project uses Conventional Commits for commit messages.
 
+## [Unreleased]
+
+性能与稳定性版本。设置页里每个维护动作——备份、导出、导入、诊断包——原来都跑在主线程上，
+点下去窗口就不再重绘、不再响应点击，看起来像卡死；列表渲染和存储健康刷新也有几处每帧重算
+的热点。这一版把这些工作全部挪下主线程，删掉了只有测试在用的仓储写入口，并把设置页从三个
+半空的分区收成两个排满的分区。日常使用方式没有变化。
+
+### Fixed
+
+- **点「导出」后窗口长时间无响应。** `NSSavePanel.runModal()` 在主线程上开了一个嵌套 modal 循环，选完路径之后，导出本身又同步跑在主 actor 上：整库 JSON 编码、SQLite 备份、诊断包里的 `OSLogStore.getEntries` 加一个 `ditto` 子进程。窗口在这段时间既不重绘也不接受点击，最后确实导出成功了，但过程读起来就是「卡住了」。现在保存/打开面板以 sheet 形式挂在主窗口上（不再阻塞），实际的 IO 跑在专用串行队列上，顶部横幅在整个过程里显示为进度行，同时暂时停用其余维护按钮以免两个动作抢同一个 SQLite 文件。
+- **`Constants.applicationSupportDirectory` 每次读取都在做文件系统调用。** 它是个计算属性，每次求值都会 `createDirectory` + `chmod`；而 `databaseURL`、`backupDirectory(for:)`、`recoveryDirectory(for:)` 全部经过它，这些又被 SwiftUI 的 `body` 和每次存储健康刷新读取。一次设置页重绘因此产生几十次主线程 syscall。现在整个进程只解析一次。
+- **存储健康刷新在主线程上做文件 IO 和数据库查询。** `refreshOperationalStatus()` 会枚举备份目录并 stat 每个文件，它在打开窗口、每次维护动作之后、以及**每一次执行日志变化**时都会跑——也就是每粘贴一次词条就卡一下。它和 `refreshLogs()` / `refreshProjectEntryCounts()` 现在都在后台队列上完成，回主线程只做赋值。另外 `healthSnapshot()` 不再顺手创建和 chmod 四个目录，它现在是只读的。
+- **`SMAppService.mainApp.status` 挂在权限刷新的主路径上。** 这是一次同步的守护进程往返，而 `refreshPermissionState()` 会在每次 `applicationDidBecomeActive` 时调用——包括保存面板关闭时触发的那一次，正好落在导出交互中间。登录项状态现在异步读取，开关本身也改成先乐观翻转、再用守护进程的真实结果校正。
+- **列表行每帧都在处理整条词条正文。** 面板行和词条库行的预览文本对**完整** `content` 做两次 `replacingOccurrences`，再 `components(separatedBy:)` + `joined`。几 KB 的提示词乘以可见行数，就是每次按键几 MB 的字符串搬运，而行本身只显示一行、超出即截断。现在只扫描前 240 个字符，一趟归一化空白。
+- **筛选芯片的统计每帧全量重算。** `availableEntryKinds` 和 `topTags()` 都是从 `body` 直接调用的计算属性，各自遍历全部已加载词条，`topTags()` 一帧调三次，`kindCount(for:)` 每个芯片调一次。现在在 `entries` 变化时一趟算完并发布；项目名也改成用 id→name 字典查，不再每行线性扫描项目列表。
+- **面板每一行内嵌一个 `GeometryReader`。** 行宽是列表的属性而不是行的属性，把 GeometryReader 放进 `LazyVStack` 的每个 cell 里，等于每次滚动、每次按键都为每行多做一次布局。现在整个列表只测量一次，宽度传给行。
+- **面板每敲一个字就先把结果清空。** `scheduleEntriesRefresh` 在防抖开始前就 `entries = []`，于是输入过程是「旧结果 → 空列表 → 新结果」的闪烁，而且整个列表被拆掉重建。现在保留旧结果直到新结果到达，只有确实无内容可显示时才出加载态；刷新后高亮也会尽量留在同一条词条上。
+- **手动备份从来不会被清理。** `createManualBackup()` 调的 `pruneBackups(reason: "launch", …)` 只匹配 `-launch-` 文件名，所以每次点「立即备份」、每次导入词库（导入前会自动备份）都会在备份目录里永久留下一份完整数据库副本。现在两类备份各自按保留数清理（启动 7 份、手动 5 份）。
+- **内容库里发出的状态提示全部被丢弃。** `bannerMessage` 只画在设置页里，所以「已复制到剪贴板」「词条已删除」「保存词条失败」这些在内容库触发的消息，用户一条都看不到。横幅现在由 `MainWindowView` 承载，两个 Tab 共用，可手动关闭，并在 8 秒后自动消失（维护任务进行中除外）。
+- **窗口标题栏右侧的「PromptPanel」在 72pt 里折成两行。** 这个标签和系统标题栏本来就重复，直接删掉，只留占位保证分段控件居中。
+- **「授权操作」的三个按钮全部被截断成「请…」「系统…」「重新…」。** 带图标的文字胶囊塞不进设置分栏里标签旁边剩下的宽度。授权相关动作现在整宽两列排列。
+- **拖动面板边缘时，每一帧都在主线程写一次 SQLite。** `windowDidResize` 在拖拽期间持续到达，`onPanelContentSizeChanged` 直接落盘，完全没有防抖——正好卡在窗口最需要主线程跟手的时候。位置和尺寸现在都走同一个 `SettleWriter`：停止拖动 250ms 后合并成一次写入，写入在后台队列上。
+- **「退出前不丢最后一次面板位置」这句注释一直是假的。** `flushPendingPanelOriginPersistence()` 先 `cancel()` 再 `perform()` 同一个 `DispatchWorkItem`，而被取消的 work item 的块**永远不会执行**（已实测确认）——所以终止前的 flush 什么都没写。待写值现在保存在 `SettleWriter` 自身而不是捕获在闭包里，`flush()` 直接写。
+- **导入词库后，快捷面板的项目菜单还停在导入前的列表。** `importLibrary` 只刷新了自己，没有广播 `.projectsDidChange` / `.entriesDidChange`，而快捷面板持有独立的项目和词条副本。
+- **内容库的选中态渲染是 O(n²)。** `isSelected:` 里读 `viewModel.selectedEntry?.id`，而这个属性会扫描整个 `displayedEntries`——每行扫一遍全表。现在每次重绘只解析一次。
+- 关闭主窗口时立刻切回 `.accessory` 会在 AppKit 还没收完窗口时把应用踢出前台，表现为一次卡顿和下一个应用的焦点闪烁；现在延后一个 runloop。
+- 设置卡片里最后一行的分隔线原来悬在卡片内边距上，成了一条没有下文的游离细线。
+- 版本号字符串在设置页两张卡片里各自从 `Info.plist` 现算一遍、格式还不一致；收敛成 `Constants.appVersionDisplay`。
+- `AppDelegate` 里 `schedulePanelOriginPersistence` 的文档注释在某次重构里漂到了 `handlePanelKeyEvent` 头上，两段 `///` 粘在一起。
+
+### Changed
+
+- **设置页从三个分区收成两个。** 八张短卡片摊在 `偏好 / 权限 / 维护` 三个 Tab 上，前两个在 1040×760 里都填不满一半窗口，而 `权限` 的右列直接复用了 `维护` 的「运行概况」——同一组数字画两遍。权限本来就是「设一次」的东西，现已并入 `偏好`；右列换成一张真正的「授权排查」分步指引（原来这些信息散在四行的 `hint:` 文案里）。`设置 → 偏好 → …` 这类已有路径不受影响。
+- **维护操作按功能分组。** 十一个同款胶囊挤在一个三列网格里像一堵墙，看不出哪些会动用户数据，最后一行还总是缺口。现在分成「备份与数据」「词库导入导出」「诊断与清理」三组，每组行数取整；「刷新状态」移到「运行概况」卡片标题栏的图标按钮上。
+- **新增 `Core/Utils/SettleWriter.swift`。** 把「连续事件 → 合并 → 后台落盘 → 终止前同步 flush」抽成一个原语，面板位置和面板尺寸共用，`DispatchWorkItem` 那个取消陷阱也只需要在一处讲清楚。
+- **`docs/开发规范.md` 新增「3.1 主线程规则」。** 给出判断边界（按触发方式而不是耗时估计分类），并把这一轮踩到的具体坑逐条列出：`body` 里不做 I/O 和 O(n) 聚合、`ForEach` 里不读 O(n) 属性、面板用 `beginSheetModal` 不用 `runModal`、跨进程调用一律按不可控工作量处理、连续事件落盘走 `SettleWriter`。
+- **日志降噪。** 每次按键一条搜索日志、每次激活一条权限日志、每次写库一条仓储日志，把真正重要的告警埋了。这些降到 `debug`，权限只在状态真正变化时才记 `info`；GRDB 的语句级 trace 从「所有 DEBUG 构建默认开」改为 `PROMPTPANEL_TRACE_SQL=1` 显式开启（一次词库加载会产生每行一条日志）。
+
+### Removed
+
+- **`EntryRepository.updateSortOrder` / `togglePin(id:)` / `moveToProject`。** 三个都只有测试在调用：`sort_order` 在 v6 迁移里已经退役，置顶走 `MainWindowViewModel.togglePin(_:)` → `update`，移动项目只发生在项目删除迁移的事务里。
+- `ClipboardService.readText()`、`MainWindowViewModel.loadEntries()` / `openSettingsTab()`，以及面板状态栏里那个所有分支都返回入参的 `displayStatusMessage`。
+
 ## [1.4.0] - 2026-09-02
 
 ### Changed

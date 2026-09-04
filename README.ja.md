@@ -202,7 +202,7 @@ GitHub Releases には現在、ソース/ドキュメントのリリースノー
 |---|---|---|
 | グローバルホットキー | `设置 → 偏好 → 快捷键 → 呼出面板` | ショートカットは 1 つ。トグル動作: 同じキーで閉じる |
 | テーマ | `设置 → 偏好 → 外观 → 主题` | ライト / ダーク / システムに追従 |
-| ログイン時に起動 | `设置 → 权限 → 权限与启动` | `SMAppService` を使用 |
+| ログイン時に起動 | `设置 → 偏好 → 权限与启动` | `SMAppService` を使用 |
 | アップデートチャネル | GitHub Releases（手動） | Sparkle 2 は組み込み済みだが、署名済み appcast がホストされるまで無効。リリース通知を購読し、`.app` を差し替える |
 | データベースの場所 | `~/Library/Application Support/PromptPanel/promptpanel.db` | 単一ファイルの SQLite、バックアップが容易 |
 | ログ | `~/Library/Logs/PromptPanel/` | メインウィンドウの「Runtime Health」から確認 |

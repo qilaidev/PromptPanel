@@ -69,7 +69,7 @@ If a newly recorded shortcut does nothing, another running app or a macOS system
 
 Work through this order:
 
-1. Confirm Accessibility permission is granted in `设置 → 权限` and in `System Settings → Privacy & Security → Accessibility`. After rebuilding the `.app`, macOS may treat it as a new binary and drop the grant — remove and re-add the entry.
+1. Confirm Accessibility permission is granted in `设置 → 偏好 → 权限与启动` and in `System Settings → Privacy & Security → Accessibility`. After rebuilding the `.app`, macOS may treat it as a new binary and drop the grant — remove and re-add the entry.
 2. Check the clipboard. If `⌘V` manually pastes the right content, the clipboard guarantee held and only the synthetic keystroke was blocked.
 3. Read `设置 → 维护 → 最近执行记录` (recent execution log). Each failed execution records a reason.
 4. Some apps refuse synthetic events on purpose (password fields, certain secure inputs, some remote-desktop and VM windows). That is a target-app policy, not a recoverable PromptPanel error.

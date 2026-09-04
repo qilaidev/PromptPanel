@@ -202,7 +202,7 @@ Vous pouvez changer de projet actif depuis l'intérieur du panneau sans ouvrir l
 |---|---|---|
 | Raccourci global | `设置 → 偏好 → 快捷键 → 呼出面板` | Un seul raccourci. Comportement de bascule : la même touche ferme |
 | Thème | `设置 → 偏好 → 外观 → 主题` | Clair / sombre / suivre le système |
-| Lancement à l'ouverture de session | `设置 → 权限 → 权限与启动` | Utilise `SMAppService` |
+| Lancement à l'ouverture de session | `设置 → 偏好 → 权限与启动` | Utilise `SMAppService` |
 | Canal de mise à jour | GitHub Releases (manuel) | Sparkle 2 est intégré mais désactivé tant qu'un appcast signé n'est pas hébergé ; abonnez-vous aux notifications de version et remplacez le `.app` |
 | Emplacement de la base de données | `~/Library/Application Support/PromptPanel/promptpanel.db` | SQLite mono-fichier, facile à sauvegarder |
 | Journaux | `~/Library/Logs/PromptPanel/` | Inspectés via la « Runtime Health » de la fenêtre principale |

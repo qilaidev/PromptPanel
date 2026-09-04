@@ -202,7 +202,7 @@ Du kannst das aktive Projekt direkt im Panel wechseln, ohne das Hauptfenster zu 
 |---|---|---|
 | Globales Tastenkürzel | `设置 → 偏好 → 快捷键 → 呼出面板` | Ein Kürzel. Umschaltverhalten: dieselbe Taste schließt |
 | Theme | `设置 → 偏好 → 外观 → 主题` | Hell / Dunkel / System folgen |
-| Start bei der Anmeldung | `设置 → 权限 → 权限与启动` | Nutzt `SMAppService` |
+| Start bei der Anmeldung | `设置 → 偏好 → 权限与启动` | Nutzt `SMAppService` |
 | Update-Kanal | GitHub Releases (manuell) | Sparkle 2 ist eingebaut, aber deaktiviert, bis ein signierter Appcast gehostet wird; abonniere Release-Benachrichtigungen und ersetze die `.app` |
 | Datenbank-Speicherort | `~/Library/Application Support/PromptPanel/promptpanel.db` | Einzeldatei-SQLite, einfach zu sichern |
 | Logs | `~/Library/Logs/PromptPanel/` | Über „Runtime Health" im Hauptfenster einsehbar |

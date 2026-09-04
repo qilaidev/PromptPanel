@@ -172,6 +172,7 @@ ProjectRepository.writeInTransaction(_:)
 | `PROMPTPANEL_LOGS_DIR` | 覆盖日志目录，用于隔离验证。 | 不应覆盖到公共目录。 |
 | `PROMPTPANEL_ALLOW_EXISTING_INSTANCE` | 允许隔离 smoke 与已运行实例并存。 | 只用于测试；正式运行仍应单实例。 |
 | `PROMPTPANEL_ERASE_ON_SCHEMA_CHANGE` | schema 变化时允许擦库重建。 | 破坏性，仅限本地开发。 |
+| `PROMPTPANEL_TRACE_SQL` | 打开 GRDB 语句级 trace 日志。 | 只用于排查 SQL；开启后日志量与查询行数同量级。 |
 
 ## 7. 对外没有的 API
 
