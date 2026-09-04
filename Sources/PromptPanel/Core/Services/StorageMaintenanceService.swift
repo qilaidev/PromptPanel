@@ -20,6 +20,11 @@ struct StorageHealthSnapshot {
     let databaseSizeBytes: Int64
     let backupCount: Int
     let latestBackupURL: URL?
+    /// Captured here rather than stat-ed by the settings view. The overview card
+    /// reads it from `body`, which runs on every state change — a filesystem
+    /// round-trip per repaint is exactly the kind of main-thread work that made
+    /// the settings tab feel sticky.
+    let latestBackupModifiedAt: Date?
 }
 
 final class StorageMaintenanceService: @unchecked Sendable {
@@ -48,7 +53,7 @@ final class StorageMaintenanceService: @unchecked Sendable {
         if try shouldCreateAutomaticBackup() {
             _ = try createBackup(reason: "launch")
         }
-        try pruneBackups(reason: "launch", keeping: Constants.automaticBackupRetentionCount)
+        try pruneAllBackupClasses()
         pruneRecoveryDirectories(keeping: Constants.recoveryDirectoryRetentionCount)
         return try healthSnapshot()
     }
@@ -65,15 +70,32 @@ final class StorageMaintenanceService: @unchecked Sendable {
         try ensureStorageDirectories()
         try checkpointWal()
         let backupURL = try createBackup(reason: "manual")
-        try pruneBackups(reason: "launch", keeping: Constants.automaticBackupRetentionCount)
+        try pruneAllBackupClasses()
         return backupURL
     }
 
-    func healthSnapshot() throws -> StorageHealthSnapshot {
-        try ensureStorageDirectories()
+    /// Prune each backup class against its own retention.
+    ///
+    /// This used to prune `-launch-` only, from both the launch path *and*
+    /// `createManualBackup()`. Manual backups — every "立即备份" click plus the
+    /// snapshot taken before every library import — were therefore never
+    /// collected, so the backup directory grew by a full database copy per
+    /// import, forever.
+    private func pruneAllBackupClasses() throws {
+        try pruneBackups(reason: "launch", keeping: Constants.automaticBackupRetentionCount)
+        try pruneBackups(reason: "manual", keeping: Constants.manualBackupRetentionCount)
+    }
 
+    /// Read-only: it reports what is on disk and must not create or chmod
+    /// anything. The settings tab refreshes this on load, after every
+    /// maintenance action, and on every execution-log change; making it
+    /// idempotently re-secure four directories each time was pure main-thread
+    /// syscall churn. `performLaunchMaintenance()` and the backup paths still
+    /// call `ensureStorageDirectories()` explicitly.
+    func healthSnapshot() throws -> StorageHealthSnapshot {
         let backups = try backupFiles()
         let databaseSizeBytes = (try fileSize(at: databaseURL)) ?? 0
+        let latestBackupURL = backups.first
 
         return StorageHealthSnapshot(
             databaseURL: databaseURL,
@@ -82,7 +104,10 @@ final class StorageMaintenanceService: @unchecked Sendable {
             logsDirectoryURL: Constants.logsDirectory,
             databaseSizeBytes: databaseSizeBytes,
             backupCount: backups.count,
-            latestBackupURL: backups.first
+            latestBackupURL: latestBackupURL,
+            latestBackupModifiedAt: latestBackupURL.flatMap {
+                try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            }
         )
     }
 
@@ -196,6 +221,9 @@ final class StorageMaintenanceService: @unchecked Sendable {
 
     private func backupFiles(reason: String? = nil) throws -> [URL] {
         let directoryURL = Constants.backupDirectory(for: databaseURL)
+        guard fileManager.fileExists(atPath: directoryURL.path) else {
+            return []
+        }
         guard let enumerator = fileManager.enumerator(
             at: directoryURL,
             includingPropertiesForKeys: [.contentModificationDateKey],

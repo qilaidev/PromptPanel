@@ -11,12 +11,11 @@ protocol UnifiedLogReading {
 /// or storage anomaly. Privacy: never includes entry titles or bodies — only metadata,
 /// permission state, and the unified-log transcript that the user can review before sending.
 ///
-/// MainActor: the permission service is main-isolated, so the easiest correct integration is
-/// to run the whole export on the main actor. The IO work (~MB of logs + ditto) is short
-/// enough that it does not visibly block the UI in practice, and matches how `createBackupNow`
-/// already operates from the same view model.
-@MainActor
-final class DiagnosticsExportService {
+/// Threading: the permission service is main-isolated, so the *init* is main-isolated and
+/// snapshots the grant state there. `exportBundle(to:)` itself is not — it reads the unified
+/// log store, serializes JSON and shells out to `ditto`, which together take long enough to
+/// freeze the window when run inline. The caller runs it off the main thread.
+final class DiagnosticsExportService: @unchecked Sendable {
     struct AppInfoProvider {
         let bundleIdentifier: String
         let shortVersion: String
@@ -50,12 +49,15 @@ final class DiagnosticsExportService {
 
     private let logRepository: LogRepository
     private let storageMaintenanceService: StorageMaintenanceService
-    private let permissionService: AccessibilityPermissionProviding
+    /// Snapshotted at init on the main actor; the export itself runs off-main and
+    /// must not touch the main-isolated permission service.
+    private let isAccessibilityGranted: Bool
     private let appInfo: AppInfoProvider
     private let unifiedLogReader: UnifiedLogReading
     private let fileManager: FileManager
-    private let clock: () -> Date
+    private let clock: @Sendable () -> Date
 
+    @MainActor
     init(
         logRepository: LogRepository,
         storageMaintenanceService: StorageMaintenanceService,
@@ -63,11 +65,12 @@ final class DiagnosticsExportService {
         appInfo: AppInfoProvider = .fromMainBundle,
         unifiedLogReader: UnifiedLogReading = OSLogStoreReader(),
         fileManager: FileManager = .default,
-        clock: @escaping () -> Date = Date.init
+        clock: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.logRepository = logRepository
         self.storageMaintenanceService = storageMaintenanceService
-        self.permissionService = permissionService
+        permissionService.refresh()
+        self.isAccessibilityGranted = permissionService.isAccessibilityGranted
         self.appInfo = appInfo
         self.unifiedLogReader = unifiedLogReader
         self.fileManager = fileManager
@@ -158,9 +161,8 @@ final class DiagnosticsExportService {
     }
 
     private func writePermissions(into directory: URL) throws {
-        permissionService.refresh()
         let payload: [String: Any] = [
-            "accessibility_granted": permissionService.isAccessibilityGranted,
+            "accessibility_granted": isAccessibilityGranted,
             "recorded_at": ISO8601DateFormatter().string(from: clock())
         ]
         try writeJSON(payload, to: directory.appendingPathComponent("permissions.json"))

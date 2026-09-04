@@ -2,7 +2,10 @@ import Foundation
 import ServiceManagement
 
 /// Manages login item (launch at startup) registration.
-final class LoginItemService {
+///
+/// Stateless wrapper around `SMAppService.mainApp`; `isEnabled` is read from a
+/// background queue so the daemon round-trip never lands on the main thread.
+final class LoginItemService: @unchecked Sendable {
 
     /// Register this app to launch at login.
     func enable() throws {

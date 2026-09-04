@@ -234,7 +234,7 @@ struct LibraryView: View {
     }
 
     private var hasFilterChips: Bool {
-        viewModel.availableEntryKinds.isEmpty == false || viewModel.topTags().isEmpty == false
+        viewModel.availableEntryKinds.isEmpty == false || viewModel.topTags.isEmpty == false
     }
 
     private var filterChipsRow: some View {
@@ -253,22 +253,22 @@ struct LibraryView: View {
                         FilterChip(
                             label: kind.displayName,
                             systemImage: kind.symbolName,
-                            count: kindCount(for: kind),
+                            count: viewModel.entryCount(forKind: kind),
                             isActive: viewModel.entryKindFilter == kind.rawValue
                         ) {
                             viewModel.toggleEntryKindFilter(kind)
                         }
                     }
                 }
-                if viewModel.topTags().isEmpty == false {
+                if viewModel.topTags.isEmpty == false {
                     chipDivider
-                    ForEach(viewModel.topTags(limit: 8), id: \.0) { tag, count in
+                    ForEach(viewModel.topTags) { facet in
                         FilterChip(
-                            label: "#\(tag)",
-                            count: count,
-                            isActive: viewModel.entryTagFilter == tag
+                            label: "#\(facet.tag)",
+                            count: facet.count,
+                            isActive: viewModel.entryTagFilter == facet.tag
                         ) {
-                            viewModel.toggleEntryTagFilter(tag)
+                            viewModel.toggleEntryTagFilter(facet.tag)
                         }
                     }
                 }
@@ -283,10 +283,6 @@ struct LibraryView: View {
             .fill(Constants.VisualStyle.divider)
             .frame(width: Constants.Layout.hairline, height: 12)
             .padding(.horizontal, Design.Space.xs)
-    }
-
-    private func kindCount(for kind: Constants.EntryType) -> Int {
-        viewModel.entries.filter { $0.type == kind.rawValue }.count
     }
 
     private var countSortRow: some View {
@@ -343,7 +339,11 @@ struct LibraryView: View {
     }
 
     private var entriesList: some View {
-        ScrollViewReader { proxy in
+        // Resolved once per pass, not once per row: `selectedEntry` scans
+        // `displayedEntries`, so reading it inside the `ForEach` made selection
+        // rendering O(n²) in the number of visible entries.
+        let selectedEntryId = viewModel.selectedEntry?.id
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
                     if viewModel.displayedEntries.isEmpty {
@@ -352,7 +352,7 @@ struct LibraryView: View {
                         ForEach(viewModel.displayedEntries) { entry in
                             EntryListRow(
                                 entry: entry,
-                                isSelected: entry.id == (viewModel.selectedEntry?.id ?? ""),
+                                isSelected: entry.id == selectedEntryId,
                                 projectName: projectName(for: entry)
                             ) {
                                 viewModel.selectedEntryId = entry.id
@@ -394,7 +394,7 @@ struct LibraryView: View {
     }
 
     private func projectName(for entry: Entry) -> String? {
-        viewModel.projectOptions.first(where: { $0.id == entry.projectId })?.name
+        viewModel.projectName(forEntry: entry)
     }
 }
 
@@ -498,7 +498,7 @@ private struct EntryListRow: View {
                         }
                         Spacer(minLength: 0)
                     }
-                    Text(previewText(for: entry.content))
+                    Text(entry.previewLine)
                         .font(.ui(.body))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
                         .lineLimit(1)
@@ -544,15 +544,6 @@ private struct EntryListRow: View {
 
     private var lastUsedText: String {
         EntryDateFormat.lastUsed(entry.lastUsedAt)
-    }
-
-    private func previewText(for content: String) -> String {
-        content
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\t", with: " ")
-            .components(separatedBy: .whitespacesAndNewlines)
-            .filter { $0.isEmpty == false }
-            .joined(separator: " ")
     }
 }
 
@@ -758,7 +749,7 @@ private struct PreviewPane: View {
     }
 
     private func projectName(for entry: Entry) -> String? {
-        viewModel.projectOptions.first(where: { $0.id == entry.projectId })?.name
+        viewModel.projectName(forEntry: entry)
     }
 
     private func lastUsedText(_ entry: Entry) -> String {

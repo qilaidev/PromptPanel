@@ -38,6 +38,13 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
+    struct EntryTagFacet: Identifiable, Equatable {
+        let tag: String
+        let count: Int
+
+        var id: String { tag }
+    }
+
     struct ProjectDraft: Identifiable {
         let id: String
         let existingProject: Project?
@@ -138,13 +145,38 @@ final class MainWindowViewModel: ObservableObject {
     }
     @Published private(set) var projectEntryCounts: [String: Int] = [:]
     @Published private(set) var totalEntryCount: Int = 0
+    /// Filter-bar facets, recomputed once whenever `entries` changes.
+    ///
+    /// These were computed properties called straight from `body`: `availableEntryKinds`
+    /// and `topTags()` each walked every loaded entry, `topTags()` ran three times per
+    /// pass and `kindCount(for:)` once per chip. On a library of any size that is a
+    /// full scan several times over for every keystroke in the search field.
+    @Published private(set) var availableEntryKinds: [Constants.EntryType] = []
+    @Published private(set) var entryKindCounts: [String: Int] = [:]
+    @Published private(set) var topTags: [EntryTagFacet] = []
+    /// Project id → name, so a row does not linear-scan the project list to render.
+    @Published private(set) var projectNamesById: [String: String] = [:]
     @Published var projectDraft: ProjectDraft?
     @Published var entryDraft: EntryDraft?
     @Published var deleteProjectState: ProjectDeletionState?
     @Published var entryPendingDeletion: Entry?
     @Published var hasAccessibilityPermission: Bool = false
     @Published var launchAtLoginEnabled: Bool = false
-    @Published var bannerMessage: String?
+    /// Transient status line shown above both tabs.
+    ///
+    /// It used to be rendered only inside the settings tab, so every message raised
+    /// from the library — "已复制到剪贴板", "词条已删除", every save failure — was set
+    /// and never seen. And nothing ever cleared it, so whatever was last shown sat
+    /// at the top of settings until the window was reopened.
+    @Published var bannerMessage: String? {
+        didSet {
+            scheduleBannerAutoDismiss()
+        }
+    }
+    /// Non-nil while a maintenance action (backup / export / import / diagnostics)
+    /// is running off the main thread. Drives the busy row in the settings tab and
+    /// blocks a second action from starting on top of the first.
+    @Published private(set) var activeMaintenanceTask: String?
     @Published var isPanelPinned: Bool = false
     @Published var panelShowFooter: Bool = true
     @Published var panelCompactRows: Bool = false
@@ -164,11 +196,24 @@ final class MainWindowViewModel: ObservableObject {
     private let onSetPanelPinned: (Bool) -> Bool
     private let onSetPanelContentSize: (NSSize) -> Bool
     private let onCopyEntry: ((Entry) -> Bool)?
+    /// The window that save/open panels attach to as a sheet. A sheet keeps the
+    /// window responsive; `runModal()` used to spin a nested modal loop on the
+    /// main thread, which is what made "导出" look like it had frozen the window.
+    private let hostWindowProvider: @MainActor () -> NSWindow?
     private var cancellables = Set<AnyCancellable>()
     private let entriesLoadQueue = DispatchQueue(label: "PromptPanel.main-window.entries", qos: .userInitiated)
+    /// Serial on purpose: backup, export and import all touch the same SQLite file,
+    /// and running them one at a time is both correct and enough — the point is only
+    /// to keep them off the main thread.
+    private let maintenanceQueue = DispatchQueue(label: "PromptPanel.main-window.maintenance", qos: .userInitiated)
+    private let statusQueue = DispatchQueue(label: "PromptPanel.main-window.status", qos: .utility)
     private var pendingEntriesRefreshWorkItem: DispatchWorkItem?
     private var entriesRefreshGeneration: Int = 0
     private var isBatchingEntryFilterUpdate = false
+    private var operationalStatusGeneration: Int = 0
+    private var hasCompletedInitialLoad = false
+    private var bannerDismissWorkItem: DispatchWorkItem?
+    static let bannerAutoDismissInterval: TimeInterval = 8
 
     init(
         appState: AppState,
@@ -184,7 +229,8 @@ final class MainWindowViewModel: ObservableObject {
         launchRecoveryReport: LaunchRecoveryReport?,
         onSetPanelPinned: @escaping (Bool) -> Bool = { _ in false },
         onSetPanelContentSize: @escaping (NSSize) -> Bool = { _ in false },
-        onCopyEntry: ((Entry) -> Bool)? = nil
+        onCopyEntry: ((Entry) -> Bool)? = nil,
+        hostWindowProvider: (@MainActor () -> NSWindow?)? = nil
     ) {
         self.appState = appState
         self.projectRepository = projectRepository
@@ -204,6 +250,7 @@ final class MainWindowViewModel: ObservableObject {
         self.onSetPanelPinned = onSetPanelPinned
         self.onSetPanelContentSize = onSetPanelContentSize
         self.onCopyEntry = onCopyEntry
+        self.hostWindowProvider = hostWindowProvider ?? { NSApp.keyWindow ?? NSApp.mainWindow }
 
         // Hydrate persisted sort preference before any view binds the publisher,
         // so the sort dropdown opens with the user's saved choice instead of
@@ -217,6 +264,25 @@ final class MainWindowViewModel: ObservableObject {
 
     deinit {
         pendingEntriesRefreshWorkItem?.cancel()
+        bannerDismissWorkItem?.cancel()
+    }
+
+    /// Clear a banner once it has had time to be read. A running maintenance task
+    /// owns the banner as its progress line, so it is exempt until it finishes —
+    /// `activeMaintenanceTask`'s completion sets a fresh message, which re-arms this.
+    private func scheduleBannerAutoDismiss() {
+        bannerDismissWorkItem?.cancel()
+        bannerDismissWorkItem = nil
+        guard bannerMessage != nil, activeMaintenanceTask == nil else {
+            return
+        }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.activeMaintenanceTask == nil else { return }
+            self.bannerMessage = nil
+        }
+        bannerDismissWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.bannerAutoDismissInterval, execute: workItem)
     }
 
     var selectedProject: Project? {
@@ -235,35 +301,46 @@ final class MainWindowViewModel: ObservableObject {
         return visibleEntries.first(where: { $0.id == selectedEntryId }) ?? visibleEntries.first
     }
 
-    var availableEntryKinds: [Constants.EntryType] {
-        var seen = Set<String>()
-        var out: [Constants.EntryType] = []
+    static let topTagFacetLimit = 8
+
+    /// One pass over `entries` producing every facet the filter bar needs.
+    /// Called from the single place `entries` is assigned.
+    private func refreshEntryFacets() {
+        var kinds: [Constants.EntryType] = []
+        var seenKinds = Set<String>()
+        var kindCounts: [String: Int] = [:]
+        var tagCounts: [String: Int] = [:]
+
         for entry in entries {
             let type = Constants.EntryType.resolve(entry.type)
-            if seen.insert(type.rawValue).inserted {
-                out.append(type)
+            if seenKinds.insert(type.rawValue).inserted {
+                kinds.append(type)
             }
-        }
-        return out
-    }
-
-    /// Most-used tags across the currently loaded entries, capped at `limit`.
-    func topTags(limit: Int = 8) -> [(String, Int)] {
-        var counts: [String: Int] = [:]
-        for entry in entries {
+            kindCounts[entry.type, default: 0] += 1
             for tag in entry.tags {
-                counts[tag, default: 0] += 1
+                tagCounts[tag, default: 0] += 1
             }
         }
-        return counts
+
+        availableEntryKinds = kinds
+        entryKindCounts = kindCounts
+        topTags = tagCounts
             .sorted { lhs, rhs in
                 if lhs.value != rhs.value {
                     return lhs.value > rhs.value
                 }
                 return lhs.key.localizedCaseInsensitiveCompare(rhs.key) == .orderedAscending
             }
-            .prefix(limit)
-            .map { ($0.key, $0.value) }
+            .prefix(Self.topTagFacetLimit)
+            .map { EntryTagFacet(tag: $0.key, count: $0.value) }
+    }
+
+    func entryCount(forKind kind: Constants.EntryType) -> Int {
+        entryKindCounts[kind.rawValue] ?? 0
+    }
+
+    func projectName(forEntry entry: Entry) -> String? {
+        projectNamesById[entry.projectId]
     }
 
     private func sortedVisibleEntries() -> [Entry] {
@@ -363,12 +440,17 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     private func refreshProjectEntryCounts() {
-        do {
-            let counts = try entryRepository.entryCountByProject()
-            projectEntryCounts = counts
-            totalEntryCount = counts.values.reduce(0, +)
-        } catch {
-            PPLogger.entry.error("Failed to load project entry counts: \(error.localizedDescription)")
+        let entryRepository = self.entryRepository
+        entriesLoadQueue.async {
+            guard let counts = try? entryRepository.entryCountByProject() else {
+                PPLogger.entry.error("Failed to load project entry counts")
+                return
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.projectEntryCounts = counts
+                self.totalEntryCount = counts.values.reduce(0, +)
+            }
         }
     }
 
@@ -485,6 +567,10 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
+    /// Called both from `openMainWindow` and from the view's `onAppear`, which fire
+    /// back to back the first time the window is shown. Everything here is either
+    /// idempotent or coalesced, and the expensive parts (storage health, logs) run
+    /// off the main thread.
     func load() {
         syncCurrentProjectId()
         refreshPermissionState()
@@ -494,24 +580,38 @@ final class MainWindowViewModel: ObservableObject {
         refreshLogs()
         refreshOperationalStatus()
         refreshUpdaterStatus()
-        if let launchRecoveryReport {
+        if let launchRecoveryReport, !hasCompletedInitialLoad {
             bannerMessage = launchRecoveryReport.userFacingMessage
         }
+        hasCompletedInitialLoad = true
     }
 
-    func openSettingsTab() {
-        selectedTab = .settings
-    }
-
+    /// The cheap half: `AXIsProcessTrusted()` plus in-memory app state. The login-item
+    /// lookup is deliberately *not* here — see `refreshLaunchAtLoginState()`.
     func refreshPermissionState() {
         permissionService.refresh()
         hasAccessibilityPermission = permissionService.isAccessibilityGranted
-        launchAtLoginEnabled = loginItemService.isEnabled
         isPanelPinned = appState.isPanelPinned
         panelShowFooter = appState.panelShowFooter
         panelCompactRows = appState.panelCompactRows
         panelContentSize = appState.panelContentSize
         appTheme = appState.appTheme
+        refreshLaunchAtLoginState()
+    }
+
+    /// `SMAppService.mainApp.status` is a synchronous round-trip to the service
+    /// management daemon. It used to run inside `refreshPermissionState()`, which is
+    /// called on every `applicationDidBecomeActive` — including the one fired when a
+    /// save panel closes, so it landed right in the middle of the export interaction.
+    private func refreshLaunchAtLoginState() {
+        let loginItemService = self.loginItemService
+        statusQueue.async {
+            let isEnabled = loginItemService.isEnabled
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.launchAtLoginEnabled != isEnabled else { return }
+                self.launchAtLoginEnabled = isEnabled
+            }
+        }
     }
 
     private func persistEntrySortMode() {
@@ -603,23 +703,50 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     func refreshLogs() {
-        do {
-            recentExecutionLogs = try logRepository.fetchRecent(limit: 50)
-        } catch {
-            PPLogger.execute.error("Failed to load execution logs: \(error.localizedDescription)")
-            recentExecutionLogs = []
-            bannerMessage = "加载执行日志失败。"
+        let logRepository = self.logRepository
+        statusQueue.async {
+            let result = Result { try logRepository.fetchRecent(limit: 50) }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                switch result {
+                case .success(let logs):
+                    self.recentExecutionLogs = logs
+                case .failure(let error):
+                    PPLogger.execute.error("Failed to load execution logs: \(error.localizedDescription)")
+                    self.recentExecutionLogs = []
+                    self.bannerMessage = "加载执行日志失败。"
+                }
+            }
         }
     }
 
+    /// Storage health touches the filesystem (backup directory enumeration + a stat per
+    /// backup) and the database. It is refreshed on load, after every maintenance action
+    /// and on every execution-log change, so running it inline stuttered the window each
+    /// time an entry was pasted.
     func refreshOperationalStatus() {
-        do {
-            storageHealthSnapshot = try storageMaintenanceService.healthSnapshot()
-            let cutoff = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date.distantPast
-            executionHealthSummary = try logRepository.fetchHealthSummary(since: cutoff)
-        } catch {
-            PPLogger.database.error("Failed to refresh operational status: \(error.localizedDescription)")
-            bannerMessage = "加载运行健康信息失败。"
+        let storageMaintenanceService = self.storageMaintenanceService
+        let logRepository = self.logRepository
+        operationalStatusGeneration += 1
+        let generation = operationalStatusGeneration
+
+        statusQueue.async {
+            let result = Result { () -> (StorageHealthSnapshot, LogRepository.HealthSummary) in
+                let snapshot = try storageMaintenanceService.healthSnapshot()
+                let cutoff = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date.distantPast
+                return (snapshot, try logRepository.fetchHealthSummary(since: cutoff))
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.operationalStatusGeneration == generation else { return }
+                switch result {
+                case .success(let (snapshot, summary)):
+                    self.storageHealthSnapshot = snapshot
+                    self.executionHealthSummary = summary
+                case .failure(let error):
+                    PPLogger.database.error("Failed to refresh operational status: \(error.localizedDescription)")
+                    self.bannerMessage = "加载运行健康信息失败。"
+                }
+            }
         }
     }
 
@@ -629,19 +756,20 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     func cleanupLogs(olderThanDays days: Int = 30) {
-        do {
+        runMaintenance("正在清理执行日志…") { [logRepository] in
             try logRepository.cleanup(olderThanDays: days)
-            refreshLogs()
-            refreshOperationalStatus()
-            bannerMessage = "已清理 \(days) 天前的执行日志。"
-        } catch {
+        } onSuccess: { [weak self] in
+            self?.refreshLogs()
+            self?.refreshOperationalStatus()
+            self?.bannerMessage = "已清理 \(days) 天前的执行日志。"
+        } onFailure: { error in
             PPLogger.execute.error("Failed to clean execution logs: \(error.localizedDescription)")
-            bannerMessage = "清理执行日志失败，请重试。"
+            return "清理执行日志失败，请重试。"
         }
     }
 
     func projectName(for id: String) -> String {
-        projects.first(where: { $0.id == id })?.name ?? "未知项目"
+        projectNamesById[id] ?? "未知项目"
     }
 
     func requestAccessibilityPermission() {
@@ -676,155 +804,244 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
+    /// Registering a login item talks to the service management daemon, which can
+    /// stall for a noticeable fraction of a second. The switch flips optimistically
+    /// and is reconciled against the real state once the daemon answers.
     func setLaunchAtLogin(_ enabled: Bool) {
-        do {
-            if enabled {
-                try loginItemService.enable()
-            } else {
-                try loginItemService.disable()
+        launchAtLoginEnabled = enabled
+        let loginItemService = self.loginItemService
+        statusQueue.async {
+            var failure: Error?
+            do {
+                if enabled {
+                    try loginItemService.enable()
+                } else {
+                    try loginItemService.disable()
+                }
+            } catch {
+                failure = error
             }
-            launchAtLoginEnabled = loginItemService.isEnabled
-            if launchAtLoginEnabled == enabled {
-                bannerMessage = enabled ? "已启用登录时启动。" : "已关闭登录时启动。"
-            } else {
-                bannerMessage = enabled ? "系统尚未启用登录时启动，请检查系统设置。" : "系统尚未关闭登录时启动，请检查系统设置。"
+            let actual = loginItemService.isEnabled
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.launchAtLoginEnabled = actual
+                if let failure {
+                    PPLogger.loginItem.error("Failed to update login item state: \(failure.localizedDescription)")
+                    self.bannerMessage = enabled ? "启用登录时启动失败，请重试。" : "关闭登录时启动失败，请重试。"
+                } else if actual == enabled {
+                    self.bannerMessage = enabled ? "已启用登录时启动。" : "已关闭登录时启动。"
+                } else {
+                    self.bannerMessage = enabled ? "系统尚未启用登录时启动，请检查系统设置。" : "系统尚未关闭登录时启动，请检查系统设置。"
+                }
             }
-        } catch {
-            PPLogger.loginItem.error("Failed to update login item state: \(error.localizedDescription)")
-            launchAtLoginEnabled = loginItemService.isEnabled
-            bannerMessage = enabled ? "启用登录时启动失败，请重试。" : "关闭登录时启动失败，请重试。"
         }
     }
 
     func createBackupNow() {
-        do {
-            let backupURL = try storageMaintenanceService.createManualBackup()
-            refreshOperationalStatus()
-            bannerMessage = "已创建备份：\(backupURL.lastPathComponent)"
-        } catch {
+        runMaintenance("正在创建备份…") { [storageMaintenanceService] in
+            try storageMaintenanceService.createManualBackup()
+        } onSuccess: { [weak self] backupURL in
+            self?.refreshOperationalStatus()
+            self?.bannerMessage = "已创建备份：\(backupURL.lastPathComponent)"
+        } onFailure: { error in
             PPLogger.database.error("Failed to create manual backup: \(error.localizedDescription)")
-            bannerMessage = "创建备份失败，请稍后重试。"
+            return "创建备份失败，请稍后重试。"
         }
     }
 
     func exportLibraryAsJSON() {
-        let savePanel = NSSavePanel()
-        savePanel.title = "导出词库 JSON"
-        savePanel.nameFieldStringValue = "PromptPanel-Library-\(fileTimestamp()).json"
-        savePanel.allowedContentTypes = [.json]
-        savePanel.canCreateDirectories = true
-
-        guard savePanel.runModal() == .OK, let destinationURL = savePanel.url else {
-            return
-        }
-
-        do {
-            let outputURL = try libraryTransferService.exportJSON(to: destinationURL)
-            bannerMessage = "词库 JSON 已保存：\(outputURL.lastPathComponent)"
-            NSWorkspace.shared.activateFileViewerSelecting([outputURL])
-        } catch {
-            PPLogger.app.error("Failed to export library JSON: \(error.localizedDescription)")
-            bannerMessage = "导出词库 JSON 失败：\(error.localizedDescription)"
+        presentSavePanel(
+            title: "导出词库 JSON",
+            fileName: "PromptPanel-Library-\(Self.fileTimestamp()).json",
+            contentTypes: [.json]
+        ) { [weak self] destinationURL in
+            guard let self else { return }
+            self.runMaintenance("正在导出词库 JSON…") { [libraryTransferService = self.libraryTransferService] in
+                try libraryTransferService.exportJSON(to: destinationURL)
+            } onSuccess: { [weak self] outputURL in
+                self?.bannerMessage = "词库 JSON 已保存：\(outputURL.lastPathComponent)"
+                NSWorkspace.shared.activateFileViewerSelecting([outputURL])
+            } onFailure: { error in
+                PPLogger.app.error("Failed to export library JSON: \(error.localizedDescription)")
+                return "导出词库 JSON 失败：\(error.localizedDescription)"
+            }
         }
     }
 
     func exportLibraryAsMarkdown() {
-        let savePanel = NSSavePanel()
-        savePanel.title = "导出词库 Markdown"
-        savePanel.nameFieldStringValue = "PromptPanel-Library-\(fileTimestamp()).md"
-        savePanel.allowedContentTypes = [Self.markdownContentType]
-        savePanel.canCreateDirectories = true
-
-        guard savePanel.runModal() == .OK, let destinationURL = savePanel.url else {
-            return
-        }
-
-        do {
-            let outputURL = try libraryTransferService.exportMarkdown(to: destinationURL)
-            bannerMessage = "词库 Markdown 已保存：\(outputURL.lastPathComponent)"
-            NSWorkspace.shared.activateFileViewerSelecting([outputURL])
-        } catch {
-            PPLogger.app.error("Failed to export library Markdown: \(error.localizedDescription)")
-            bannerMessage = "导出词库 Markdown 失败：\(error.localizedDescription)"
+        presentSavePanel(
+            title: "导出词库 Markdown",
+            fileName: "PromptPanel-Library-\(Self.fileTimestamp()).md",
+            contentTypes: [Self.markdownContentType]
+        ) { [weak self] destinationURL in
+            guard let self else { return }
+            self.runMaintenance("正在导出词库 Markdown…") { [libraryTransferService = self.libraryTransferService] in
+                try libraryTransferService.exportMarkdown(to: destinationURL)
+            } onSuccess: { [weak self] outputURL in
+                self?.bannerMessage = "词库 Markdown 已保存：\(outputURL.lastPathComponent)"
+                NSWorkspace.shared.activateFileViewerSelecting([outputURL])
+            } onFailure: { error in
+                PPLogger.app.error("Failed to export library Markdown: \(error.localizedDescription)")
+                return "导出词库 Markdown 失败：\(error.localizedDescription)"
+            }
         }
     }
 
     func importLibraryFromJSON() {
-        let openPanel = NSOpenPanel()
-        openPanel.title = "导入词库 JSON"
-        openPanel.allowedContentTypes = [.json]
-        openPanel.allowsMultipleSelection = false
-        openPanel.canChooseDirectories = false
-
-        guard openPanel.runModal() == .OK, let sourceURL = openPanel.url else {
-            return
-        }
-
-        importLibrary {
-            try libraryTransferService.importJSON(from: sourceURL)
+        presentOpenPanel(title: "导入词库 JSON", contentTypes: [.json]) { [weak self] sourceURL in
+            guard let self else { return }
+            self.importLibrary(label: "正在导入词库 JSON…") { [libraryTransferService = self.libraryTransferService] in
+                try libraryTransferService.importJSON(from: sourceURL)
+            }
         }
     }
 
     func importLibraryFromMarkdown() {
-        let openPanel = NSOpenPanel()
-        openPanel.title = "导入词库 Markdown"
-        openPanel.allowedContentTypes = [Self.markdownContentType, .plainText]
-        openPanel.allowsMultipleSelection = false
-        openPanel.canChooseDirectories = false
-
-        guard openPanel.runModal() == .OK, let sourceURL = openPanel.url else {
-            return
-        }
-
-        importLibrary {
-            try libraryTransferService.importMarkdown(from: sourceURL)
+        presentOpenPanel(
+            title: "导入词库 Markdown",
+            contentTypes: [Self.markdownContentType, .plainText]
+        ) { [weak self] sourceURL in
+            guard let self else { return }
+            self.importLibrary(label: "正在导入词库 Markdown…") { [libraryTransferService = self.libraryTransferService] in
+                try libraryTransferService.importMarkdown(from: sourceURL)
+            }
         }
     }
 
     /// Lets the user assemble and save a diagnostics zip (privacy-safe — no entry content).
-    /// Shows an NSSavePanel for destination; on success reveals the resulting zip in Finder.
+    /// Shows an NSSavePanel sheet for the destination; on success reveals the resulting zip
+    /// in Finder. The bundle itself (unified-log read + `ditto`) is built off the main thread:
+    /// `OSLogStore.getEntries` alone routinely takes seconds.
     func exportDiagnosticsBundle() {
-        let savePanel = NSSavePanel()
-        savePanel.title = "导出诊断包"
-        savePanel.nameFieldStringValue = "PromptPanel-Diagnostics-\(fileTimestamp()).zip"
-        savePanel.allowedContentTypes = [.zip]
-        savePanel.canCreateDirectories = true
+        presentSavePanel(
+            title: "导出诊断包",
+            fileName: "PromptPanel-Diagnostics-\(Self.fileTimestamp()).zip",
+            contentTypes: [.zip]
+        ) { [weak self] destinationURL in
+            guard let self else { return }
+            // Built here, on the main actor, because it snapshots permission state.
+            let service = DiagnosticsExportService(
+                logRepository: self.logRepository,
+                storageMaintenanceService: self.storageMaintenanceService,
+                permissionService: self.permissionService
+            )
+            self.runMaintenance("正在生成诊断包…") {
+                try service.exportBundle(to: destinationURL)
+            } onSuccess: { [weak self] zipURL in
+                self?.bannerMessage = "诊断包已保存：\(zipURL.lastPathComponent)"
+                NSWorkspace.shared.activateFileViewerSelecting([zipURL])
+            } onFailure: { error in
+                PPLogger.app.error("Failed to export diagnostics bundle: \(error.localizedDescription)")
+                return error.localizedDescription
+            }
+        }
+    }
 
-        guard savePanel.runModal() == .OK, let destinationURL = savePanel.url else {
+    private func importLibrary(
+        label: String,
+        _ action: @escaping @Sendable () throws -> LibraryTransferSummary
+    ) {
+        runMaintenance(label, work: action) { [weak self] summary in
+            guard let self else { return }
+            // Broadcast rather than refreshing only ourselves. An import can create
+            // projects and entries, and the quick panel keeps its own copies of both;
+            // refreshing in place left its project menu showing the pre-import list
+            // until something else happened to post one of these.
+            self.notifyProjectsChanged()
+            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            self.refreshOperationalStatus()
+            let backupName = summary.backupURL?.lastPathComponent ?? "未生成备份"
+            self.bannerMessage = "导入完成：项目 +\(summary.projectsCreated)/更新 \(summary.projectsUpdated)，词条 +\(summary.entriesCreated)/更新 \(summary.entriesUpdated)。导入前备份：\(backupName)"
+        } onFailure: { error in
+            PPLogger.app.error("Failed to import library: \(error.localizedDescription)")
+            return "导入词库失败：\(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Off-main maintenance plumbing
+
+    /// Run `work` on `maintenanceQueue` and deliver the outcome on the main actor.
+    ///
+    /// Every one of these operations used to run inline on the main actor: a full
+    /// SQLite backup, a whole-library JSON encode, a `ditto` subprocess. The window
+    /// stopped drawing and stopped accepting clicks for the duration, which read as
+    /// "the export hung" even though it always finished.
+    private func runMaintenance<T: Sendable>(
+        _ label: String,
+        work: @escaping @Sendable () throws -> T,
+        onSuccess: @escaping (T) -> Void,
+        onFailure: @escaping (Error) -> String
+    ) {
+        guard activeMaintenanceTask == nil else {
+            bannerMessage = "请等待“\(activeMaintenanceTask ?? "当前操作")”结束后再试。"
             return
         }
 
-        let service = DiagnosticsExportService(
-            logRepository: logRepository,
-            storageMaintenanceService: storageMaintenanceService,
-            permissionService: permissionService
-        )
-        do {
-            let zipURL = try service.exportBundle(to: destinationURL)
-            bannerMessage = "诊断包已保存：\(zipURL.lastPathComponent)"
-            NSWorkspace.shared.activateFileViewerSelecting([zipURL])
-        } catch {
-            PPLogger.app.error("Failed to export diagnostics bundle: \(error.localizedDescription)")
-            bannerMessage = error.localizedDescription
+        activeMaintenanceTask = label
+        bannerMessage = label
+        maintenanceQueue.async {
+            let result = Result { try work() }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.activeMaintenanceTask = nil
+                switch result {
+                case .success(let value):
+                    onSuccess(value)
+                case .failure(let error):
+                    self.bannerMessage = onFailure(error)
+                }
+            }
         }
     }
 
-    private func importLibrary(_ action: () throws -> LibraryTransferSummary) {
-        do {
-            let summary = try action()
-            loadProjects()
-            refreshProjectEntryCounts()
-            scheduleEntriesRefresh(delayMs: 0)
-            refreshOperationalStatus()
-            let backupName = summary.backupURL?.lastPathComponent ?? "未生成备份"
-            bannerMessage = "导入完成：项目 +\(summary.projectsCreated)/更新 \(summary.projectsUpdated)，词条 +\(summary.entriesCreated)/更新 \(summary.entriesUpdated)。导入前备份：\(backupName)"
-        } catch {
-            PPLogger.app.error("Failed to import library: \(error.localizedDescription)")
-            bannerMessage = "导入词库失败：\(error.localizedDescription)"
+    private func presentSavePanel(
+        title: String,
+        fileName: String,
+        contentTypes: [UTType],
+        completion: @escaping (URL) -> Void
+    ) {
+        let savePanel = NSSavePanel()
+        savePanel.title = title
+        savePanel.nameFieldStringValue = fileName
+        savePanel.allowedContentTypes = contentTypes
+        savePanel.canCreateDirectories = true
+        beginPanel(savePanel) { completion($0) }
+    }
+
+    private func presentOpenPanel(
+        title: String,
+        contentTypes: [UTType],
+        completion: @escaping (URL) -> Void
+    ) {
+        let openPanel = NSOpenPanel()
+        openPanel.title = title
+        openPanel.allowedContentTypes = contentTypes
+        openPanel.allowsMultipleSelection = false
+        openPanel.canChooseDirectories = false
+        beginPanel(openPanel) { completion($0) }
+    }
+
+    /// Present as a sheet on the main window when there is one, so the rest of the
+    /// app keeps running; fall back to a standalone panel otherwise.
+    private func beginPanel(_ panel: NSSavePanel, completion: @escaping (URL) -> Void) {
+        let handler: (NSApplication.ModalResponse) -> Void = { response in
+            MainActor.assumeIsolated {
+                guard response == .OK, let url = panel.url else { return }
+                completion(url)
+            }
+        }
+
+        // A sheet needs a window that is actually on screen; attaching one to a
+        // hidden window would present nothing at all.
+        if let window = hostWindowProvider(), window.isVisible {
+            panel.beginSheetModal(for: window, completionHandler: handler)
+        } else {
+            panel.begin(completionHandler: handler)
         }
     }
 
-    private func fileTimestamp() -> String {
+    private static func fileTimestamp() -> String {
         ISO8601DateFormatter().string(from: Date())
             .replacingOccurrences(of: ":", with: "-")
     }
@@ -1117,6 +1334,7 @@ final class MainWindowViewModel: ObservableObject {
     private func loadProjects() {
         do {
             projects = try projectRepository.fetchAll()
+            projectNamesById = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0.name) })
             if selectedProjectId == Self.allProjectsSelection {
                 return
             }
@@ -1126,13 +1344,10 @@ final class MainWindowViewModel: ObservableObject {
         } catch {
             PPLogger.project.error("Failed to load projects: \(error.localizedDescription)")
             projects = []
+            projectNamesById = [:]
             selectedProjectId = Self.allProjectsSelection
             bannerMessage = "加载项目列表失败。"
         }
-    }
-
-    private func loadEntries() {
-        scheduleEntriesRefresh(delayMs: 0)
     }
 
     private func scheduleEntriesRefresh(delayMs: Int) {
@@ -1187,10 +1402,12 @@ final class MainWindowViewModel: ObservableObject {
                     switch result {
                     case .success(let entries):
                         self.entries = entries
+                        self.refreshEntryFacets()
                         self.refreshDisplayedEntries()
                     case .failure(let error):
                         PPLogger.entry.error("Failed to load entries: \(error.localizedDescription)")
                         self.entries = []
+                        self.refreshEntryFacets()
                         self.displayedEntries = []
                         self.selectedEntryId = nil
                         self.bannerMessage = "加载词条失败。"

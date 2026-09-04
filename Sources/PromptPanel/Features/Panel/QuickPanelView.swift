@@ -222,43 +222,57 @@ struct QuickPanelView: View {
 
     // MARK: - Results
 
+    /// Rows adapt to the panel width, but the width is a property of the *list*,
+    /// not of each row. One `GeometryReader` here replaces one per visible row:
+    /// nesting a GeometryReader inside a LazyVStack cell forces a second layout
+    /// pass for every row on every scroll and every keystroke.
     private var resultsList: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    if viewModel.entries.isEmpty, viewModel.isLoadingEntries {
-                        loadingState
-                    } else if viewModel.entries.isEmpty {
-                        emptyState
-                    } else {
-                        ForEach(Array(viewModel.entries.enumerated()), id: \.element.id) { index, entry in
-                            PanelRow(
-                                entry: entry,
-                                index: index,
-                                isSelected: index == viewModel.selectedIndex,
-                                showNumber: viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                                showDefaultBadge: shouldShowDefaultBadge(for: entry),
-                                isCompact: appState.panelCompactRows,
-                                onTap: {
-                                    viewModel.executeEntry(at: index, triggerSource: .pointerClick)
-                                }
-                            )
-                            .id(entry.id)
+        GeometryReader { listGeometry in
+            let rowWidth = max(listGeometry.size.width - Design.Space.xs * 2, 0)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        if viewModel.entries.isEmpty, viewModel.isLoadingEntries {
+                            loadingState
+                        } else if viewModel.entries.isEmpty {
+                            emptyState
+                        } else {
+                            ForEach(Array(viewModel.entries.enumerated()), id: \.element.id) { index, entry in
+                                PanelRow(
+                                    entry: entry,
+                                    index: index,
+                                    isSelected: index == viewModel.selectedIndex,
+                                    showNumber: showsShortcutNumbers,
+                                    showDefaultBadge: shouldShowDefaultBadge(for: entry),
+                                    isCompact: appState.panelCompactRows,
+                                    availableWidth: rowWidth,
+                                    onTap: {
+                                        viewModel.executeEntry(at: index, triggerSource: .pointerClick)
+                                    }
+                                )
+                                .id(entry.id)
+                            }
                         }
                     }
+                    .padding(.horizontal, Design.Space.xs)
+                    .padding(.vertical, Design.Space.xs)
                 }
-                .padding(.horizontal, Design.Space.xs)
-                .padding(.vertical, Design.Space.xs)
-            }
-            .scrollIndicators(.hidden)
-            .onChange(of: viewModel.selectedIndex) { _, _ in
-                guard let selectedEntry = viewModel.selectedEntry else { return }
-                withAnimation(.easeInOut(duration: 0.12)) {
-                    proxy.scrollTo(selectedEntry.id, anchor: .center)
+                .scrollIndicators(.hidden)
+                .onChange(of: viewModel.selectedIndex) { _, _ in
+                    guard let selectedEntry = viewModel.selectedEntry else { return }
+                    withAnimation(.easeInOut(duration: 0.12)) {
+                        proxy.scrollTo(selectedEntry.id, anchor: .center)
+                    }
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// ⌘1-9 only address the browse list; once a query narrows it the numbers
+    /// would point at a different entry on every keystroke.
+    private var showsShortcutNumbers: Bool {
+        viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var loadingState: some View {
@@ -310,7 +324,7 @@ struct QuickPanelView: View {
             Image(systemName: statusIcon(for: tone))
                 .font(.icon(.small))
                 .foregroundStyle(statusAccent(for: tone))
-            Text(displayStatusMessage(message, tone: tone))
+            Text(message)
                 .font(.ui(.body))
                 .foregroundStyle(Constants.VisualStyle.textSecondary)
                 .lineLimit(1)
@@ -339,15 +353,6 @@ struct QuickPanelView: View {
                 .frame(height: Constants.Layout.hairline),
             alignment: .bottom
         )
-    }
-
-    private func displayStatusMessage(_ message: String, tone: QuickPanelViewModel.StatusTone) -> String {
-        switch tone {
-        case .warning:
-            return message
-        case .info, .error:
-            return message
-        }
     }
 
     private func statusIcon(for tone: QuickPanelViewModel.StatusTone) -> String {
@@ -433,91 +438,91 @@ private struct PanelRow: View {
     let showNumber: Bool
     let showDefaultBadge: Bool
     let isCompact: Bool
+    /// Supplied by the list rather than measured per row; see `resultsList`.
+    let availableWidth: CGFloat
     let onTap: () -> Void
 
     var body: some View {
         let type = Constants.EntryType.resolve(entry.type)
         let level = Constants.EntryLevel.resolve(useCount: entry.useCount)
+        let metrics = RowMetrics(totalWidth: availableWidth)
         Button(action: onTap) {
-            GeometryReader { geometry in
-                let metrics = RowMetrics(totalWidth: geometry.size.width)
-                HStack(spacing: Design.Space.md) {
-                    // Only reserve the ⌘1-9 gutter while the numbers are
-                    // actually shown; searching would otherwise leave a blank
-                    // column in every row.
-                    if showNumber {
-                        Text("\(index + 1)")
-                            .font(.ui(.micro, weight: .medium, mono: true))
-                            .foregroundStyle(isSelected ? Constants.VisualStyle.accent : Constants.VisualStyle.textQuaternary)
-                            .frame(width: 18, alignment: .center)
+            HStack(spacing: Design.Space.md) {
+                // Only reserve the ⌘1-9 gutter while the numbers are
+                // actually shown; searching would otherwise leave a blank
+                // column in every row.
+                if showNumber {
+                    Text("\(index + 1)")
+                        .font(.ui(.micro, weight: .medium, mono: true))
+                        .foregroundStyle(isSelected ? Constants.VisualStyle.accent : Constants.VisualStyle.textQuaternary)
+                        .frame(width: 18, alignment: .center)
+                }
+
+                Image(systemName: type.symbolName)
+                    .font(.icon(.base))
+                    .foregroundStyle(level.color)
+                    .frame(width: 16, height: 16)
+
+                HStack(alignment: .firstTextBaseline, spacing: Design.Space.lg) {
+                    if let titleWidth = metrics.titleWidth {
+                        titleLabel
+                            .frame(width: titleWidth, alignment: .leading)
+                    } else {
+                        titleLabel
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    Image(systemName: type.symbolName)
-                        .font(.icon(.base))
+                    if metrics.showsPreview {
+                        Text(entry.previewLine)
+                            .font(.ui(.body))
+                            .foregroundStyle(Constants.VisualStyle.textSecondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                HStack(spacing: Design.Space.sm) {
+                    Text("\(entry.useCount) 次")
+                        .font(.ui(.micro, weight: .medium, mono: true))
                         .foregroundStyle(level.color)
-                        .frame(width: 16, height: 16)
-
-                    HStack(alignment: .firstTextBaseline, spacing: Design.Space.lg) {
-                        if let titleWidth = metrics.titleWidth {
-                            titleLabel
-                                .frame(width: titleWidth, alignment: .leading)
-                        } else {
-                            titleLabel
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-
-                        if metrics.showsPreview {
-                            Text(previewText)
-                                .font(.ui(.body))
-                                .foregroundStyle(Constants.VisualStyle.textSecondary)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-
-                    HStack(spacing: Design.Space.sm) {
-                        Text("\(entry.useCount) 次")
-                            .font(.ui(.micro, weight: .medium, mono: true))
-                            .foregroundStyle(level.color)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(
+                            RoundedRectangle(cornerRadius: Constants.Layout.badgeCornerRadius, style: .continuous)
+                                .fill(level.fillColor)
+                        )
+                    if showDefaultBadge {
+                        Text("通用")
+                            .font(.ui(.micro, weight: .medium))
+                            .foregroundStyle(Constants.VisualStyle.textTertiary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(
                                 RoundedRectangle(cornerRadius: Constants.Layout.badgeCornerRadius, style: .continuous)
-                                    .fill(level.fillColor)
+                                    .fill(Constants.VisualStyle.tintSubtle)
                             )
-                        if showDefaultBadge {
-                            Text("通用")
-                                .font(.ui(.micro, weight: .medium))
-                                .foregroundStyle(Constants.VisualStyle.textTertiary)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(
-                                    RoundedRectangle(cornerRadius: Constants.Layout.badgeCornerRadius, style: .continuous)
-                                        .fill(Constants.VisualStyle.tintSubtle)
-                                )
-                        }
-                        // Recency, not the type name. Ranking is use count decayed by how
-                        // long an entry has sat untouched, and the count was the only half
-                        // of that the row showed — so "6 次" above "19 次" looked broken.
-                        // The type name earned its slot even less: it is the same word on
-                        // every row in a prompt library, and the leading icon already
-                        // carries it.
-                        if metrics.showsRecency {
-                            Text(recencyLabel)
-                                .font(.ui(.micro, weight: .medium, mono: true))
-                                .foregroundStyle(isSelected ? Constants.VisualStyle.textSecondary : Constants.VisualStyle.textTertiary)
-                        }
                     }
-                    .layoutPriority(2)
-                    .fixedSize(horizontal: true, vertical: false)
+                    // Recency, not the type name. Ranking is use count decayed by how
+                    // long an entry has sat untouched, and the count was the only half
+                    // of that the row showed — so "6 次" above "19 次" looked broken.
+                    // The type name earned its slot even less: it is the same word on
+                    // every row in a prompt library, and the leading icon already
+                    // carries it.
+                    if metrics.showsRecency {
+                        Text(recencyLabel)
+                            .font(.ui(.micro, weight: .medium, mono: true))
+                            .foregroundStyle(isSelected ? Constants.VisualStyle.textSecondary : Constants.VisualStyle.textTertiary)
+                    }
                 }
-                .padding(.leading, Design.Space.sm)
-                .padding(.trailing, Design.Space.lg)
-                .frame(width: geometry.size.width, height: geometry.size.height)
-                .roundedHitTarget(cornerRadius: Design.rowCornerRadius)
+                .layoutPriority(2)
+                .fixedSize(horizontal: true, vertical: false)
             }
+            .padding(.leading, Design.Space.sm)
+            .padding(.trailing, Design.Space.lg)
+            .frame(maxWidth: .infinity)
             .frame(height: isCompact ? Constants.Layout.compactRowHeight : Constants.Layout.regularRowHeight)
+            .roundedHitTarget(cornerRadius: Design.rowCornerRadius)
             .background(
                 RoundedRectangle(cornerRadius: Design.rowCornerRadius, style: .continuous)
                     .fill(isSelected ? Constants.VisualStyle.tintSubtle : Color.clear)
@@ -583,14 +588,5 @@ private struct PanelRow: View {
         default:
             return "\(days / 365)年"
         }
-    }
-
-    private var previewText: String {
-        entry.content
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\t", with: " ")
-            .components(separatedBy: .whitespacesAndNewlines)
-            .filter { $0.isEmpty == false }
-            .joined(separator: " ")
     }
 }

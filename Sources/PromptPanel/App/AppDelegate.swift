@@ -123,8 +123,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var mainWindow: NSWindow?
     private var mainWindowKeyMonitor: Any?
     private let launchMaintenanceQueue = DispatchQueue(label: "PromptPanel.launch-maintenance", qos: .utility)
-    private var panelOriginPersistWorkItem: DispatchWorkItem?
-    private static let panelOriginPersistDebounceInterval: DispatchTimeInterval = .milliseconds(250)
+    /// Panel geometry is persisted through `SettleWriter`, not written inline from the
+    /// window callbacks: both `windowDidMove` and `windowDidResize` fire on every frame
+    /// of a drag, and each one used to issue a SQLite write on the main thread.
+    private var panelOriginWriter: SettleWriter<NSPoint>?
+    private var panelContentSizeWriter: SettleWriter<NSSize>?
+    private let panelGeometryPersistQueue = DispatchQueue(label: "PromptPanel.panel-geometry-persist", qos: .utility)
+    private static let panelGeometryPersistDebounceInterval: DispatchTimeInterval = .milliseconds(250)
 
     private(set) var databaseManager: DatabaseManager!
     private(set) var appState: AppState!
@@ -219,15 +224,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         hotkeyService?.stop()
-        flushPendingPanelOriginPersistence()
+        flushPendingPanelGeometryPersistence()
         storageMaintenanceService?.prepareForTermination()
         PPLogger.app.info("Application will terminate")
     }
 
-    /// NSWindow emits `windowDidMove` continuously while the user drags the panel; without
-    /// debouncing we would issue dozens of SQLite writes per drag. Coalesce into a single
-    /// settle write 250ms after the last movement, and flush any pending write on terminate
-    /// so we never lose the final position.
     /// Resolve a raw key event from the quick panel into a panel command.
     /// Returns `true` when the event was consumed.
     private func handlePanelKeyEvent(_ event: NSEvent) -> Bool {
@@ -244,25 +245,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return quickPanelViewModel.handlePanelKeyCommand(command)
     }
 
-    private func schedulePanelOriginPersistence(_ origin: NSPoint) {
-        panelOriginPersistWorkItem?.cancel()
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self else { return }
+    private func makePanelGeometryWriters() {
+        let settingsRepository = self.settingsRepository!
+
+        panelOriginWriter = SettleWriter(
+            interval: Self.panelGeometryPersistDebounceInterval,
+            queue: panelGeometryPersistQueue
+        ) { origin in
             do {
-                try self.settingsRepository.setPanelWindowOrigin(origin)
+                try settingsRepository.setPanelWindowOrigin(origin)
             } catch {
                 PPLogger.panel.error("Failed to persist panel window origin: \(error.localizedDescription)")
             }
         }
-        panelOriginPersistWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.panelOriginPersistDebounceInterval, execute: workItem)
+
+        panelContentSizeWriter = SettleWriter(
+            interval: Self.panelGeometryPersistDebounceInterval,
+            queue: panelGeometryPersistQueue
+        ) { size in
+            do {
+                try settingsRepository.setPanelContentSize(size)
+            } catch {
+                PPLogger.panel.error("Failed to persist panel content size: \(error.localizedDescription)")
+            }
+        }
     }
 
-    private func flushPendingPanelOriginPersistence() {
-        guard let workItem = panelOriginPersistWorkItem else { return }
-        panelOriginPersistWorkItem = nil
-        workItem.cancel()
-        workItem.perform()
+    private func flushPendingPanelGeometryPersistence() {
+        panelOriginWriter?.flush()
+        panelContentSizeWriter?.flush()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -336,6 +347,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func wireApplication() throws {
+        makePanelGeometryWriters()
         panelService = PanelService(appState: appState, panelOpenTracker: panelOpenTracker)
         executeService = ExecuteService(
             clipboardService: clipboardService,
@@ -396,6 +408,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             },
             onSetPanelContentSize: { [weak self] size in
                 self?.updatePanelContentSize(size) ?? false
+            },
+            hostWindowProvider: { [weak self] in
+                self?.mainWindow
             }
         )
 
@@ -411,15 +426,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panelService.onDidStabilizeActivation = { [weak self] in
             self?.quickPanelViewModel.retryFocusAfterActivationStabilized()
         }
+        // Both of these are live-drag callbacks; neither may write inline.
         panelService.onPanelContentSizeChanged = { [weak self] size in
-            do {
-                try self?.settingsRepository.setPanelContentSize(size)
-            } catch {
-                PPLogger.panel.error("Failed to persist panel content size: \(error.localizedDescription)")
-            }
+            self?.panelContentSizeWriter?.schedule(size)
         }
         panelService.onPanelWindowOriginChanged = { [weak self] origin in
-            self?.schedulePanelOriginPersistence(origin)
+            self?.panelOriginWriter?.schedule(origin)
         }
         panelService.onPanelKeyEvent = { [weak self] event in
             self?.handlePanelKeyEvent(event) ?? false
@@ -650,7 +662,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    /// Called from the settings steppers, not from a drag: the caller needs the outcome
+    /// and the normalized read-back, so this one stays synchronous. It drops whatever the
+    /// resize drag left pending — otherwise that stale settle write lands afterwards and
+    /// silently overwrites the value the user just typed.
     private func updatePanelContentSize(_ size: NSSize) -> Bool {
+        panelContentSizeWriter?.cancel()
         do {
             try settingsRepository.setPanelContentSize(size)
             let normalizedSize = try settingsRepository.getPanelContentSize()
@@ -683,9 +700,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        if let window = notification.object as? NSWindow, window == mainWindow {
-            appState.isMainWindowVisible = false
-            updateAppActivationPolicy()
+        guard let window = notification.object as? NSWindow, window == mainWindow else {
+            return
+        }
+        appState.isMainWindowVisible = false
+        // Deferred by one runloop turn: dropping to `.accessory` from inside
+        // `windowWillClose` tears the app out of the foreground while AppKit is
+        // still finishing the close, which shows up as a stutter and a stray
+        // focus flash on the app the user lands in next.
+        DispatchQueue.main.async { [weak self] in
+            self?.updateAppActivationPolicy()
         }
     }
 

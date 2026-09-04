@@ -83,6 +83,11 @@ final class QuickPanelViewModel: ObservableObject {
         return entries[selectedIndex]
     }
 
+    /// Order matters: `query = ""` fires its `didSet`, which schedules a *debounced*
+    /// refresh. The unconditional `scheduleEntriesRefresh(delayMs: 0)` at the end cancels
+    /// that pending item and takes over, so the panel opens with one search rather than
+    /// two. Moving that call above `query = ""` would leave the debounced one running and
+    /// make every open pay an extra query.
     func prepareForPresentation() {
         permissionService.refresh()
         applyBaseStatus()
@@ -160,7 +165,7 @@ final class QuickPanelViewModel: ObservableObject {
         force: Bool = false,
         triggerSource: Constants.ExecutionTrigger = .keyboardSubmit
     ) {
-        PPLogger.panel.info(
+        PPLogger.panel.debug(
             "execute_selection_requested trigger=\(triggerSource.rawValue) ready=\(self.isExecutionReady) force=\(force) selected_index=\(self.selectedIndex) entry_count=\(self.entries.count)"
         )
         guard force || isExecutionReady else {
@@ -231,10 +236,10 @@ final class QuickPanelViewModel: ObservableObject {
 
     private func scheduleEntriesRefresh(delayMs: Int) {
         pendingSearchWorkItem?.cancel()
-        entries = []
-        selectedIndex = 0
 
         guard !appState.effectiveProjectId.isEmpty || !currentProjectId.isEmpty else {
+            entries = []
+            selectedIndex = 0
             isLoadingEntries = false
             return
         }
@@ -247,7 +252,11 @@ final class QuickPanelViewModel: ObservableObject {
         let searchQueue = self.searchQueue
 
         appState.currentProjectId = effectiveCurrentProjectId
-        isLoadingEntries = true
+        // Deliberately *not* clearing `entries` here. Blanking the list on every
+        // keystroke tore the panel down and rebuilt it a debounce later, so typing
+        // read as a flicker between the old results and an empty list; the spinner
+        // is only for the case where there is nothing to keep showing.
+        isLoadingEntries = entries.isEmpty
         searchGeneration += 1
         let generation = searchGeneration
 
@@ -281,9 +290,15 @@ final class QuickPanelViewModel: ObservableObject {
                     switch result {
                     case .success(let entries):
                         self.isLoadingEntries = false
+                        let previousSelectionId = self.selectedEntry?.id
                         self.entries = entries
                         if entries.isEmpty {
                             self.selectedIndex = 0
+                        } else if let previousSelectionId,
+                                  let index = entries.firstIndex(where: { $0.id == previousSelectionId }) {
+                            // Keep the highlight on the same entry across a refresh
+                            // triggered by a use-count write rather than a new query.
+                            self.selectedIndex = index
                         } else {
                             self.selectedIndex = min(self.selectedIndex, entries.count - 1)
                         }
@@ -314,7 +329,7 @@ final class QuickPanelViewModel: ObservableObject {
                 return
             }
             self.isExecutionReady = true
-            PPLogger.panel.info("execute_selection_unlocked focus_token=\(token) delay_ms=\(Constants.panelExecutionUnlockDelayMs)")
+            PPLogger.panel.debug("execute_selection_unlocked focus_token=\(token) delay_ms=\(Constants.panelExecutionUnlockDelayMs)")
         }
     }
 
