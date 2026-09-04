@@ -10,10 +10,6 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Constants.Layout.sectionSpacing) {
-                if let bannerMessage = viewModel.bannerMessage {
-                    SettingsBanner(message: bannerMessage)
-                }
-
                 SettingsHealthStrip(viewModel: viewModel)
 
                 SettingsAreaPicker(selection: $selectedArea)
@@ -37,21 +33,13 @@ struct SettingsView: View {
                 SettingsColumn {
                     AppearanceSection(viewModel: viewModel)
                     LibrarySection(viewModel: viewModel)
+                    PanelBehaviorSection(viewModel: viewModel)
                 }
 
                 SettingsColumn {
                     HotkeySection(viewModel: viewModel)
-                    PanelBehaviorSection(viewModel: viewModel)
-                }
-            }
-        case .permissions:
-            HStack(alignment: .top, spacing: columnSpacing) {
-                SettingsColumn {
                     PermissionSection(viewModel: viewModel)
-                }
-
-                SettingsColumn {
-                    OperationOverviewSection(viewModel: viewModel)
+                    PermissionTroubleshootingSection(viewModel: viewModel)
                 }
             }
         case .maintenance:
@@ -73,9 +61,16 @@ struct SettingsView: View {
     }
 }
 
+/// Two areas, not three.
+///
+/// 偏好 / 权限 / 维护 split eight short cards across three tabs, and the first two
+/// each filled well under half of a 1040x760 window — the settings tab opened on a
+/// screen that was mostly empty, and the permission controls sat a tab away from
+/// everything else you configure once and forget. 权限 folds into 偏好, which is
+/// what it always was: something you set once. The two names are unchanged, so
+/// every documented `设置 → 偏好 → …` path still resolves.
 private enum SettingsArea: String, CaseIterable, Identifiable {
     case preferences
-    case permissions
     case maintenance
 
     var id: String { rawValue }
@@ -83,7 +78,6 @@ private enum SettingsArea: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .preferences: return "偏好"
-        case .permissions: return "权限"
         case .maintenance: return "维护"
         }
     }
@@ -91,7 +85,6 @@ private enum SettingsArea: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .preferences: return "slider.horizontal.3"
-        case .permissions: return "hand.raised"
         case .maintenance: return "externaldrive"
         }
     }
@@ -158,18 +151,29 @@ private struct SettingsColumn<Content: View>: View {
     }
 }
 
-struct SettingsCard<Content: View>: View {
+struct SettingsCard<Content: View, Accessory: View>: View {
     let title: String
+    let accessory: () -> Accessory
     let content: () -> Content
 
-    init(_ title: String, @ViewBuilder content: @escaping () -> Content) {
+    init(
+        _ title: String,
+        @ViewBuilder accessory: @escaping () -> Accessory,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
         self.title = title
+        self.accessory = accessory
         self.content = content
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Design.Space.md) {
-            SettingsSectionHeader(title: title)
+            HStack(alignment: .center, spacing: Design.Space.sm) {
+                SettingsSectionHeader(title: title)
+                Spacer(minLength: Design.Space.md)
+                accessory()
+            }
+            .frame(minHeight: Constants.Layout.compactControlHeight - 4)
             VStack(alignment: .leading, spacing: 0) {
                 content()
             }
@@ -187,19 +191,49 @@ struct SettingsCard<Content: View>: View {
     }
 }
 
+extension SettingsCard where Accessory == EmptyView {
+    init(_ title: String, @ViewBuilder content: @escaping () -> Content) {
+        self.init(title, accessory: { EmptyView() }, content: content)
+    }
+}
+
 struct SettingsBanner: View {
     let message: String
+    /// True while a maintenance action is still running: the same strip doubles as
+    /// the progress indicator so a long export is visibly in flight rather than
+    /// looking like a frozen window.
+    var isBusy: Bool = false
+    var onDismiss: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "info.circle.fill")
-                .font(.icon(.base))
-                .foregroundStyle(Constants.VisualStyle.accent)
+            if isBusy {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.7)
+                    .frame(width: 14, height: 14)
+            } else {
+                Image(systemName: "info.circle.fill")
+                    .font(.icon(.base))
+                    .foregroundStyle(Constants.VisualStyle.accent)
+            }
             Text(message)
                 .font(.ui(.body))
                 .foregroundStyle(Constants.VisualStyle.textSecondary)
                 .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
+            if let onDismiss, !isBusy {
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                        .font(.icon(.micro, weight: .semibold))
+                        .foregroundStyle(Constants.VisualStyle.textTertiary)
+                        .frame(width: 18, height: 18)
+                        .roundedHitTarget(cornerRadius: 5)
+                }
+                .buttonStyle(.plain)
+                .help("关闭提示")
+            }
         }
         .padding(.horizontal, Design.Space.lg)
         .padding(.vertical, Design.Space.sm)
@@ -264,9 +298,7 @@ private struct SettingsHealthStrip: View {
     }
 
     private var versionText: String {
-        let shortVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知"
-        let buildVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "未知"
-        return "v\(shortVersion) (\(buildVersion))"
+        "v" + Constants.appVersionDisplay
     }
 
     private var primaryIssue: (message: String, systemImage: String, color: Color, background: Color)? {
@@ -315,11 +347,22 @@ struct SettingsRow<Control: View>: View {
     let hint: String?
     let control: Control
     let dense: Bool
+    /// Rows separate themselves from the row below. The last row in a card has no
+    /// row below it, so its hairline used to float against the card's inner padding
+    /// as a stray line — pass `showsDivider: false` there.
+    let showsDivider: Bool
 
-    init(label: String, hint: String? = nil, dense: Bool = false, @ViewBuilder control: () -> Control) {
+    init(
+        label: String,
+        hint: String? = nil,
+        dense: Bool = false,
+        showsDivider: Bool = true,
+        @ViewBuilder control: () -> Control
+    ) {
         self.label = label
         self.hint = hint
         self.dense = dense
+        self.showsDivider = showsDivider
         self.control = control()
     }
 
@@ -340,12 +383,13 @@ struct SettingsRow<Control: View>: View {
             control
         }
         .padding(.vertical, dense ? Design.Space.xs : Design.Space.sm)
-        .overlay(
-            Rectangle()
-                .fill(Constants.VisualStyle.divider)
-                .frame(height: Constants.Layout.hairline),
-            alignment: .bottom
-        )
+        .overlay(alignment: .bottom) {
+            if showsDivider {
+                Rectangle()
+                    .fill(Constants.VisualStyle.divider)
+                    .frame(height: Constants.Layout.hairline)
+            }
+        }
     }
 }
 
@@ -438,7 +482,8 @@ private struct AppearanceSection: View {
         SettingsCard("外观") {
             SettingsRow(
                 label: "主题",
-                hint: "跟随系统自动切换；也可固定为浅色或深色。"
+                hint: "跟随系统自动切换；也可固定为浅色或深色。",
+                showsDivider: false
             ) {
                 ThemeSegmentedPicker(selection: Binding(
                     get: { viewModel.appTheme },
@@ -500,7 +545,8 @@ private struct LibrarySection: View {
         SettingsCard("词条排序") {
             SettingsRow(
                 label: "默认排序",
-                hint: "按使用＝严格按次数；按等级＝同档色块成组（rookie→master）。"
+                hint: "按使用＝严格按次数；按等级＝同档色块成组（rookie→master）。",
+                showsDivider: false
             ) {
                 EntrySortSegmentedPicker(selection: Binding(
                     get: { viewModel.entrySortMode },
@@ -558,7 +604,8 @@ private struct HotkeySection: View {
         SettingsCard("快捷键") {
             SettingsRow(
                 label: "呼出面板",
-                hint: "这是呼出快捷面板的唯一入口。点击后按下组合键即可修改；如果新快捷键按下去没反应，说明已被其他应用或系统占用，换一个组合。"
+                hint: "这是呼出快捷面板的唯一入口。点击后按下组合键即可修改；如果新快捷键按下去没反应，说明已被其他应用或系统占用，换一个组合。",
+                showsDivider: false
             ) {
                 HotkeyRecorderField(name: .togglePanel)
             }
@@ -606,7 +653,8 @@ private struct PanelBehaviorSection: View {
             }
             SettingsRow(
                 label: "面板尺寸",
-                hint: "可拖拽面板边缘，也可在这里精确设置宽高。"
+                hint: "可拖拽面板边缘，也可在这里精确设置宽高。",
+                showsDivider: false
             ) {
                 PanelSizeControls(viewModel: viewModel)
             }
@@ -673,30 +721,6 @@ private struct PermissionSection: View {
                 permissionPill
             }
             SettingsRow(
-                label: "授权操作",
-                hint: "重新授权时以 PromptPanel.app 那一项为准。"
-            ) {
-                HStack(spacing: 6) {
-                    SettingsPillButton("请求授权", systemImage: "hand.raised") {
-                        viewModel.requestAccessibilityPermission()
-                    }
-                    SettingsPillButton("系统设置", systemImage: "arrow.up.forward") {
-                        viewModel.openAccessibilitySettings()
-                    }
-                    SettingsPillButton("重新检测", systemImage: "arrow.clockwise") {
-                        viewModel.refreshPermissionState()
-                    }
-                }
-            }
-            SettingsRow(
-                label: "重置授权记录",
-                hint: "更新或重装后，若系统里看似已授权但应用仍显示未授权，点这里清空旧记录后再去重新开启。"
-            ) {
-                SettingsPillButton("重置授权", systemImage: "arrow.counterclockwise") {
-                    viewModel.resetAccessibilityApproval()
-                }
-            }
-            SettingsRow(
                 label: "登录时启动",
                 hint: "系统启动后自动在后台运行。"
             ) {
@@ -707,6 +731,38 @@ private struct PermissionSection: View {
                 .labelsHidden()
                 .toggleStyle(.switch)
             }
+
+            // Full width rather than squeezed into a row's trailing control slot:
+            // three labelled pills plus their icons never fitted the ~380pt that a
+            // settings column leaves beside a label, so every one of them rendered
+            // as "请…" / "系统…" / "重新…".
+            VStack(alignment: .leading, spacing: Design.Space.sm) {
+                Text("授权操作")
+                    .font(.ui(.caption, weight: .medium))
+                    .foregroundStyle(Constants.VisualStyle.textTertiary)
+                LazyVGrid(
+                    columns: Array(
+                        repeating: GridItem(.flexible(), spacing: Design.Space.xs),
+                        count: 2
+                    ),
+                    alignment: .leading,
+                    spacing: Design.Space.xs
+                ) {
+                    SettingsPillButton("请求授权", systemImage: "hand.raised", fillsAvailableWidth: true) {
+                        viewModel.requestAccessibilityPermission()
+                    }
+                    SettingsPillButton("打开系统设置", systemImage: "arrow.up.forward", fillsAvailableWidth: true) {
+                        viewModel.openAccessibilitySettings()
+                    }
+                    SettingsPillButton("重新检测", systemImage: "arrow.clockwise", fillsAvailableWidth: true) {
+                        viewModel.refreshPermissionState()
+                    }
+                    SettingsPillButton("重置授权记录", systemImage: "arrow.counterclockwise", fillsAvailableWidth: true) {
+                        viewModel.resetAccessibilityApproval()
+                    }
+                }
+            }
+            .padding(.top, Design.Space.md)
         }
     }
 
@@ -737,8 +793,22 @@ private struct OperationOverviewSection: View {
 
     var body: some View {
         SettingsCard("运行概况") {
+            Button {
+                viewModel.refreshOperationalStatus()
+                viewModel.refreshUpdaterStatus()
+                viewModel.refreshLogs()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.icon(.small))
+                    .foregroundStyle(Constants.VisualStyle.textTertiary)
+                    .frame(width: 20, height: 20)
+                    .roundedHitTarget(cornerRadius: 5)
+            }
+            .buttonStyle(.plain)
+            .help("刷新运行状态")
+        } content: {
             SettingsRow(label: "当前版本", dense: true) {
-                valueText(appVersionText, monospaced: true)
+                valueText(Constants.appVersionDisplay, monospaced: true)
             }
             SettingsRow(label: "更新状态", dense: true) {
                 Text(viewModel.updaterStatusMessage)
@@ -760,7 +830,7 @@ private struct OperationOverviewSection: View {
                     valueText("最近 \(Constants.automaticBackupRetentionCount) 份")
                 }
                 SettingsRow(label: "最近备份", dense: true) {
-                    valueText(latestBackupSummary(snapshot.latestBackupURL))
+                    valueText(format(date: snapshot.latestBackupModifiedAt))
                 }
             }
 
@@ -787,7 +857,7 @@ private struct OperationOverviewSection: View {
                 SettingsRow(label: "最近执行", dense: true) {
                     valueText(format(date: summary.latestExecutionAt))
                 }
-                SettingsRow(label: "最近异常", dense: true) {
+                SettingsRow(label: "最近异常", dense: true, showsDivider: false) {
                     valueText(format(date: summary.latestFailureAt))
                 }
             } else {
@@ -799,26 +869,12 @@ private struct OperationOverviewSection: View {
         }
     }
 
-    private var appVersionText: String {
-        let shortVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知"
-        let buildVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "未知"
-        return "\(shortVersion) (\(buildVersion))"
-    }
-
     private func valueText(_ value: String, monospaced: Bool = false) -> some View {
         Text(value)
             .font(.ui(.body, weight: .medium, mono: monospaced))
             .foregroundStyle(Constants.VisualStyle.textSecondary)
             .lineLimit(1)
             .truncationMode(.middle)
-    }
-
-    private func latestBackupSummary(_ url: URL?) -> String {
-        guard let url,
-              let modifiedAt = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate else {
-            return "暂无"
-        }
-        return modifiedAt.formatted(date: .abbreviated, time: .shortened)
     }
 
     private func format(date: Date?) -> String {
@@ -865,24 +921,16 @@ private struct OperationOverviewSection: View {
 private struct MaintenanceSection: View {
     @ObservedObject var viewModel: MainWindowViewModel
 
+    private var isBusy: Bool {
+        viewModel.activeMaintenanceTask != nil
+    }
+
     var body: some View {
         SettingsCard("维护操作") {
-            LazyVGrid(
-                columns: [
-                    GridItem(.flexible(), spacing: Design.Space.xs),
-                    GridItem(.flexible(), spacing: Design.Space.xs),
-                    GridItem(.flexible(), spacing: Design.Space.xs)
-                ],
-                alignment: .leading,
-                spacing: Design.Space.xs
-            ) {
-                SettingsPillButton("刷新状态", systemImage: "arrow.clockwise", fillsAvailableWidth: true) {
-                    viewModel.refreshOperationalStatus()
-                    viewModel.refreshUpdaterStatus()
-                }
-                SettingsPillButton("检查更新", systemImage: "arrow.down.circle", fillsAvailableWidth: true) {
-                    viewModel.checkForUpdates()
-                }
+            // Eleven identical pills in one 3-wide grid read as a wall: nothing said
+            // which of them touched user data, and the last row was always ragged.
+            // Three labelled groups, each a whole number of rows.
+            actionGroup(title: "备份与数据", columns: 3) {
                 SettingsPillButton("立即备份", systemImage: "plus", tone: .primary, fillsAvailableWidth: true) {
                     viewModel.createBackupNow()
                 }
@@ -892,17 +940,26 @@ private struct MaintenanceSection: View {
                 SettingsPillButton("备份目录", systemImage: "tray.full", fillsAvailableWidth: true) {
                     viewModel.openBackupDirectory()
                 }
+            }
+
+            actionGroup(title: "词库导入导出", columns: 2) {
                 SettingsPillButton("导出 JSON", systemImage: "square.and.arrow.up", fillsAvailableWidth: true) {
                     viewModel.exportLibraryAsJSON()
                 }
                 SettingsPillButton("导出 MD", systemImage: "doc.text", fillsAvailableWidth: true) {
                     viewModel.exportLibraryAsMarkdown()
                 }
-                SettingsPillButton("导入 JSON", systemImage: "square.and.arrow.down", tone: .primary, fillsAvailableWidth: true) {
+                SettingsPillButton("导入 JSON", systemImage: "square.and.arrow.down", fillsAvailableWidth: true) {
                     viewModel.importLibraryFromJSON()
                 }
                 SettingsPillButton("导入 MD", systemImage: "doc.text.fill", fillsAvailableWidth: true) {
                     viewModel.importLibraryFromMarkdown()
+                }
+            }
+
+            actionGroup(title: "诊断与清理", columns: 3) {
+                SettingsPillButton("检查更新", systemImage: "arrow.down.circle", fillsAvailableWidth: true) {
+                    viewModel.checkForUpdates()
                 }
                 SettingsPillButton("导出诊断", systemImage: "doc.zipper", fillsAvailableWidth: true) {
                     viewModel.exportDiagnosticsBundle()
@@ -911,12 +968,97 @@ private struct MaintenanceSection: View {
                     viewModel.cleanupLogs()
                 }
             }
-            .padding(.vertical, Design.Space.xxs)
 
-            Text("导入词库前会自动创建本地数据库备份；Sparkle 只在 feed 和公钥都配置完成后启用。")
+            Text(footnote)
                 .font(.ui(.caption))
                 .foregroundStyle(Constants.VisualStyle.textTertiary)
-                .padding(.top, 4)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, Design.Space.sm)
+        }
+    }
+
+    private var footnote: String {
+        if let task = viewModel.activeMaintenanceTask {
+            return "\(task)完成前，其余维护操作会暂时停用。"
+        }
+        return "导入词库前会自动创建本地数据库备份；备份目录只保留最近 \(Constants.automaticBackupRetentionCount) 份启动备份和 \(Constants.manualBackupRetentionCount) 份手动备份。"
+    }
+
+    @ViewBuilder
+    private func actionGroup<Content: View>(
+        title: String,
+        columns: Int,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: Design.Space.sm) {
+            Text(title)
+                .font(.ui(.caption, weight: .medium))
+                .foregroundStyle(Constants.VisualStyle.textTertiary)
+            LazyVGrid(
+                columns: Array(
+                    repeating: GridItem(.flexible(), spacing: Design.Space.xs),
+                    count: columns
+                ),
+                alignment: .leading,
+                spacing: Design.Space.xs
+            ) {
+                content()
+            }
+        }
+        .padding(.vertical, Design.Space.sm)
+        // Every maintenance action now runs off the main thread; letting a second
+        // one start while the first is mid-flight would race the same SQLite file.
+        .disabled(isBusy)
+        .opacity(isBusy ? 0.5 : 1)
+    }
+}
+
+/// The permission hints used to live only as one-line `hint:` strings scattered
+/// across four rows, which is where the actual recovery procedure got lost. This
+/// states it once, in order, next to the buttons that perform each step.
+private struct PermissionTroubleshootingSection: View {
+    @ObservedObject var viewModel: MainWindowViewModel
+
+    private var steps: [(index: Int, text: String)] {
+        [
+            (1, "点“请求授权”，在系统弹窗里选择允许。"),
+            (2, "若系统设置里已勾选但这里仍显示未授权，说明是重装或更新后留下的旧记录：点“重置授权”，再回系统设置重新开启。"),
+            (3, "系统列表里如果同时出现 PromptPanel 和 PromptPanel.app，以 PromptPanel.app 那一项为准。"),
+            (4, "开启后回到这里点“重新检测”确认状态。")
+        ]
+    }
+
+    var body: some View {
+        SettingsCard("授权排查") {
+            VStack(alignment: .leading, spacing: Design.Space.md) {
+                ForEach(steps, id: \.index) { step in
+                    HStack(alignment: .top, spacing: Design.Space.md) {
+                        Text("\(step.index)")
+                            .font(.ui(.micro, weight: .semibold, mono: true))
+                            .foregroundStyle(Constants.VisualStyle.accent)
+                            .frame(width: 16, height: 16)
+                            .background(
+                                Circle().fill(Constants.VisualStyle.accentDim)
+                            )
+                        Text(step.text)
+                            .font(.ui(.body))
+                            .foregroundStyle(Constants.VisualStyle.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+            .padding(.vertical, Design.Space.xs)
+
+            Text(viewModel.hasAccessibilityPermission
+                 ? "当前已授权：选中词条会直接粘贴到你原来的输入位置。"
+                 : "当前未授权：选中词条只会复制到剪贴板，需要你手动按 ⌘V。")
+                .font(.ui(.caption))
+                .foregroundStyle(viewModel.hasAccessibilityPermission
+                                 ? Constants.VisualStyle.success
+                                 : Constants.VisualStyle.warn)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, Design.Space.sm)
         }
     }
 }

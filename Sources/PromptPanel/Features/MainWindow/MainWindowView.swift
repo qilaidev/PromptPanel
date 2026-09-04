@@ -13,6 +13,16 @@ struct MainWindowView: View {
             VStack(spacing: 0) {
                 windowHeader
 
+                if let bannerMessage = viewModel.bannerMessage {
+                    SettingsBanner(
+                        message: bannerMessage,
+                        isBusy: viewModel.activeMaintenanceTask != nil,
+                        onDismiss: { viewModel.bannerMessage = nil }
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.top, Design.Space.md)
+                }
+
                 Group {
                     switch viewModel.selectedTab {
                     case .library:
@@ -99,10 +109,11 @@ struct MainWindowView: View {
 
             Spacer(minLength: 0)
 
-            Text(Constants.appName)
-                .font(.ui(.caption, weight: .medium, mono: true))
-                .foregroundStyle(Constants.VisualStyle.textQuaternary)
-                .frame(width: 72, alignment: .trailing)
+            // Balances the traffic-light gutter so the segmented control stays
+            // centred. This used to hold a second "PromptPanel" label, which the
+            // titlebar already shows and which wrapped to two lines inside 72pt.
+            Spacer()
+                .frame(width: 72)
         }
         .padding(.horizontal, Design.Space.lg)
         .frame(height: Constants.Layout.headerHeight)
