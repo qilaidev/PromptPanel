@@ -166,7 +166,7 @@ Esta separación — **el portapapeles como garantía, el pegado automático com
 
 ```bash
 # 1. Clonar
-git clone https://github.com/tytsxai/PromptPanel.git
+git clone https://github.com/qilaidev/PromptPanel.git
 cd PromptPanel
 
 # 2. Compilar el paquete .app (firmado ad-hoc por defecto)
@@ -358,7 +358,7 @@ PromptPanel sigue una hoja de ruta **deliberadamente pequeña**. El PRD enumera 
 - [ ] "Repetir última entrada" con un solo toque
 - [ ] Plantillas con variables (estilo `{{name}}`) — solo si se puede añadir sin ralentizar el enlace principal
 
-Consulta [docs/路线图与贡献指南.md](docs/路线图与贡献指南.md) para las reglas de priorización, [CHANGELOG.md](CHANGELOG.md) para lo que ya se ha publicado y los [issues](https://github.com/tytsxai/PromptPanel/issues) para la planificación pública.
+Consulta [docs/路线图与贡献指南.md](docs/路线图与贡献指南.md) para las reglas de priorización, [CHANGELOG.md](CHANGELOG.md) para lo que ya se ha publicado y los [issues](https://github.com/qilaidev/PromptPanel/issues) para la planificación pública.
 
 ## Preguntas frecuentes
 
@@ -390,7 +390,7 @@ Los caminos más críticos de este producto (temporización del atajo global, re
 
 ### ¿Cómo reporto un error o solicito una función?
 
-Abre un issue: <https://github.com/tytsxai/PromptPanel/issues>. Por favor, usa las plantillas — nos ahorrarán idas y venidas a ambos.
+Abre un issue: <https://github.com/qilaidev/PromptPanel/issues>. Por favor, usa las plantillas — nos ahorrarán idas y venidas a ambos.
 
 ### ¿Cómo importo mis prompts existentes desde otra herramienta?
 
@@ -423,4 +423,4 @@ PromptPanel se apoya en:
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=tytsxai/PromptPanel&type=Date)](https://www.star-history.com/#tytsxai/PromptPanel&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=qilaidev/PromptPanel&type=Date)](https://www.star-history.com/#qilaidev/PromptPanel&Date)

@@ -167,7 +167,7 @@ Diese Trennung — **Zwischenablage als Garantie, Auto-Paste als Best-Effort** �
 
 ```bash
 # 1. Clone
-git clone https://github.com/tytsxai/PromptPanel.git
+git clone https://github.com/qilaidev/PromptPanel.git
 cd PromptPanel
 
 # 2. Build the .app bundle (signed ad-hoc by default)
@@ -359,7 +359,7 @@ PromptPanel folgt einer **bewusst kleinen** Roadmap. Das PRD listet Punkte auf, 
 - [ ] „Letzten Eintrag wiederholen" per einem Tastendruck
 - [ ] Variablen-Templates (im Stil `{{name}}`) — nur wenn es sich hinzufügen lässt, ohne den Hauptpfad zu verlangsamen
 
-Siehe [docs/路线图与贡献指南.md](docs/路线图与贡献指南.md) für die Priorisierungsregeln, [CHANGELOG.md](CHANGELOG.md) für das bereits Ausgelieferte und [issues](https://github.com/tytsxai/PromptPanel/issues) für die öffentliche Planung.
+Siehe [docs/路线图与贡献指南.md](docs/路线图与贡献指南.md) für die Priorisierungsregeln, [CHANGELOG.md](CHANGELOG.md) für das bereits Ausgelieferte und [issues](https://github.com/qilaidev/PromptPanel/issues) für die öffentliche Planung.
 
 ## Häufig gestellte Fragen
 
@@ -391,7 +391,7 @@ Die heißesten Pfade in diesem Produkt (Timing des globalen Tastenkürzels, Foku
 
 ### Wie melde ich einen Bug oder wünsche mir eine Funktion?
 
-Öffne ein Issue: <https://github.com/tytsxai/PromptPanel/issues>. Bitte nutze die Vorlagen — sie ersparen uns beiden Rückfragen.
+Öffne ein Issue: <https://github.com/qilaidev/PromptPanel/issues>. Bitte nutze die Vorlagen — sie ersparen uns beiden Rückfragen.
 
 ### Wie importiere ich meine bestehenden Prompts aus einem anderen Tool?
 
@@ -424,4 +424,4 @@ PromptPanel steht auf:
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=tytsxai/PromptPanel&type=Date)](https://www.star-history.com/#tytsxai/PromptPanel&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=qilaidev/PromptPanel&type=Date)](https://www.star-history.com/#qilaidev/PromptPanel&Date)

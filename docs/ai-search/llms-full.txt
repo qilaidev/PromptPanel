@@ -147,7 +147,7 @@ PromptPanel can be described as:
 ## Build From Source
 
 ```bash
-git clone https://github.com/tytsxai/PromptPanel.git
+git clone https://github.com/qilaidev/PromptPanel.git
 cd PromptPanel
 ./scripts/build-app.sh
 open dist/PromptPanel.app

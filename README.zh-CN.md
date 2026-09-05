@@ -166,7 +166,7 @@ PromptPanel **永远不会**加入云同步、团队协作、复杂工作流编�
 
 ```bash
 # 1. 克隆
-git clone https://github.com/tytsxai/PromptPanel.git
+git clone https://github.com/qilaidev/PromptPanel.git
 cd PromptPanel
 
 # 2. 打 .app 包（默认 ad-hoc 签名）
@@ -377,7 +377,7 @@ PromptPanel 走的是**刻意收敛**的路线。PRD 已经把"永不做"列出�
 - [ ] 一键"重复执行上一条词条"
 - [ ] 变量模板（`{{name}}`）—— 仅当不拖累主链路时才做
 
-优先级和取舍规则见 [docs/路线图与贡献指南.md](docs/路线图与贡献指南.md)，已发布内容看 [CHANGELOG.md](CHANGELOG.md)，公开规划看 [issues](https://github.com/tytsxai/PromptPanel/issues)。
+优先级和取舍规则见 [docs/路线图与贡献指南.md](docs/路线图与贡献指南.md)，已发布内容看 [CHANGELOG.md](CHANGELOG.md)，公开规划看 [issues](https://github.com/qilaidev/PromptPanel/issues)。
 
 ## 常见问题
 
@@ -444,7 +444,7 @@ rm -rf ~/Library/Logs/PromptPanel                   # 运行日志
 
 ### 怎么报 bug 或提需求？
 
-提 issue：<https://github.com/tytsxai/PromptPanel/issues>，请用模板，能减少很多来回。
+提 issue：<https://github.com/qilaidev/PromptPanel/issues>，请用模板，能减少很多来回。
 
 ### 怎么从其他工具导入已有 Prompt？
 
@@ -477,4 +477,4 @@ PromptPanel 站在以下肩膀上：
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=tytsxai/PromptPanel&type=Date)](https://www.star-history.com/#tytsxai/PromptPanel&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=qilaidev/PromptPanel&type=Date)](https://www.star-history.com/#qilaidev/PromptPanel&Date)

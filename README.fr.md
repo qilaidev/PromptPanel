@@ -167,7 +167,7 @@ Cette séparation — **le presse-papiers comme garantie, le collage automatique
 
 ```bash
 # 1. Clone
-git clone https://github.com/tytsxai/PromptPanel.git
+git clone https://github.com/qilaidev/PromptPanel.git
 cd PromptPanel
 
 # 2. Build the .app bundle (signed ad-hoc by default)
@@ -359,7 +359,7 @@ PromptPanel suit une feuille de route **délibérément réduite**. Le PRD liste
 - [ ] « Répéter la dernière entrée » en un geste
 - [ ] Templates avec variables (style `{{name}}`) — uniquement si cela peut être ajouté sans ralentir la chaîne principale
 
-Voir [docs/路线图与贡献指南.md](docs/路线图与贡献指南.md) pour les règles de priorisation, [CHANGELOG.md](CHANGELOG.md) pour ce qui a été livré, et les [issues](https://github.com/tytsxai/PromptPanel/issues) pour la planification publique.
+Voir [docs/路线图与贡献指南.md](docs/路线图与贡献指南.md) pour les règles de priorisation, [CHANGELOG.md](CHANGELOG.md) pour ce qui a été livré, et les [issues](https://github.com/qilaidev/PromptPanel/issues) pour la planification publique.
 
 ## Questions fréquentes
 
@@ -391,7 +391,7 @@ Les chemins les plus critiques de ce produit (timing du raccourci global, restau
 
 ### Comment signaler un bug ou demander une fonctionnalité ?
 
-Ouvrez une issue : <https://github.com/tytsxai/PromptPanel/issues>. Merci d'utiliser les templates — ils nous éviteront à tous deux des allers-retours.
+Ouvrez une issue : <https://github.com/qilaidev/PromptPanel/issues>. Merci d'utiliser les templates — ils nous éviteront à tous deux des allers-retours.
 
 ### Comment importer mes prompts existants depuis un autre outil ?
 
@@ -424,4 +424,4 @@ PromptPanel repose sur :
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=tytsxai/PromptPanel&type=Date)](https://www.star-history.com/#tytsxai/PromptPanel&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=qilaidev/PromptPanel&type=Date)](https://www.star-history.com/#qilaidev/PromptPanel&Date)

@@ -166,7 +166,7 @@ PromptPanel은 이 모든 것을, 여러분이 완전히 소유하는 로컬 SQL
 
 ```bash
 # 1. Clone
-git clone https://github.com/tytsxai/PromptPanel.git
+git clone https://github.com/qilaidev/PromptPanel.git
 cd PromptPanel
 
 # 2. Build the .app bundle (signed ad-hoc by default)
@@ -358,7 +358,7 @@ PromptPanel은 **의도적으로 작은** 로드맵을 따릅니다. PRD에는 �
 - [ ] 원탭 "마지막 항목 반복"
 - [ ] 변수 템플릿 (`{{name}}` 형식) — 메인 링크를 느리게 하지 않고 추가할 수 있는 경우에만
 
-우선순위 규칙은 [docs/路线图与贡献指南.md](docs/路线图与贡献指南.md), 배포된 내용은 [CHANGELOG.md](CHANGELOG.md), 공개 계획은 [issues](https://github.com/tytsxai/PromptPanel/issues)를 참고하세요.
+우선순위 규칙은 [docs/路线图与贡献指南.md](docs/路线图与贡献指南.md), 배포된 내용은 [CHANGELOG.md](CHANGELOG.md), 공개 계획은 [issues](https://github.com/qilaidev/PromptPanel/issues)를 참고하세요.
 
 ## 자주 묻는 질문
 
@@ -390,7 +390,7 @@ PromptPanel은 **의도적으로 작은** 로드맵을 따릅니다. PRD에는 �
 
 ### 버그를 신고하거나 기능을 요청하려면 어떻게 하나요?
 
-이슈를 여세요: <https://github.com/tytsxai/PromptPanel/issues>. 템플릿을 사용해 주세요 — 서로의 왕복을 줄여 줍니다.
+이슈를 여세요: <https://github.com/qilaidev/PromptPanel/issues>. 템플릿을 사용해 주세요 — 서로의 왕복을 줄여 줍니다.
 
 ### 다른 도구의 기존 프롬프트를 어떻게 가져오나요?
 
@@ -423,4 +423,4 @@ PromptPanel은 다음 위에 서 있습니다:
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=tytsxai/PromptPanel&type=Date)](https://www.star-history.com/#tytsxai/PromptPanel&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=qilaidev/PromptPanel&type=Date)](https://www.star-history.com/#qilaidev/PromptPanel&Date)

@@ -75,7 +75,7 @@ Important links:
 
 Canonical repository:
 
-- https://github.com/tytsxai/PromptPanel
+- https://github.com/qilaidev/PromptPanel
 
 Useful search phrases:
 

@@ -167,7 +167,7 @@ PromptPanel はそのすべてを、あなたが完全に所有するローカ�
 
 ```bash
 # 1. Clone
-git clone https://github.com/tytsxai/PromptPanel.git
+git clone https://github.com/qilaidev/PromptPanel.git
 cd PromptPanel
 
 # 2. Build the .app bundle (signed ad-hoc by default)
@@ -359,7 +359,7 @@ PromptPanel は **意図的に小さい** ロードマップに従います。PR
 - [ ] ワンタップの「最後のエントリを繰り返す」
 - [ ] 変数テンプレート（`{{name}}` 形式）— メインリンクを遅くせずに追加できる場合のみ
 
-優先順位付けのルールは [docs/路线图与贡献指南.md](docs/路线图与贡献指南.md)、出荷済みの内容は [CHANGELOG.md](CHANGELOG.md)、公開計画は [issues](https://github.com/tytsxai/PromptPanel/issues) を参照してください。
+優先順位付けのルールは [docs/路线图与贡献指南.md](docs/路线图与贡献指南.md)、出荷済みの内容は [CHANGELOG.md](CHANGELOG.md)、公開計画は [issues](https://github.com/qilaidev/PromptPanel/issues) を参照してください。
 
 ## よくある質問 / Frequently asked questions
 
@@ -391,7 +391,7 @@ PromptPanel は **意図的に小さい** ロードマップに従います。PR
 
 ### バグ報告や機能リクエストはどうすればいいですか？
 
-issue を開いてください: <https://github.com/tytsxai/PromptPanel/issues>。テンプレートを使ってください — お互いのやり取りを節約できます。
+issue を開いてください: <https://github.com/qilaidev/PromptPanel/issues>。テンプレートを使ってください — お互いのやり取りを節約できます。
 
 ### 他のツールから既存のプロンプトをインポートするには？
 
@@ -424,4 +424,4 @@ PromptPanel は以下の上に成り立っています:
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=tytsxai/PromptPanel&type=Date)](https://www.star-history.com/#tytsxai/PromptPanel&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=qilaidev/PromptPanel&type=Date)](https://www.star-history.com/#qilaidev/PromptPanel&Date)

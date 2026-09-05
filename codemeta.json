@@ -12,8 +12,8 @@
   "description": "PromptPanel (项目快贴) is an open-source, local-first native macOS prompt manager, AI prompt launcher, and snippet launcher for ChatGPT, Claude, Cursor, Copilot, VS Code, Terminal, browser, and ordinary text-field workflows. It stores reusable prompts, code snippets, templates, and instructions locally in SQLite, opens a keyboard-first global hotkey panel, writes selected content to the clipboard first, and attempts automatic paste through macOS Accessibility when allowed. The application interface is currently Simplified Chinese only; the documentation is published in eight languages.",
   "version": "1.4.0",
   "datePublished": "2026-09-02",
-  "codeRepository": "https://github.com/tytsxai/PromptPanel",
-  "issueTracker": "https://github.com/tytsxai/PromptPanel/issues",
+  "codeRepository": "https://github.com/qilaidev/PromptPanel",
+  "issueTracker": "https://github.com/qilaidev/PromptPanel/issues",
   "license": "https://spdx.org/licenses/MIT.html",
   "programmingLanguage": "Swift",
   "runtimePlatform": "macOS",
@@ -23,10 +23,10 @@
   "applicationSuite": "AI productivity tools",
   "developmentStatus": "active",
   "inLanguage": "zh-Hans",
-  "softwareHelp": "https://github.com/tytsxai/PromptPanel/blob/main/docs/FAQ.md",
-  "releaseNotes": "https://github.com/tytsxai/PromptPanel/blob/main/CHANGELOG.md",
-  "readme": "https://github.com/tytsxai/PromptPanel/blob/main/README.md",
-  "downloadUrl": "https://github.com/tytsxai/PromptPanel/releases",
+  "softwareHelp": "https://github.com/qilaidev/PromptPanel/blob/main/docs/FAQ.md",
+  "releaseNotes": "https://github.com/qilaidev/PromptPanel/blob/main/CHANGELOG.md",
+  "readme": "https://github.com/qilaidev/PromptPanel/blob/main/README.md",
+  "downloadUrl": "https://github.com/qilaidev/PromptPanel/releases",
   "keywords": [
     "macos",
     "swift",
@@ -104,14 +104,14 @@
     {
       "@type": "Person",
       "givenName": "tytsxai",
-      "url": "https://github.com/tytsxai"
+      "url": "https://github.com/qilaidev"
     }
   ],
   "maintainer": [
     {
       "@type": "Person",
       "givenName": "tytsxai",
-      "url": "https://github.com/tytsxai"
+      "url": "https://github.com/qilaidev"
     }
   ]
 }

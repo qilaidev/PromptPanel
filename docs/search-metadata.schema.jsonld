@@ -6,7 +6,7 @@
         "SoftwareApplication",
         "SoftwareSourceCode"
       ],
-      "@id": "https://github.com/tytsxai/PromptPanel#software",
+      "@id": "https://github.com/qilaidev/PromptPanel#software",
       "name": "PromptPanel",
       "alternateName": [
         "PromptPanel macOS prompt launcher",
@@ -17,13 +17,13 @@
         "项目快贴"
       ],
       "description": "PromptPanel (项目快贴) is an open-source, local-first native macOS prompt manager, AI prompt launcher, and snippet launcher for ChatGPT, Claude, Cursor, Copilot, VS Code, Terminal, browser, and ordinary text-field workflows. It stores reusable prompts, code snippets, templates, and instructions locally in SQLite, opens a keyboard-first global hotkey panel, writes selected content to the clipboard first, and attempts automatic paste through macOS Accessibility when allowed. The application interface is currently Simplified Chinese only; the documentation is published in eight languages.",
-      "url": "https://github.com/tytsxai/PromptPanel",
+      "url": "https://github.com/qilaidev/PromptPanel",
       "inLanguage": "zh-Hans",
-      "softwareHelp": "https://github.com/tytsxai/PromptPanel/blob/main/docs/FAQ.md",
-      "discussionUrl": "https://github.com/tytsxai/PromptPanel/issues",
-      "codeRepository": "https://github.com/tytsxai/PromptPanel",
-      "downloadUrl": "https://github.com/tytsxai/PromptPanel/releases",
-      "releaseNotes": "https://github.com/tytsxai/PromptPanel/blob/main/CHANGELOG.md",
+      "softwareHelp": "https://github.com/qilaidev/PromptPanel/blob/main/docs/FAQ.md",
+      "discussionUrl": "https://github.com/qilaidev/PromptPanel/issues",
+      "codeRepository": "https://github.com/qilaidev/PromptPanel",
+      "downloadUrl": "https://github.com/qilaidev/PromptPanel/releases",
+      "releaseNotes": "https://github.com/qilaidev/PromptPanel/blob/main/CHANGELOG.md",
       "license": "https://spdx.org/licenses/MIT.html",
       "applicationCategory": "DeveloperApplication",
       "applicationSubCategory": "Prompt manager and snippet launcher",
@@ -96,18 +96,18 @@
       "author": {
         "@type": "Person",
         "name": "tytsxai",
-        "url": "https://github.com/tytsxai"
+        "url": "https://github.com/qilaidev"
       },
       "screenshot": [
-        "https://raw.githubusercontent.com/tytsxai/PromptPanel/main/docs/ui-qa/latest/panel-light.png",
-        "https://raw.githubusercontent.com/tytsxai/PromptPanel/main/docs/ui-qa/latest/panel-dark.png",
-        "https://raw.githubusercontent.com/tytsxai/PromptPanel/main/docs/ui-qa/latest/library-dark.png",
-        "https://raw.githubusercontent.com/tytsxai/PromptPanel/main/docs/ui-qa/latest/settings-dark.png"
+        "https://raw.githubusercontent.com/qilaidev/PromptPanel/main/docs/ui-qa/latest/panel-light.png",
+        "https://raw.githubusercontent.com/qilaidev/PromptPanel/main/docs/ui-qa/latest/panel-dark.png",
+        "https://raw.githubusercontent.com/qilaidev/PromptPanel/main/docs/ui-qa/latest/library-dark.png",
+        "https://raw.githubusercontent.com/qilaidev/PromptPanel/main/docs/ui-qa/latest/settings-dark.png"
       ]
     },
     {
       "@type": "FAQPage",
-      "@id": "https://github.com/tytsxai/PromptPanel#faq",
+      "@id": "https://github.com/qilaidev/PromptPanel#faq",
       "mainEntity": [
         {
           "@type": "Question",

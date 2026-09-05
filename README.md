@@ -166,7 +166,7 @@ This separation — **clipboard as guarantee, auto-paste as best-effort** — is
 
 ```bash
 # 1. Clone
-git clone https://github.com/tytsxai/PromptPanel.git
+git clone https://github.com/qilaidev/PromptPanel.git
 cd PromptPanel
 
 # 2. Build the .app bundle (signed ad-hoc by default)
@@ -395,7 +395,7 @@ PromptPanel follows a **deliberately small** roadmap. The PRD lists items that a
 - [ ] One-tap "repeat last entry"
 - [ ] Variable templates (`{{name}}` style) — only if it can be added without slowing the main link
 
-See [docs/路线图与贡献指南.md](docs/路线图与贡献指南.md) for prioritization rules, [CHANGELOG.md](CHANGELOG.md) for what's shipped, and [issues](https://github.com/tytsxai/PromptPanel/issues) for public planning.
+See [docs/路线图与贡献指南.md](docs/路线图与贡献指南.md) for prioritization rules, [CHANGELOG.md](CHANGELOG.md) for what's shipped, and [issues](https://github.com/qilaidev/PromptPanel/issues) for public planning.
 
 ## Frequently asked questions
 
@@ -450,7 +450,7 @@ The hottest paths in this product (global hotkey timing, focus restoration, synt
 
 ### How do I report a bug or request a feature?
 
-Open an issue: <https://github.com/tytsxai/PromptPanel/issues>. Please use the templates — they'll save us both round-trips.
+Open an issue: <https://github.com/qilaidev/PromptPanel/issues>. Please use the templates — they'll save us both round-trips.
 
 ### How do I import my existing prompts from another tool?
 
@@ -483,4 +483,4 @@ PromptPanel stands on:
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=tytsxai/PromptPanel&type=Date)](https://www.star-history.com/#tytsxai/PromptPanel&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=qilaidev/PromptPanel&type=Date)](https://www.star-history.com/#qilaidev/PromptPanel&Date)

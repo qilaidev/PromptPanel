@@ -230,12 +230,12 @@ First public release. Aligns the `Info.plist`, `codemeta.json`, and `docs/search
 
 - No remote authentication, telemetry, or cloud sync paths are introduced. Prompt content remains local in SQLite; the only network traffic is the optional Sparkle update check.
 
-[Unreleased]: https://github.com/tytsxai/PromptPanel/compare/v1.4.0...HEAD
-[1.4.0]: https://github.com/tytsxai/PromptPanel/compare/v1.3.0...v1.4.0
-[1.3.0]: https://github.com/tytsxai/PromptPanel/compare/v1.2.0...v1.3.0
-[1.2.0]: https://github.com/tytsxai/PromptPanel/compare/v1.1.2...v1.2.0
-[1.1.2]: https://github.com/tytsxai/PromptPanel/compare/v1.1.1...v1.1.2
-[1.1.1]: https://github.com/tytsxai/PromptPanel/compare/v1.1.0...v1.1.1
-[1.1.0]: https://github.com/tytsxai/PromptPanel/compare/v1.0.1...v1.1.0
-[1.0.1]: https://github.com/tytsxai/PromptPanel/compare/v1.0.0...v1.0.1
-[1.0.0]: https://github.com/tytsxai/PromptPanel/releases/tag/v1.0.0
+[Unreleased]: https://github.com/qilaidev/PromptPanel/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/qilaidev/PromptPanel/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/qilaidev/PromptPanel/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/qilaidev/PromptPanel/compare/v1.1.2...v1.2.0
+[1.1.2]: https://github.com/qilaidev/PromptPanel/compare/v1.1.1...v1.1.2
+[1.1.1]: https://github.com/qilaidev/PromptPanel/compare/v1.1.0...v1.1.1
+[1.1.0]: https://github.com/qilaidev/PromptPanel/compare/v1.0.1...v1.1.0
+[1.0.1]: https://github.com/qilaidev/PromptPanel/compare/v1.0.0...v1.0.1
+[1.0.0]: https://github.com/qilaidev/PromptPanel/releases/tag/v1.0.0
