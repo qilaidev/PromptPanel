@@ -215,6 +215,28 @@ if [[ -x /usr/libexec/PlistBuddy ]]; then
     check_contains "codemeta.json" "\"version\": \"$app_short_version\""
     check_contains "docs/search-metadata.schema.jsonld" "\"softwareVersion\": \"$app_short_version\""
 
+    # The reader-facing version surfaces drifted to 1.1.2 while the two machine-readable ones
+    # above stayed current, because only those two were gated. A stale release badge on the
+    # landing page is the cheapest credibility loss this repository can take, so the whole set
+    # is checked: every README badge, the AI-search index, the FAQ, and the Info.plist table.
+    reader_version_surfaces=(
+        "llms.txt"
+        "docs/FAQ.md"
+        "docs/配置说明.md"
+        "README.md"
+        "README.zh-CN.md"
+        "README.zh-TW.md"
+        "README.ja.md"
+        "README.ko.md"
+        "README.es.md"
+        "README.fr.md"
+        "README.de.md"
+    )
+    for file in "${reader_version_surfaces[@]}"; do
+        grep -Fq -- "$app_short_version" "$file" \
+            || fail "$file does not state the current version $app_short_version (Info.plist is authoritative)"
+    done
+
     # Minimum macOS version must agree across the three surfaces that promise it. Drift here
     # would let a build claim 14.0 in Info.plist while documentation says otherwise.
     info_plist_min_macos="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' Sources/PromptPanel/Resources/Info.plist)"
