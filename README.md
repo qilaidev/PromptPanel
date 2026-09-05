@@ -41,6 +41,29 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 | 界面语言 / UI language | **应用界面目前只有简体中文**（`CFBundleDevelopmentRegion = zh-Hans`，无本地化资源）。The app UI is currently **Simplified Chinese only**; documentation is available in 8 languages. 你存储的 prompt 内容本身不限语言。 |
 | 限制 / Limits | 仅支持 macOS 14+；应用界面仅简体中文；当前 Release 暂无已公证二进制包；无云同步、无团队协作、无 Windows/Linux 版本；自动粘贴依赖 macOS Accessibility 权限。 |
 
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/ui-qa/latest/panel-light.png" alt="PromptPanel quick panel — global hotkey prompt search on macOS, light theme" /></td>
+    <td width="50%"><img src="docs/ui-qa/latest/panel-dark.png" alt="PromptPanel quick panel — AI prompt launcher for ChatGPT and Claude, dark theme" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Quick panel (light) — hotkey, search, Enter</sub></td>
+    <td align="center"><sub>Quick panel (dark) — 560 × 700 portrait launcher</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/ui-qa/latest/library-dark.png" alt="PromptPanel library — local SQLite prompt library with projects, tags, and preview" /></td>
+    <td width="50%"><img src="docs/ui-qa/latest/settings-dark.png" alt="PromptPanel settings — hotkey, theme, permissions, backup, and import/export" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Library (内容库) — projects, entries, preview</sub></td>
+    <td align="center"><sub>Settings (设置) — hotkey, theme, permissions, maintenance</sub></td>
+  </tr>
+</table>
+
+<sub>Captured by `./scripts/capture-ui-qa.sh`; the app UI is Simplified Chinese only — see the [UI label map](#ui-label-map-chinese-ui--english).</sub>
+
 ## PromptPanel 是什么？ / What is PromptPanel?
 
 **PromptPanel（项目快贴）** 是一款开源、原生的 **macOS Prompt 管理工具** 和 **snippet launcher**。它围绕一条很短的 AI 工作流设计：在任何前台应用中按快捷键，搜索本地 Prompt 库，按 `Enter`，内容先写入系统剪贴板，再尽力自动粘贴进当前输入框。没有账号、没有云同步、没有遥测，核心数据留在你自己的 Mac 上。
@@ -211,7 +234,22 @@ Assuming the app is built and running (menu-bar icon visible):
 
 Notes: only the first `#tag` token in a query is used as a tag filter, and the tag must match **exactly and case-sensitively** (`#SQL` will not match a `sql` tag); search results are capped at 100 rows; text matching is prefix-based, so a term from the *middle* of a word (or of an unspaced CJK run) will not match.
 
-You can switch the active project from inside the panel without opening the main window — keyboard-only, no detour. `⌘1`–`⌘9` execute the first nine rows directly; `⌘C` copies without pasting; `⌘P` pins the panel open; `Esc` dismisses.
+You can switch the active project from inside the panel without opening the main window — keyboard-only, no detour.
+
+### Keyboard shortcuts
+
+| Key | Where | What it does |
+|---|---|---|
+| `⌥2` (default, rebindable) | anywhere | Toggle the quick panel — same key dismisses it |
+| `↑` / `↓` | panel | Move the selection |
+| `↵` | panel | Execute: copy to clipboard, then best-effort auto-paste |
+| `⌘1`–`⌘9` | panel | Execute the Nth row directly (the number badges are shown while the search box is empty) |
+| `⌘C` | panel | Copy the selected entry without pasting |
+| `⌘P` | panel | Pin the panel open (it stops closing when it loses focus) |
+| `Esc` / `✕` | panel | Dismiss |
+| `⌘F` | main window | Focus the library search field |
+| `⇧⌘C` | main window | Copy the selected entry (plain `⌘C` is left to the selectable preview pane) |
+| `⌘E` | main window | Edit the selected entry |
 
 ## Configuration
 

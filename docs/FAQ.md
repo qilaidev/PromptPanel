@@ -71,6 +71,23 @@ so an entry counts for half as much after every 90 idle days. Frequently used pr
 
 Manual sort order (`sort_order`) was retired in v1.3.0 — no UI ever wrote it, and imported values pinned entries to the top permanently. Use **置顶** (pin) from an entry's context menu instead. The library window has its own display sort (`设置 → 偏好 → 词条排序`: 按使用 / 按等级 / 按最近 / 按字母), which affects only that list.
 
+## Which keyboard shortcuts does PromptPanel have? / 有哪些快捷键？
+
+| Key | Where | Action |
+| --- | --- | --- |
+| `⌥2` (default, rebindable) | anywhere | Toggle the quick panel |
+| `↑` / `↓` | panel | Move the selection |
+| `↵` | panel | Execute — clipboard write, then best-effort auto-paste |
+| `⌘1`–`⌘9` | panel | Execute the Nth row (badges shown while the query is empty) |
+| `⌘C` | panel | Copy without pasting |
+| `⌘P` | panel | Pin the panel open |
+| `Esc` / `✕` | panel | Dismiss |
+| `⌘F` | main window | Focus the library search field |
+| `⇧⌘C` | main window | Copy the selected entry |
+| `⌘E` | main window | Edit the selected entry |
+
+Copy in the main window is `⇧⌘C` rather than `⌘C` on purpose: the preview pane's text is selectable, so plain `⌘C` is left to normal text selection.
+
 ## How do I change the global hotkey? / 快捷键冲突怎么办？
 
 Open `设置 → 偏好 → 快捷键 → 呼出面板` (Settings → Preferences → Hotkey → Toggle panel) and record a new combination. The default is `⌥2`. There is exactly one hotkey for the panel, and pressing it again while the panel is open dismisses it.

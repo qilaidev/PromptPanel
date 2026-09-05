@@ -41,6 +41,29 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 | UI 언어 / UI language | **앱 인터페이스는 현재 간체 중국어만 지원**합니다(`CFBundleDevelopmentRegion = zh-Hans`, 현지화 리소스와 앱 내 언어 전환 없음). 문서는 8개 언어로 제공되며 `README.md`에 중국어→영어 UI 레이블 대응표가 있습니다. 저장하는 프롬프트 내용 자체는 언어 제한이 없습니다. |
 | 제한 사항 / Limits | macOS 14+ 만 지원. UI는 간체 중국어만 지원. 현재 릴리스에는 공증된 바이너리 패키지가 아직 없음. 클라우드 동기화 없음, 팀 협업 없음, Windows/Linux 버전 없음. 변수 템플릿 미지원. 자동 붙여넣기는 macOS Accessibility 권한에 의존함. |
 
+## 스크린샷 / Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/ui-qa/latest/panel-light.png" alt="PromptPanel 퀵 패널 — macOS 전역 단축키 프롬프트 검색, 라이트 테마" /></td>
+    <td width="50%"><img src="docs/ui-qa/latest/panel-dark.png" alt="PromptPanel 퀵 패널 — ChatGPT / Claude용 AI 프롬프트 런처, 다크 테마" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>퀵 패널(라이트) — 단축키 → 검색 → Enter</sub></td>
+    <td align="center"><sub>퀵 패널(다크) — 560 × 700 세로형 런처</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/ui-qa/latest/library-dark.png" alt="PromptPanel 라이브러리 — 프로젝트, 태그, 미리보기를 갖춘 로컬 SQLite 프롬프트 라이브러리" /></td>
+    <td width="50%"><img src="docs/ui-qa/latest/settings-dark.png" alt="PromptPanel 설정 — 단축키, 테마, 권한, 백업 및 가져오기/내보내기" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>라이브러리(内容库) — 프로젝트 / 항목 / 미리보기</sub></td>
+    <td align="center"><sub>설정(设置) — 단축키, 테마, 권한, 유지보수</sub></td>
+  </tr>
+</table>
+
+<sub>`./scripts/capture-ui-qa.sh`로 캡처했습니다. 앱 UI는 현재 간체 중국어만 지원합니다.</sub>
+
 ## PromptPanel이란? / What is PromptPanel?
 
 **PromptPanel(项目快贴)**은 오픈 소스, 네이티브 **macOS 프롬프트 관리 도구**이자 **snippet launcher**입니다. 아주 짧은 AI 워크플로 하나를 중심으로 설계되었습니다. 즉, 임의의 포그라운드 앱에서 단축키를 누르고, 로컬 프롬프트 라이브러리를 검색한 뒤 `Enter`를 누르면, 내용이 먼저 시스템 클립보드에 기록되고, 이어서 현재 입력 필드에 최선을 다해 자동으로 붙여넣어집니다. 계정도, 클라우드 동기화도, 텔레메트리도 없으며 핵심 데이터는 여러분의 Mac에 그대로 남습니다.

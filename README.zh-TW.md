@@ -39,6 +39,29 @@ PromptPanel 是一款本地優先的 **macOS Prompt 管理器**、**AI Prompt �
 | 介面語言 | 應用程式介面目前**只有簡體中文**（`CFBundleDevelopmentRegion = zh-Hans`，沒有在地化資源，也沒有語言切換入口）。繁體中文使用者看到的會是簡體介面。文件為中英雙語、共 8 個語言版本；詞條內容本身不限語言。 |
 | 限制邊界 | 僅支援 macOS 14+；介面僅簡體中文；目前 Release 暫無已公證二進位套件；無雲端同步、無團隊協作、無 Windows/Linux 版本；暫不支援變數範本；自動貼上依賴 macOS Accessibility。 |
 
+## 介面截圖 / Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/ui-qa/latest/panel-light.png" alt="PromptPanel 專案快貼 快捷面板 — macOS 全域快捷鍵 Prompt 搜尋，淺色主題" /></td>
+    <td width="50%"><img src="docs/ui-qa/latest/panel-dark.png" alt="PromptPanel 專案快貼 快捷面板 — ChatGPT / Claude Prompt 啟動器，深色主題" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>快捷面板（淺色）— 快捷鍵 → 搜尋 → Enter</sub></td>
+    <td align="center"><sub>快捷面板（深色）— 560 × 700 直式啟動器</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/ui-qa/latest/library-dark.png" alt="PromptPanel 內容庫 — 本地 SQLite Prompt 庫，支援專案隔離、標籤與預覽" /></td>
+    <td width="50%"><img src="docs/ui-qa/latest/settings-dark.png" alt="PromptPanel 設定 — 快捷鍵、主題、權限、備份與匯入匯出" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>內容庫 — 專案、詞條、預覽三欄</sub></td>
+    <td align="center"><sub>設定 — 快捷鍵、主題、權限、維護</sub></td>
+  </tr>
+</table>
+
+<sub>由 `./scripts/capture-ui-qa.sh` 產生。應用介面目前僅簡體中文。</sub>
+
 ## PromptPanel 是什麼？
 
 **PromptPanel（项目快贴）** 是一款開源的 **macOS 原生 Prompt 管理工具 / 片段啟動器**，專門圍繞 AI 使用者的真實工作流設計。在任何前景應用裡——不管是 ChatGPT、Claude、Cursor、VS Code、Terminal，還是瀏覽器——按下你設定的全域快捷鍵，一個輕量面板立刻浮現。打幾個字、Enter，內容就落進目前輸入框。**不需要帳號、不上雲、不依賴任何同步服務。** 你的所有 Prompt 都只在這台 Mac 上。

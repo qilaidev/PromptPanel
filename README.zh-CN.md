@@ -39,6 +39,29 @@ PromptPanel 是一款本地优先的 **macOS Prompt 管理器**、**AI Prompt �
 | 界面语言 | 应用界面目前只有**简体中文**（`CFBundleDevelopmentRegion = zh-Hans`，无本地化资源与语言切换入口）。文档为中英双语、共 8 个语言版本。词条内容本身不限语言。 |
 | 限制边界 | 仅支持 macOS 14+；界面仅简体中文；当前 Release 暂无已公证二进制包；无云同步、无团队协作、无 Windows/Linux 版本；暂不支持变量模板；自动粘贴依赖 macOS Accessibility。 |
 
+## 界面截图 / Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/ui-qa/latest/panel-light.png" alt="PromptPanel 项目快贴 快捷面板 — macOS 全局快捷键 Prompt 搜索，浅色主题" /></td>
+    <td width="50%"><img src="docs/ui-qa/latest/panel-dark.png" alt="PromptPanel 项目快贴 快捷面板 — ChatGPT / Claude Prompt 启动器，深色主题" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>快捷面板（浅色）— 快捷键 → 搜索 → Enter</sub></td>
+    <td align="center"><sub>快捷面板（深色）— 560 × 700 竖版启动器</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/ui-qa/latest/library-dark.png" alt="PromptPanel 内容库 — 本地 SQLite Prompt 库，支持项目隔离、标签与预览" /></td>
+    <td width="50%"><img src="docs/ui-qa/latest/settings-dark.png" alt="PromptPanel 设置 — 快捷键、主题、权限、备份与导入导出" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>内容库 — 项目、词条、预览三栏</sub></td>
+    <td align="center"><sub>设置 — 快捷键、主题、权限、维护</sub></td>
+  </tr>
+</table>
+
+<sub>由 `./scripts/capture-ui-qa.sh` 生成。应用界面目前仅简体中文。</sub>
+
 ## PromptPanel 是什么？
 
 **PromptPanel（项目快贴）** 是一款开源的 **macOS 原生 Prompt 管理工具 / 片段启动器**，专门围绕 AI 用户的真实工作流设计。在任何前台应用里——不管是 ChatGPT、Claude、Cursor、VS Code、终端，还是浏览器——按下你设置的全局快捷键，一个轻量面板立刻浮现。打几个字、回车，内容就落进当前输入框。**不需要账号、不上云、不依赖任何同步服务。** 你的所有 Prompt 都只在这台 Mac 上。
@@ -193,7 +216,23 @@ open dist/PromptPanel.app
 
 注意：一次查询只取**第一个** `#tag` 作为标签过滤，且标签是**精确、区分大小写**匹配（`#SQL` 匹配不到 `sql` 标签）；搜索结果上限 100 条；文本匹配是前缀式的，所以从词中间截取的片段（包括中文连写串的中段）匹配不到。
 
-切换当前项目可以直接在面板内完成，不必打开主窗口——纯键盘，零绕路。`⌘1`–`⌘9` 直达前九行，`⌘C` 只复制不粘贴，`⌘P` 固定面板，`Esc` 关闭。
+切换当前项目可以直接在面板内完成，不必打开主窗口——纯键盘，零绕路。
+
+### 键盘快捷键 / Keyboard shortcuts
+
+| 按键 | 位置 | 作用 |
+|---|---|---|
+| `⌥2`（默认，可改） | 全局 | 呼出／收起快捷面板，同一组合键切换 |
+| `↑` / `↓` | 面板 | 上下移动选中项 |
+| `↵` | 面板 | 执行：先写入剪贴板，再尽力自动粘贴 |
+| `⌘1`–`⌘9` | 面板 | 直达执行第 N 行（搜索框为空时显示序号） |
+| `⌘C` | 面板 | 仅复制选中词条，不粘贴 |
+| `⌘P` | 面板 | 固定面板（失焦不再自动关闭） |
+| `Esc` / `✕` | 面板 | 关闭面板 |
+| `⌘F` | 主窗口 | 聚焦内容库搜索框 |
+| `⇧⌘C` | 主窗口 | 复制选中词条（普通 `⌘C` 留给可选中的预览区） |
+| `⌘E` | 主窗口 | 编辑选中词条 |
+
 
 ## 配置
 

@@ -97,7 +97,13 @@
         "@type": "Person",
         "name": "tytsxai",
         "url": "https://github.com/tytsxai"
-      }
+      },
+      "screenshot": [
+        "https://raw.githubusercontent.com/tytsxai/PromptPanel/main/docs/ui-qa/latest/panel-light.png",
+        "https://raw.githubusercontent.com/tytsxai/PromptPanel/main/docs/ui-qa/latest/panel-dark.png",
+        "https://raw.githubusercontent.com/tytsxai/PromptPanel/main/docs/ui-qa/latest/library-dark.png",
+        "https://raw.githubusercontent.com/tytsxai/PromptPanel/main/docs/ui-qa/latest/settings-dark.png"
+      ]
     },
     {
       "@type": "FAQPage",

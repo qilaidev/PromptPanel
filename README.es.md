@@ -41,6 +41,29 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 | Idioma de la interfaz / UI language | **La interfaz de la aplicación está actualmente solo en chino simplificado** (`CFBundleDevelopmentRegion = zh-Hans`; no hay recursos de localización ni selector de idioma dentro de la app). La documentación está disponible en 8 idiomas y `README.md` incluye una tabla de equivalencias chino→inglés de las etiquetas de la interfaz. El contenido de los prompts que guardes puede estar en cualquier idioma. |
 | Limitaciones / Limits | Solo compatible con macOS 14+; interfaz solo en chino simplificado; la Release actual aún no incluye un binario notarizado; sin sincronización en la nube, sin colaboración en equipo, sin versión para Windows/Linux; sin plantillas con variables; el pegado automático depende del permiso de Accessibility de macOS. |
 
+## Capturas de pantalla / Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/ui-qa/latest/panel-light.png" alt="Panel rápido de PromptPanel — búsqueda de prompts con atajo global en macOS, tema claro" /></td>
+    <td width="50%"><img src="docs/ui-qa/latest/panel-dark.png" alt="Panel rápido de PromptPanel — lanzador de prompts de IA para ChatGPT y Claude, tema oscuro" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Panel rápido (claro) — atajo → búsqueda → Enter</sub></td>
+    <td align="center"><sub>Panel rápido (oscuro) — lanzador vertical de 560 × 700</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/ui-qa/latest/library-dark.png" alt="Biblioteca de PromptPanel — biblioteca local de prompts en SQLite con proyectos, etiquetas y vista previa" /></td>
+    <td width="50%"><img src="docs/ui-qa/latest/settings-dark.png" alt="Ajustes de PromptPanel — atajo, tema, permisos, copia de seguridad e importación/exportación" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Biblioteca (内容库) — proyectos, entradas, vista previa</sub></td>
+    <td align="center"><sub>Ajustes (设置) — atajo, tema, permisos, mantenimiento</sub></td>
+  </tr>
+</table>
+
+<sub>Capturado con `./scripts/capture-ui-qa.sh`. La interfaz de la app está solo en chino simplificado.</sub>
+
 ## ¿Qué es PromptPanel? / What is PromptPanel?
 
 **PromptPanel (项目快贴)** es una **herramienta de gestión de prompts para macOS** y un **snippet launcher** de código abierto y nativos. Está diseñado en torno a un flujo de trabajo de IA muy corto: en cualquier aplicación en primer plano pulsas un atajo, buscas en tu biblioteca local de prompts, pulsas `Enter`, el contenido se escribe primero en el portapapeles del sistema y luego intenta pegarse automáticamente en el campo de texto activo. Sin cuentas, sin sincronización en la nube, sin telemetría: los datos principales permanecen en tu propio Mac.
