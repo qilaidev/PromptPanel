@@ -138,7 +138,7 @@ Distribution-correctness release. Nothing changes in how the app is used day to 
 
 - **10 UI-QA and draft screenshots (~5.9 MiB) deleted from the repository.** They are regenerable output of `capture-ui-qa.sh` and are now git-ignored; referencing docs and the Schema.org `screenshot` array were updated accordingly.
 
-## [1.1.1] - 2026-07-14
+## 1.1.1 - 2026-07-14
 
 Reliability, security-hardening, and documentation release. No end-user feature changes and no new default network paths: the app stays local-first, and the auto-update channel added here remains dormant unless a feed URL and signing key are configured at build time.
 
@@ -160,7 +160,7 @@ Reliability, security-hardening, and documentation release. No end-user feature 
 - **Hardened two force-unwraps** that could crash the app: the FTS search statement arguments in `EntryRepository.search` are now built with typed `StatementArguments` instead of a force-unwrapped `[Any]` conversion, and `LogRepository.cleanup` no longer force-unwraps the retention cutoff date.
 - **Keyboard-shortcut recorder no longer crashes on first use**: app-root symlinks to `Contents/Resources/*.bundle` are added after signing so the Swift 6 `Bundle.module` accessor resolves resources.
 
-## [1.1.0] - 2026-06-11
+## 1.1.0 - 2026-06-11
 
 First stable feature release after 1.0. Focus areas: lossless library migration, on-device diagnostics, and storage self-maintenance — all still local-first with no new network paths.
 
@@ -193,7 +193,7 @@ First stable feature release after 1.0. Focus areas: lossless library migration,
 
 - No new network paths. Import/export and diagnostics export operate purely on local files; Sparkle remains bundled but disabled (no feed configured, no update probe dispatched).
 
-## [1.0.1] - 2026-05-19
+## 1.0.1 - 2026-05-19
 
 ### Added
 
@@ -207,7 +207,7 @@ First stable feature release after 1.0. Focus areas: lossless library migration,
 
 Documentation-only release. No app behavior, hotkey, paste path, or storage format changes since 1.0.0.
 
-## [1.0.0] - 2026-05-17
+## 1.0.0 - 2026-05-17
 
 First public release. Aligns the `Info.plist`, `codemeta.json`, and `docs/search-metadata.schema.jsonld` version surfaces with the shipped artifact.
 
@@ -245,8 +245,4 @@ First public release. Aligns the `Info.plist`, `codemeta.json`, and `docs/search
 [1.4.0]: https://github.com/qilaidev/PromptPanel/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/qilaidev/PromptPanel/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/qilaidev/PromptPanel/compare/v1.1.2...v1.2.0
-[1.1.2]: https://github.com/qilaidev/PromptPanel/compare/v1.1.1...v1.1.2
-[1.1.1]: https://github.com/qilaidev/PromptPanel/compare/v1.1.0...v1.1.1
-[1.1.0]: https://github.com/qilaidev/PromptPanel/compare/v1.0.1...v1.1.0
-[1.0.1]: https://github.com/qilaidev/PromptPanel/compare/v1.0.0...v1.0.1
-[1.0.0]: https://github.com/qilaidev/PromptPanel/releases/tag/v1.0.0
+[1.1.2]: https://github.com/qilaidev/PromptPanel/releases/tag/v1.1.2
