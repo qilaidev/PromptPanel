@@ -11,7 +11,7 @@ PromptPanel(项目快贴)은 로컬 우선(local-first) **macOS 프롬프트 관
 
 PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, and **snippet launcher**. It is built for developers and AI power users who reuse multiline prompts, coding templates, project context blocks, terminal commands, and reply snippets across apps.
 
-[![Release: v1.4.0](https://img.shields.io/badge/Release-v1.4.0-blue.svg)](CHANGELOG.md)
+[![Release: v1.5.0](https://img.shields.io/badge/Release-v1.5.0-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: macOS 14+](https://img.shields.io/badge/Platform-macOS%2014%2B-lightgrey.svg)](https://www.apple.com/macos)
 [![Swift 5.10](https://img.shields.io/badge/Swift-5.10-orange.svg)](https://swift.org)

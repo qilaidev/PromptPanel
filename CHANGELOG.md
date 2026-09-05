@@ -6,6 +6,8 @@ The format is based on Keep a Changelog, and this project uses Conventional Comm
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-09-06
+
 性能与稳定性版本。设置页里每个维护动作——备份、导出、导入、诊断包——原来都跑在主线程上，
 点下去窗口就不再重绘、不再响应点击，看起来像卡死；列表渲染和存储健康刷新也有几处每帧重算
 的热点。这一版把这些工作全部挪下主线程，删掉了只有测试在用的仓储写入口，并把设置页从三个
@@ -46,6 +48,14 @@ The format is based on Keep a Changelog, and this project uses Conventional Comm
 
 - **`EntryRepository.updateSortOrder` / `togglePin(id:)` / `moveToProject`。** 三个都只有测试在调用：`sort_order` 在 v6 迁移里已经退役，置顶走 `MainWindowViewModel.togglePin(_:)` → `update`，移动项目只发生在项目删除迁移的事务里。
 - `ClipboardService.readText()`、`MainWindowViewModel.loadEntries()` / `openSettingsTab()`，以及面板状态栏里那个所有分支都返回入参的 `displayStatusMessage`。
+
+### Documentation
+
+- **面向读者的版本号从 1.1.2 同步到当前版本。** Info.plist、codemeta.json 和 JSON-LD 一直是对的，因为 `check-docs.sh` 只校验了这两个机器可读出口；八个 README 的 Release 徽章、llms.txt 的「Current release」与 answer-engine 摘要、FAQ 的版本问答、配置说明里的 Info.plist 表全部停在 1.1.2。校验范围已扩到全部读者出口，Info.plist 仍是唯一权威。
+- **排序规则的描述改正为 frecency。** 八个 README 都还写着「置顶 → 手动排序 → 最近使用 → 使用次数」，那是 v1.3.0 之前的规则。现在写的是实际生效的 `置顶 → use_count × 2^(-闲置天数 / 90) → 最近使用 → 使用次数`，README 与 FAQ 另加「词条顺序为什么会自己变？」，llms.txt / llms-full.txt / codemeta / JSON-LD 同步补上排序事实。
+- **八个 README 补上界面截图与键盘快捷键速查表。** `docs/ui-qa/latest/` 下的截图此前从未被引用，而 README 里已经写着提供 screenshots；快捷键表覆盖面板与主窗口，内容取自 `QuickPanelViewModel.panelKeyCommand` 与 `MainWindowViewModel`（含主窗口复制是 ⇧⌘C 而非 ⌘C）。
+- **仓库链接改用规范地址 `qilaidev/PromptPanel`。** 账号改名后旧地址只是重定向。Sparkle feed（`SUFeedURL`，已烧进已发布二进制）、`© 2026 tytsxai` 署名与 CHANGELOG 正文按原样保留。
+
 
 ## [1.4.0] - 2026-09-02
 
@@ -230,7 +240,8 @@ First public release. Aligns the `Info.plist`, `codemeta.json`, and `docs/search
 
 - No remote authentication, telemetry, or cloud sync paths are introduced. Prompt content remains local in SQLite; the only network traffic is the optional Sparkle update check.
 
-[Unreleased]: https://github.com/qilaidev/PromptPanel/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/qilaidev/PromptPanel/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/qilaidev/PromptPanel/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/qilaidev/PromptPanel/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/qilaidev/PromptPanel/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/qilaidev/PromptPanel/compare/v1.1.2...v1.2.0
