@@ -76,6 +76,7 @@
     "Local SQLite prompt library",
     "Project-scoped prompts with a built-in universal project",
     "SQLite FTS5 title and content search",
+    "Frecency entry ranking (use count decayed on a 90-day half-life), shared by the SQL ORDER BY and the in-memory panel sort",
     "Tag filtering with #tag syntax",
     "Clipboard-first execution guarantee",
     "Best-effort automatic paste via macOS Accessibility",

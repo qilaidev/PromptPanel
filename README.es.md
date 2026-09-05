@@ -99,7 +99,7 @@ Si "copio y pego el mismo prompt multilínea veinte veces al día" te describe, 
 - 🗂️ **Proyectos** — aísla los prompts por cliente, repositorio o contexto; el proyecto `Universal` siempre está visible
 - 📋 **Pegado automático con respaldo del portapapeles** — usa `CGEvent` para enviar ⌘V, y degrada con elegancia si falta el permiso de Accessibility
 - 🎯 **Prioridad al teclado** — flechas para navegar, Enter para ejecutar, Esc para descartar
-- 📌 **Fijar y ordenar** — fija las entradas frecuentes, ordena manualmente, luego por recencia y luego por número de usos
+- 📌 **Fijado y orden por frecency** — fija lo que debe permanecer arriba; el resto se ordena por `número_de_usos × 2^(-días_sin_usar / 90)`, así lo que usas a menudo sube solo y lo que dejaste de usar se hunde
 - 🌗 Tema **claro / oscuro / del sistema**
 - 🪶 **Residente en la barra de menús** — fuera del camino hasta que lo invocas
 - 🚀 **Inicio al abrir sesión** mediante `SMAppService`
@@ -127,7 +127,7 @@ Por diseño, PromptPanel **nunca** añadirá sincronización en la nube, colabor
 ```
 
 1. Pulsas el atajo configurado (la librería `KeyboardShortcuts` lo captura a nivel de todo el sistema).
-2. PromptPanel coloca un `NSPanel` sobre la ventana activa, enfoca el campo de búsqueda y muestra las entradas del proyecto actual más las del proyecto `Universal`, ordenadas por fijado → manual → recencia → número de usos.
+2. PromptPanel coloca un `NSPanel` sobre la ventana activa, enfoca el campo de búsqueda y muestra las entradas del proyecto actual más las del proyecto `Universal`, ordenadas por fijado → puntuación frecency → recencia → número de usos.
 3. Escribes para filtrar (en vivo, sin confirmar), navegas con las flechas y pulsas `Enter`.
 4. El contenido seleccionado **siempre** se escribe primero en el portapapeles del sistema (esta es la garantía: el portapapeles nunca falla en silencio).
 5. El panel se oculta, la app anterior recupera el foco y PromptPanel sintetiza un `⌘V` mediante `CGEvent`. Si falta el permiso de Accessibility o la app de destino bloquea los eventos sintéticos, un aviso te indica "Copiado — pulsa ⌘V para pegar."
@@ -189,7 +189,7 @@ Suponiendo que la app está compilada y en ejecución (icono visible en la barra
 | `code rev` | Cada token separado por espacios es un término de prefijo, combinados con AND |
 | `#sql` | Filtra a las entradas con la etiqueta `sql`; el token `#tag` se elimina de la consulta de texto |
 | `#sql migrate` | Filtro de etiqueta `sql` **y** coincidencia de texto `migrate` |
-| *(vacío)* | Navega por el proyecto actual más `Universal`, ordenado por fijado → orden manual → recencia → número de usos |
+| *(vacío)* | Navega por el proyecto actual más `Universal`, ordenado por fijado → frecency → recencia → número de usos |
 
 Notas: solo se usa el primer token `#tag` como filtro de etiqueta, y coincide de forma exacta y sensible a mayúsculas (`#SQL` no coincidirá con una etiqueta `sql`); los resultados se limitan a 100 filas; la coincidencia de texto es por prefijo, así que un término tomado del interior de una palabra (o de una secuencia CJK sin espacios) no coincidirá.
 

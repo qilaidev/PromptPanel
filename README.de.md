@@ -100,7 +100,7 @@ Wenn „Ich kopiere denselben mehrzeiligen Prompt zwanzigmal am Tag" auf dich zu
 - 🗂️ **Projekte** — trenne Prompts nach Kunde, Repo oder Kontext; das `Universal`-Projekt ist immer sichtbar
 - 📋 **Auto-Paste mit Fallback auf die Zwischenablage** — nutzt `CGEvent`, um ⌘V zu senden, und weicht bei fehlender Accessibility-Berechtigung sauber aus
 - 🎯 **Tastatur zuerst** — mit Pfeiltasten navigieren, mit Enter ausführen, mit Esc schließen
-- 📌 **Anheften & Sortieren** — häufige Einträge anheften, manuell sortieren, dann nach Aktualität, dann nach Nutzungshäufigkeit
+- 📌 **Anheften & Frecency-Sortierung** — hefte an, was oben bleiben muss; alles andere wird nach `Nutzungszahl × 2^(-Tage_ungenutzt / 90)` sortiert, sodass häufig Genutztes von selbst aufsteigt und Ungenutztes absinkt
 - 🌗 **Hell / Dunkel / System**-Theme
 - 🪶 **In der Menüleiste ansässig** — unauffällig, bis du es aufrufst
 - 🚀 **Start bei der Anmeldung** über `SMAppService`
@@ -128,7 +128,7 @@ Konstruktionsbedingt wird PromptPanel **niemals** Cloud-Synchronisierung, Team-Z
 ```
 
 1. Du drückst das konfigurierte Tastenkürzel (die `KeyboardShortcuts`-Bibliothek erfasst es systemweit).
-2. PromptPanel legt ein `NSPanel` über das aktive Fenster, fokussiert das Suchfeld und zeigt die Einträge des aktuellen Projekts sowie des `Universal`-Projekts, sortiert nach Anheften → manuell → Aktualität → Nutzungshäufigkeit.
+2. PromptPanel legt ein `NSPanel` über das aktive Fenster, fokussiert das Suchfeld und zeigt die Einträge des aktuellen Projekts sowie des `Universal`-Projekts, sortiert nach Anheften → Frecency-Score → Aktualität → Nutzungshäufigkeit.
 3. Du tippst, um zu filtern (live, ohne Bestätigung), wählst mit den Pfeiltasten und drückst `Enter`.
 4. Der ausgewählte Inhalt wird **immer** zuerst in die Systemzwischenablage geschrieben (das ist die Garantie — die Zwischenablage schlägt nie stillschweigend fehl).
 5. Das Panel verschwindet, die vorherige App erhält wieder den Fokus, und PromptPanel synthetisiert ein `⌘V` per `CGEvent`. Fehlt die Accessibility-Berechtigung oder blockiert die Ziel-App synthetische Ereignisse, teilt dir ein Toast mit: „Kopiert — drücke ⌘V zum Einfügen."
@@ -190,7 +190,7 @@ Vorausgesetzt, die App ist gebaut und läuft (Menüleisten-Symbol sichtbar):
 | `code rev` | Jedes durch Leerzeichen getrennte Token ist ein Präfixterm, mit UND verknüpft |
 | `#sql` | Filtert auf Einträge mit dem Tag `sql`; das `#tag`-Token wird aus der Textsuche entfernt |
 | `#sql migrate` | Tag-Filter `sql` **und** Texttreffer `migrate` |
-| *(leer)* | Durchsucht das aktuelle Projekt plus `Universal`, sortiert nach Anheften → manuelle Reihenfolge → Aktualität → Nutzungshäufigkeit |
+| *(leer)* | Durchsucht das aktuelle Projekt plus `Universal`, sortiert nach Anheften → Frecency → Aktualität → Nutzungshäufigkeit |
 
 Hinweise: Nur das erste `#tag`-Token wirkt als Tag-Filter, und es trifft exakt und case-sensitiv (`#SQL` trifft kein `sql`-Tag); Suchergebnisse sind auf 100 Zeilen begrenzt; der Textabgleich ist präfixbasiert, ein Begriff aus der Mitte eines Wortes (oder einer CJK-Folge ohne Leerzeichen) trifft also nicht.
 

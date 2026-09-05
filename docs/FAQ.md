@@ -59,6 +59,18 @@ Type in the search field; there is no submit step.
 
 Only the first `#tag` token is treated as a tag filter and it matches exactly and case-sensitively (`#SQL` will not match a `sql` tag). Results are capped at 100 rows, and text matching is prefix-based — a term taken from the middle of a word (or of an unspaced CJK run) will not match.
 
+## Why do entries change position in the list? / 词条顺序为什么会变？
+
+Ordering is **frecency**, not a fixed list. Pinned entries come first; everything else is ranked by
+
+```text
+score = use_count × 2 ^ (-days_since_last_use / 90)
+```
+
+so an entry counts for half as much after every 90 idle days. Frequently used prompts float to the top on their own, and a prompt you used heavily last year sinks instead of holding a slot forever. Ties fall through to last-used time, then raw use count, then update time. The same function runs in the SQL `ORDER BY` and in the panel's in-memory sort (`Sources/PromptPanel/Core/Utils/EntryRanking.swift`), so the panel's `⌘1`–`⌘9` numbers always address the rows you see.
+
+Manual sort order (`sort_order`) was retired in v1.3.0 — no UI ever wrote it, and imported values pinned entries to the top permanently. Use **置顶** (pin) from an entry's context menu instead. The library window has its own display sort (`设置 → 偏好 → 词条排序`: 按使用 / 按等级 / 按最近 / 按字母), which affects only that list.
+
 ## How do I change the global hotkey? / 快捷键冲突怎么办？
 
 Open `设置 → 偏好 → 快捷键 → 呼出面板` (Settings → Preferences → Hotkey → Toggle panel) and record a new combination. The default is `⌥2`. There is exactly one hotkey for the panel, and pressing it again while the panel is open dismisses it.

@@ -100,7 +100,7 @@ Si « je copie-colle le même prompt multiligne vingt fois par jour » vous déc
 - 🗂️ **Projets** — isolez les prompts par client, dépôt ou contexte ; le projet `Universal` est toujours visible
 - 📋 **Collage automatique avec repli presse-papiers** — utilise `CGEvent` pour envoyer ⌘V, se rabat proprement si la permission Accessibility est absente
 - 🎯 **Priorité au clavier** — touches fléchées pour naviguer, Enter pour exécuter, Esc pour fermer
-- 📌 **Épingler et trier** — épinglez les entrées fréquentes, tri manuel, puis par récence, puis par nombre d'utilisations
+- 📌 **Épinglage et tri par frecency** — épinglez ce qui doit rester en haut ; le reste est classé par `nombre_d_utilisations × 2^(-jours_d_inactivité / 90)`, de sorte que ce que vous utilisez souvent remonte tout seul et que ce que vous n'utilisez plus redescend
 - 🌗 **Thème clair / sombre / système**
 - 🪶 **Résident dans la barre de menus** — discret jusqu'à ce que vous l'invoquiez
 - 🚀 **Lancement à l'ouverture de session** via `SMAppService`
@@ -128,7 +128,7 @@ Par conception, PromptPanel n'ajoutera **jamais** de synchronisation cloud, de c
 ```
 
 1. Vous appuyez sur le raccourci configuré (la bibliothèque `KeyboardShortcuts` le capture à l'échelle du système).
-2. PromptPanel place un `NSPanel` au-dessus de la fenêtre active, met le champ de recherche au point, et affiche les entrées du projet courant plus celles du projet `Universal`, triées par épinglage → manuel → récence → nombre d'utilisations.
+2. PromptPanel place un `NSPanel` au-dessus de la fenêtre active, met le champ de recherche au point, et affiche les entrées du projet courant plus celles du projet `Universal`, triées par épinglage → score frecency → récence → nombre d'utilisations.
 3. Vous tapez pour filtrer (en direct, sans validation), utilisez les flèches pour choisir, appuyez sur `Enter`.
 4. Le contenu sélectionné est **toujours** d'abord écrit dans le presse-papiers du système (c'est la garantie — le presse-papiers n'échoue jamais en silence).
 5. Le panneau se masque, l'application précédente reprend la mise au point, et PromptPanel synthétise un `⌘V` via `CGEvent`. Si la permission Accessibility est absente ou si l'application cible bloque les événements synthétiques, un toast vous indique « Copié — appuyez sur ⌘V pour coller ».
@@ -190,7 +190,7 @@ En supposant que l'app est compilée et lancée (icône visible dans la barre de
 | `code rev` | Chaque jeton séparé par des espaces est un terme de préfixe, combinés avec ET |
 | `#sql` | Filtre sur les entrées portant l'étiquette `sql` ; le jeton `#tag` est retiré de la requête textuelle |
 | `#sql migrate` | Filtre d'étiquette `sql` **et** correspondance textuelle `migrate` |
-| *(vide)* | Parcourt le projet courant plus `Universal`, trié par épinglage → ordre manuel → récence → nombre d'utilisations |
+| *(vide)* | Parcourt le projet courant plus `Universal`, trié par épinglage → frecency → récence → nombre d'utilisations |
 
 Remarques : seul le premier jeton `#tag` sert de filtre d'étiquette, et la correspondance est exacte et sensible à la casse (`#SQL` ne correspondra pas à une étiquette `sql`) ; les résultats sont plafonnés à 100 lignes ; la correspondance textuelle est par préfixe, donc un terme pris au milieu d'un mot (ou d'une suite CJK sans espaces) ne correspondra pas.
 

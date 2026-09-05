@@ -32,7 +32,7 @@ PromptPanel 是一款本地优先的 **macOS Prompt 管理器**、**AI Prompt �
 | 项目类型 | 开源、本地优先的 macOS Prompt manager / AI prompt launcher / snippet launcher。 |
 | 核心问题 | 解决高频复制粘贴同一批 ChatGPT、Claude、Cursor、Copilot、VS Code、Terminal Prompt、项目上下文、命令片段和模板的问题。 |
 | 适合人群 | AI 重度用户、开发者、Prompt engineers、技术写作者、PM、顾问、需要按项目隔离 Prompt 库的独立开发者。 |
-| 核心功能 | 全局快捷键、即时搜索、项目隔离、`通用项目 / Universal`、`#tag` 过滤、剪贴板优先、辅助功能权限下自动粘贴、执行日志、JSON/Markdown 导入导出。 |
+| 核心功能 | 全局快捷键、即时搜索（SQLite FTS5）、项目隔离、`通用项目 / Universal`、`#tag` 过滤、frecency 智能排序、剪贴板优先、辅助功能权限下自动粘贴、执行日志、JSON/Markdown 导入导出。 |
 | 技术栈 | Swift 5.10、AppKit `NSPanel`、SwiftUI、SQLite/GRDB、KeyboardShortcuts、Sparkle 2、Swift Package Manager。 |
 | 快速开始 | `git clone` → `./scripts/build-app.sh` → `open dist/PromptPanel.app`。首次运行建议授予辅助功能权限；不授权也能复制到剪贴板。 |
 | 典型场景 | ChatGPT/Claude role prompt、Cursor project context、PR review checklist、terminal command snippet、会议纪要模板、客户回复模板。 |
@@ -91,7 +91,7 @@ PromptPanel 把上面这些全部塌进一条 sub-second 的链路——而你�
 
 ## 功能一览
 
-### v1.0 已有
+### 核心功能
 
 - 🔥 **全局快捷键**：在任何前台应用里都能唤出，可自定义
 - ⚡ **< 300 ms 主链路**：基于 `NSPanel`，没有 Electron、没有 Web 运行时、没有冷启动
@@ -99,7 +99,7 @@ PromptPanel 把上面这些全部塌进一条 sub-second 的链路——而你�
 - 🗂️ **项目隔离**：按客户、仓库、上下文区分；`通用项目` 永远可见
 - 📋 **自动粘贴 + 剪贴板兜底**：用 `CGEvent` 模拟 ⌘V，权限缺失时优雅降级
 - 🎯 **键盘优先**：方向键选择，回车执行，Esc 关闭
-- 📌 **置顶 / 排序**：常用置顶 → 手动排序 → 最近使用 → 使用次数
+- 📌 **置顶 + frecency 排序**：必须常驻的词条置顶；其余按 `使用次数 × 2^(-闲置天数 / 90)` 打分，高频词条自动上浮，久不使用的自然下沉
 - 🌗 **浅色 / 深色 / 跟随系统**
 - 🪶 **菜单栏常驻**：不打扰，要用就来
 - 🚀 **开机启动**：基于 `SMAppService`
@@ -127,7 +127,7 @@ PromptPanel **永远不会**加入云同步、团队协作、复杂工作流编�
 ```
 
 1. 你按下设置的快捷键（`KeyboardShortcuts` 在系统层捕获）
-2. PromptPanel 把 `NSPanel` 弹到当前窗口上方，自动聚焦搜索框，按"置顶 → 手动排序 → 最近使用 → 使用次数"展示当前项目 + `通用项目` 词条
+2. PromptPanel 把 `NSPanel` 弹到当前窗口上方，自动聚焦搜索框，按「置顶 → frecency 得分 → 最近使用 → 使用次数」展示当前项目 + `通用项目` 词条
 3. 你打字过滤（实时，无需提交），方向键选择，回车
 4. **永远先把内容写进系统剪贴板**——这是产品的硬承诺，剪贴板这一步绝不静默失败
 5. 面板退场，前一个 app 恢复焦点，PromptPanel 用 `CGEvent` 合成一次 `⌘V`。如果辅助功能权限缺失或目标 app 屏蔽合成事件，会有 Toast 告诉你"已复制，按 ⌘V 粘贴即可"
@@ -189,7 +189,7 @@ open dist/PromptPanel.app
 | `code rev` | 空格分隔的每个 token 都是前缀词，彼此是 AND 关系 |
 | `#sql` | 只保留打了 `sql` 标签的词条；`#tag` 这个 token 会从文本查询里剔除 |
 | `#sql migrate` | 标签 `sql` **且** 文本命中 `migrate` |
-| *(空)* | 浏览「当前项目 + 通用项目」，按 置顶 → 手动排序 → 最近使用 → 使用次数 排列 |
+| *(空)* | 浏览「当前项目 + 通用项目」，按 置顶 → frecency → 最近使用 → 使用次数 排列 |
 
 注意：一次查询只取**第一个** `#tag` 作为标签过滤，且标签是**精确、区分大小写**匹配（`#SQL` 匹配不到 `sql` 标签）；搜索结果上限 100 条；文本匹配是前缀式的，所以从词中间截取的片段（包括中文连写串的中段）匹配不到。
 
@@ -353,6 +353,10 @@ PromptPanel 走的是**刻意收敛**的路线。PRD 已经把"永不做"列出�
 能。`设置 → 偏好 → 快捷键 → 呼出面板`，重新录一组即可。面板只有这一个快捷键，打开状态下再按一次就是关闭。如果录完发现按了没反应，通常是别的应用或 macOS 系统快捷键先占用了这个组合，换一组就行。
 
 从 1.0 之前版本升上来的安装，只有在快捷键仍停留在旧的内置默认值时，才会被一次性迁移到当前默认值；你自己设过的快捷键不会被覆盖。
+
+### 词条顺序为什么会自己变？
+
+排序是 **frecency**，不是固定列表。置顶词条永远在最前；其余按 `使用次数 × 2^(-闲置天数 / 90)` 打分——每闲置 90 天权重减半。常用的 Prompt 会自己浮上来，去年用得多、今年没碰过的会自然下沉，而不是靠历史总量永久占位。分数相同再依次比最近使用时间、使用次数。手动排序值已在 v1.3.0 退役，需要固定位置请用词条右键菜单里的**置顶**。实现见 [`EntryRanking.swift`](Sources/PromptPanel/Core/Utils/EntryRanking.swift)——SQL 的 `ORDER BY` 和面板内存排序调用的是同一个函数。
 
 ### 某个应用里自动粘贴不生效怎么办？
 

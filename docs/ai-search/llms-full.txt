@@ -104,7 +104,8 @@ These are permanent product boundaries, not missing v1 features.
 - Menu bar: `NSStatusItem`.
 - Hotkey: KeyboardShortcuts.
 - Storage: SQLite via GRDB.
-- Search: SQLite FTS plus project filtering and local sorting.
+- Search: SQLite FTS5 prefix matching over entry title and content, plus project filtering, `#tag` filtering, and a 100-row result cap.
+- Ranking: pinned entries first, then a frecency score `use_count * 2^(-days_idle / 90)` shared by the SQL `ORDER BY` and the panel's in-memory comparator, then recency, then raw use count.
 - Paste automation: `CGEvent` Command-V after restoring the target app.
 - Login item: `SMAppService`.
 - Updates: Sparkle 2.

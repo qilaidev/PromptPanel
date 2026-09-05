@@ -34,7 +34,7 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 | 项目是什么 / What it is | 开源、本地优先的 macOS Prompt manager and snippet launcher，用全局快捷键唤出原生面板，搜索并粘贴可复用文本。 |
 | 解决什么问题 / Problem solved | 让高频使用 ChatGPT、Claude、Cursor、Copilot、VS Code、Terminal 的用户不用反复翻笔记、复制同一段 system prompt、项目上下文或命令模板。 |
 | 适合谁 / Audience | AI heavy users、开发者、Prompt engineers、技术写作者、PM、顾问和需要按项目隔离 prompt library 的独立开发者。 |
-| 核心功能 / Core features | 全局快捷键、即时搜索、项目隔离、`Universal / 通用项目`、`#tag` 过滤、剪贴板优先、Accessibility 自动粘贴、执行日志、JSON/Markdown 导入导出。 |
+| 核心功能 / Core features | 全局快捷键、即时搜索（SQLite FTS5）、项目隔离、`Universal / 通用项目`、`#tag` 过滤、frecency 智能排序、剪贴板优先、Accessibility 自动粘贴、执行日志、JSON/Markdown 导入导出。 |
 | 技术栈 / Tech stack | Swift 5.10, AppKit `NSPanel`, SwiftUI, SQLite/GRDB, KeyboardShortcuts, Sparkle 2, Swift Package Manager。 |
 | 快速开始 / Quick start | `git clone` -> `./scripts/build-app.sh` -> `open dist/PromptPanel.app`。首次运行授予 Accessibility 权限后可自动粘贴；不授权也能复制到剪贴板。 |
 | 典型场景 / Use cases | ChatGPT/Claude role prompt、Cursor project context、PR review checklist、terminal command snippet、meeting notes template、client-specific response template。 |
@@ -91,7 +91,7 @@ If "I copy and paste the same multiline prompt twenty times a day" describes you
 
 ## Features
 
-### Core (v1.0)
+### Core
 
 - 🔥 **Global hotkey** — summon the panel from any foreground app, configurable shortcut
 - ⚡ **< 300 ms time-to-input** — `NSPanel`-based, no Electron, no web runtime, no cold start
@@ -99,7 +99,7 @@ If "I copy and paste the same multiline prompt twenty times a day" describes you
 - 🗂️ **Projects** — isolate prompts per client, repo, or context; `Universal` project always visible
 - 📋 **Auto-paste with clipboard fallback** — uses `CGEvent` to send ⌘V, falls back gracefully if Accessibility permission is missing
 - 🎯 **Keyboard-first** — arrow keys to navigate, Enter to execute, Esc to dismiss
-- 📌 **Pin & sort** — pin frequent entries, manual sort, then by recency, then by usage count
+- 📌 **Pin & frecency ranking** — pin what must stay on top; everything else is ordered by `use_count × 2^(-days_idle / 90)`, so frequently used entries float up and prompts you stopped using sink on their own
 - 🌗 **Light / dark / system** theme
 - 🪶 **Menu-bar resident** — out of the way until you summon it
 - 🚀 **Launch at login** via `SMAppService`
@@ -127,7 +127,7 @@ By design PromptPanel will **never** add cloud sync, team collaboration, or comp
 ```
 
 1. You press the configured hotkey (`KeyboardShortcuts` library captures it system-wide).
-2. PromptPanel snaps an `NSPanel` over the active window, focuses the search field, and shows entries from the current project plus the `Universal` project, sorted by pin → manual → recency → usage count.
+2. PromptPanel snaps an `NSPanel` over the active window, focuses the search field, and shows entries from the current project plus the `Universal` project, sorted by pin → frecency score → recency → usage count.
 3. You type to filter (live, no submit), arrow to choose, press `Enter`.
 4. The selected content is **always** written to the system clipboard first (this is the guarantee — clipboard never silently fails).
 5. The panel hides, the previous app regains focus, and PromptPanel synthesizes a `⌘V` via `CGEvent`. If Accessibility permission is missing or the target app blocks synthetic events, a toast tells you "Copied — press ⌘V to paste."
@@ -207,7 +207,7 @@ Assuming the app is built and running (menu-bar icon visible):
 | `code rev` | Every whitespace-separated token is a prefix term, combined with AND — matches "code review…" |
 | `#sql` | Filters to entries tagged `sql`; the `#tag` token is stripped from the text query |
 | `#sql migrate` | Tag filter `sql` **and** text match `migrate` |
-| *(empty)* | Browses the current project plus `Universal`, sorted by pin → manual order → recency → use count |
+| *(empty)* | Browses the current project plus `Universal`, sorted by pin → frecency → recency → use count |
 
 Notes: only the first `#tag` token in a query is used as a tag filter, and the tag must match **exactly and case-sensitively** (`#SQL` will not match a `sql` tag); search results are capped at 100 rows; text matching is prefix-based, so a term from the *middle* of a word (or of an unspaced CJK run) will not match.
 
@@ -374,6 +374,10 @@ Yes. MIT license. No paid tier, no usage cap, no account.
 ### The hotkey `⌥2` conflicts with another app. Can I change it?
 
 Yes — `设置 → 偏好 → 快捷键 → 呼出面板` (Settings → Preferences → Hotkey → Toggle panel), then record any combination. There is exactly one hotkey, and pressing it again while the panel is open dismisses it. If a shortcut appears to do nothing, another app or a macOS system shortcut is likely claiming it first.
+
+### Why do entries move around in the list?
+
+Ordering is **frecency**, not a fixed list. Pinned entries sit on top; everything else is scored as `use_count × 2^(-days_idle / 90)` — an entry counts for half as much after every 90 days without use. Prompts you actually use float up, and a prompt that was hot last year sinks on its own instead of holding the top slot on historical volume. Ties fall through to last-used time, then raw use count. Manual sort order was retired in v1.3.0; use **置顶** (pin) instead. See [`EntryRanking.swift`](Sources/PromptPanel/Core/Utils/EntryRanking.swift) — the SQL `ORDER BY` and the panel's in-memory sort call the same function.
 
 ### How do I completely uninstall PromptPanel and remove its data?
 
