@@ -1,0 +1,235 @@
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": [
+        "SoftwareApplication",
+        "SoftwareSourceCode"
+      ],
+      "@id": "https://github.com/qilaidev/PromptPanel#software",
+      "name": "PromptPanel",
+      "alternateName": [
+        "PromptPanel macOS prompt launcher",
+        "PromptPanel AI prompt launcher",
+        "PromptPanel ChatGPT prompt manager",
+        "PromptPanel Claude prompt library",
+        "PromptPanel Cursor snippet manager",
+        "项目快贴"
+      ],
+      "description": "PromptPanel (项目快贴) is an open-source, local-first native macOS prompt manager, AI prompt launcher, and snippet launcher for ChatGPT, Claude, Cursor, Copilot, VS Code, Terminal, browser, and ordinary text-field workflows. It stores reusable prompts, code snippets, templates, and instructions locally in SQLite, opens a keyboard-first global hotkey panel, writes selected content to the clipboard first, and attempts automatic paste through macOS Accessibility when allowed. The application interface is currently Simplified Chinese only; the documentation is published in eight languages.",
+      "url": "https://github.com/qilaidev/PromptPanel",
+      "inLanguage": "zh-Hans",
+      "softwareHelp": "https://github.com/qilaidev/PromptPanel/blob/main/docs/FAQ.md",
+      "discussionUrl": "https://github.com/qilaidev/PromptPanel/issues",
+      "codeRepository": "https://github.com/qilaidev/PromptPanel",
+      "downloadUrl": "https://github.com/qilaidev/PromptPanel/releases",
+      "releaseNotes": "https://github.com/qilaidev/PromptPanel/blob/main/CHANGELOG.md",
+      "license": "https://spdx.org/licenses/MIT.html",
+      "applicationCategory": "DeveloperApplication",
+      "applicationSubCategory": "Prompt manager and snippet launcher",
+      "applicationSuite": "AI productivity tools",
+      "operatingSystem": "macOS 14 or later",
+      "runtimePlatform": "macOS",
+      "programmingLanguage": "Swift",
+      "softwareVersion": "1.5.0",
+      "datePublished": "2026-09-06",
+      "isAccessibleForFree": true,
+      "keywords": [
+        "macOS prompt manager",
+        "AI prompt launcher",
+        "ChatGPT prompt manager",
+        "prompt manager for ChatGPT",
+        "Claude prompt library",
+        "Claude prompt manager",
+        "Cursor snippet manager",
+        "Cursor AI prompt manager",
+        "Copilot prompt template launcher",
+        "AI snippet manager",
+        "open-source TextExpander alternative",
+        "Espanso alternative",
+        "Raycast snippets alternative",
+        "Alfred Snippets alternative",
+        "local-first prompt library",
+        "local ChatGPT prompt library",
+        "offline AI prompt storage",
+        "native Swift macOS app",
+        "global hotkey paste",
+        "keyboard-first prompt picker",
+        "prompt engineering toolkit macOS",
+        "NDA-safe prompt storage",
+        "项目快贴",
+        "macOS Prompt 管理器",
+        "AI Prompt 启动器",
+        "ChatGPT Prompt 管理 macOS",
+        "Claude Prompt 库",
+        "Cursor 代码片段管理器",
+        "本地优先 Prompt 库"
+      ],
+      "featureList": [
+        "Global hotkey quick panel",
+        "Local SQLite prompt library",
+        "Project-scoped prompts with a universal project",
+        "SQLite FTS5 title and content search",
+        "Frecency entry ranking with a 90-day half-life on use count",
+        "Tag filtering with #tag syntax",
+        "Clipboard-first execution guarantee",
+        "Best-effort automatic paste through macOS Accessibility",
+        "Execution logs without prompt body storage",
+        "Sparkle update code path disabled until feed and public key are configured",
+        "Developer ID signing and notarization scripts",
+        "JSON and Markdown import/export with backup before import",
+        "Atomic single-transaction library import with full rollback on failure",
+        "Local diagnostics bundle export for troubleshooting",
+        "Automatic recovery-artifact pruning"
+      ],
+      "softwareRequirements": [
+        "macOS 14 Sonoma or later",
+        "Xcode 15 or later for source builds",
+        "Swift 5.10"
+      ],
+      "permissions": "macOS Accessibility permission, required only for automatic paste",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "author": {
+        "@type": "Person",
+        "name": "qilaidev",
+        "url": "https://github.com/qilaidev"
+      },
+      "screenshot": [
+        "https://raw.githubusercontent.com/qilaidev/PromptPanel/main/docs/ui-qa/latest/panel-light.png",
+        "https://raw.githubusercontent.com/qilaidev/PromptPanel/main/docs/ui-qa/latest/panel-dark.png",
+        "https://raw.githubusercontent.com/qilaidev/PromptPanel/main/docs/ui-qa/latest/library-dark.png",
+        "https://raw.githubusercontent.com/qilaidev/PromptPanel/main/docs/ui-qa/latest/settings-dark.png"
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://github.com/qilaidev/PromptPanel#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is PromptPanel?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "PromptPanel is an open-source, local-first macOS prompt manager and snippet launcher for AI power users. A global hotkey opens a native NSPanel that searches a local SQLite prompt library and pastes the selected entry into any focused text field, such as ChatGPT, Claude, Cursor, Copilot, VS Code, Terminal, or browsers."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I install PromptPanel?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Current GitHub Releases do not attach a notarized binary asset yet. The supported public install path is to clone the repository, run ./scripts/build-app.sh, and open dist/PromptPanel.app on macOS 14 or later."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is PromptPanel free and open source?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. PromptPanel is MIT licensed and free. There is no paid tier, no account, no usage cap, and no required cloud service."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does PromptPanel send my prompts to the cloud?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Prompt content stays locally in SQLite at ~/Library/Application Support/PromptPanel/promptpanel.db. The current release also makes zero outbound network calls — Sparkle is bundled but its appcast feed is not configured in this build, so no update probe is dispatched. Prompt bodies never leave the Mac."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which apps can PromptPanel paste into?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Any text field on macOS. Common targets include ChatGPT, Claude, Gemini and Perplexity in the browser; Cursor, VS Code, Xcode and JetBrains IDEs; Terminal and iTerm2; and chat tools like Slack and Notion."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How is PromptPanel different from TextExpander, Espanso, Raycast Snippets, and Alfred Snippets?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "PromptPanel is a narrower, AI-focused, local-first searchable panel. It does only one thing — search and paste reusable prompts and snippets through a global hotkey — and never requires an account, a paid tier, or a cloud service."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I move my PromptPanel prompt library to another Mac or back it up?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Use Settings → Maintenance. Export JSON produces a lossless full-library file that Import JSON restores on another Mac; Export MD produces a human-reviewable Markdown export. Every import first creates an automatic local database backup, and import writes run in a single SQLite transaction, so a failed import rolls back completely."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Why does PromptPanel ask for Accessibility permission?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "It synthesizes Command-V after the panel hides and the previous app regains focus. Without that permission PromptPanel still copies the entry to the clipboard reliably and shows a toast asking the user to paste manually."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Will PromptPanel ever add cloud sync, teams, or workflow orchestration?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Cloud sync, team collaboration, and workflow orchestration are permanent non-goals in the product PRD. PromptPanel is intentionally single-user, local-only, and fast."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What macOS versions does PromptPanel support?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "macOS 14 Sonoma or later, on both Apple Silicon (M1/M2/M3/M4) and Intel Macs. The release is built as a universal binary."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What language is the PromptPanel user interface in?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Simplified Chinese only. The bundle declares CFBundleDevelopmentRegion = zh-Hans, UI strings are hard-coded, and there are no localization resources or in-app language switch. The documentation is bilingual and published in eight languages, and README.md includes a Chinese-to-English UI label map. Prompt content stored in the app can be in any language."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I change the PromptPanel global hotkey?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Open Settings → Preferences → Hotkey → Toggle panel (设置 → 偏好 → 快捷键 → 呼出面板) and record a new combination. The default is Option-2. There is exactly one panel hotkey and pressing it again while the panel is open dismisses it. If a recorded shortcut does nothing, another app or a macOS system shortcut is claiming it first."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I search or filter prompts in the PromptPanel quick panel?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Type in the search field; there is no submit step. Plain text runs a SQLite FTS5 prefix match over entry title and content, with each whitespace-separated token combined using AND. A #tag token filters by tag and is removed from the text query, so '#sql migrate' means tagged sql and matching migrate. Only the first #tag token is used, results are capped at 100 rows, and matching is prefix-based."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I uninstall PromptPanel and remove all of its data?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Export the library first from Settings → Maintenance → Export JSON if you may want it back. Quit from the menu bar, delete the app bundle, then remove ~/Library/Application Support/PromptPanel (database, Backups, Recovery) and ~/Library/Logs/PromptPanel. Also remove PromptPanel from System Settings → Privacy & Security → Accessibility and from login items. PromptPanel writes nothing outside those locations and its UserDefaults domain."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does PromptPanel support variables or template placeholders?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Not yet. Entry content is pasted verbatim. Variable templates are roadmap-conditional and will only be added if they can be implemented without slowing the hotkey-to-paste main link."
+          }
+        }
+      ]
+    }
+  ]
+}

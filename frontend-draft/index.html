@@ -1,0 +1,1604 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>PromptPanel — 优化方案</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%;
+    background: #0a0b0d;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+    color: #e8e9ec; overflow: hidden; }
+  * { box-sizing: border-box; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+  input, button, select, textarea { font-family: inherit; }
+  button { -webkit-tap-highlight-color: transparent; }
+  button:hover { filter: brightness(1.12); }
+  code { font-family: "SF Mono", ui-monospace, Menlo, monospace; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel">
+// Design tokens — Linear/Things inspired dark minimal
+// Cool neutral grays, single restrained accent, no saturated colors.
+
+const T = {
+  // Surfaces (cool neutrals, very low chroma)
+  bg: '#0e0f11',              // desktop wallpaper bg
+  surface: '#17181b',         // window body
+  surfaceRaised: '#1e1f23',   // cards, inputs
+  surfaceHover: '#24262b',    // hover states
+  surfaceActive: '#2b2e34',   // selected row
+  sidebar: '#141518',         // sidebar darker
+  border: 'rgba(255,255,255,0.06)',
+  borderStrong: 'rgba(255,255,255,0.10)',
+  divider: 'rgba(255,255,255,0.04)',
+
+  // Text
+  text: '#e8e9ec',
+  textSecondary: '#aeb3bc',
+  textTertiary: '#858b96',
+  textQuaternary: '#666d78',
+
+  // Accent — single indigo/violet, low sat, used sparingly
+  accent: '#7c8cf8',          // primary accent (links, selection tint)
+  accentDim: 'rgba(124,140,248,0.14)',
+  accentBorder: 'rgba(124,140,248,0.35)',
+
+  // Semantic (desaturated)
+  success: '#5fb37a',
+  successDim: 'rgba(95,179,122,0.12)',
+  warn: '#d4a35a',
+  warnDim: 'rgba(212,163,90,0.12)',
+  danger: '#d47070',
+  dangerDim: 'rgba(212,112,112,0.12)',
+  pin: '#d4a35a',
+
+  // Typography
+  font: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif',
+  fontMono: '"SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace',
+
+  // Radii
+  rWindow: 12,
+  rCard: 10,
+  rRow: 6,
+  rPill: 999,
+
+  // Shadows
+  shadowWindow: '0 0 0 0.5px rgba(0,0,0,0.6), 0 24px 60px rgba(0,0,0,0.55), 0 4px 12px rgba(0,0,0,0.3)',
+  shadowPopover: '0 0 0 0.5px rgba(0,0,0,0.4), 0 20px 48px rgba(0,0,0,0.5)',
+};
+
+// Traffic lights (non-interactive)
+function TrafficLights() {
+  const dot = (bg) => (
+    <div style={{
+      width: 12, height: 12, borderRadius: '50%', background: bg,
+      boxShadow: 'inset 0 0 0 0.5px rgba(0,0,0,0.25)',
+    }} />
+  );
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      {dot('#ff5f57')}{dot('#febc2e')}{dot('#28c840')}
+    </div>
+  );
+}
+
+// Minimal line icons (stroke-based, 16px baseline, currentColor)
+function Icon({ name, size = 14, style = {} }) {
+  const s = size;
+  const common = { width: s, height: s, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round', style };
+  switch (name) {
+    case 'search': return <svg {...common}><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L13.5 13.5"/></svg>;
+    case 'settings': return <svg {...common}><circle cx="8" cy="8" r="2"/><path d="M8 1.5v2M8 12.5v2M14.5 8h-2M3.5 8h-2M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4M12.6 12.6l-1.4-1.4M4.8 4.8L3.4 3.4"/></svg>;
+    case 'folder': return <svg {...common}><path d="M1.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-10.5a1 1 0 0 1-1-1v-7.5z"/></svg>;
+    case 'plus': return <svg {...common}><path d="M8 3v10M3 8h10"/></svg>;
+    case 'pin': return <svg {...common}><path d="M9.5 1.5l5 5-2 1-3 3-1 4-4-4-3.5 3.5M6 6l4 4"/></svg>;
+    case 'chev-right': return <svg {...common}><path d="M6 3l5 5-5 5"/></svg>;
+    case 'chev-down': return <svg {...common}><path d="M3 6l5 5 5-5"/></svg>;
+    case 'sidebar': return <svg {...common}><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M6 2.5v11"/></svg>;
+    case 'sort': return <svg {...common}><path d="M4 3v10M2 11l2 2 2-2M12 13V3M14 5l-2-2-2 2"/></svg>;
+    case 'filter': return <svg {...common}><path d="M2 3h12l-4.5 5.5V13l-3-1.5V8.5L2 3z"/></svg>;
+    case 'tag': return <svg {...common}><path d="M2 2h5l7 7-5 5-7-7V2z"/><circle cx="5" cy="5" r="0.8" fill="currentColor" stroke="none"/></svg>;
+    case 'clock': return <svg {...common}><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></svg>;
+    case 'dot': return <svg {...common}><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/></svg>;
+    case 'check': return <svg {...common}><path d="M3 8.5L6.5 12l6.5-7"/></svg>;
+    case 'edit': return <svg {...common}><path d="M10.5 2.5l3 3-8 8H2.5v-3l8-8z"/></svg>;
+    case 'trash': return <svg {...common}><path d="M3 4.5h10M5.5 4.5V3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.5M4.5 4.5v8a1 1 0 0 0 1 1h5a1 1 0 0 0 1-1v-8M6.5 7v4M9.5 7v4"/></svg>;
+    case 'copy': return <svg {...common}><rect x="5" y="5" width="8" height="8" rx="1"/><path d="M3 10V3.5a1 1 0 0 1 1-1H10"/></svg>;
+    case 'arrow-down': return <svg {...common}><path d="M8 3v10M4 9l4 4 4-4"/></svg>;
+    case 'arrow-updown': return <svg {...common}><path d="M4 3v10M2 11l2 2 2-2M12 13V3M14 5l-2-2-2 2"/></svg>;
+    case 'return': return <svg {...common}><path d="M13 4v3a2 2 0 0 1-2 2H3M5 7L3 9l2 2"/></svg>;
+    case 'command': return <svg {...common}><path d="M5.5 5.5h5v5h-5v-5zM3 5.5a2.5 2.5 0 1 1 2.5-2.5v2.5H3zM10.5 5.5V3a2.5 2.5 0 1 1 2.5 2.5h-2.5zM10.5 10.5h2.5a2.5 2.5 0 1 1-2.5 2.5v-2.5zM5.5 10.5V13a2.5 2.5 0 1 1-2.5-2.5h2.5z"/></svg>;
+    case 'option': return <svg {...common}><path d="M2 3h4l4 10h4M10 3h4"/></svg>;
+    case 'close': return <svg {...common}><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>;
+    case 'dots': return <svg {...common}><circle cx="4" cy="8" r="1" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>;
+    case 'reply': return <svg {...common}><path d="M6 4L2 8l4 4M2 8h8a4 4 0 0 1 4 4v1"/></svg>;
+    case 'chat': return <svg {...common}><path d="M2.5 4.5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H8l-3 2.5v-2.5H3.5a1 1 0 0 1-1-1v-6z"/></svg>;
+    case 'doc': return <svg {...common}><path d="M3.5 2.5h6l3 3v8a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1zM9.5 2.5v3h3"/></svg>;
+    case 'sparkles': return <svg {...common}><path d="M8 2v3M8 11v3M2 8h3M11 8h3M4 4l2 2M12 12l-2-2M4 12l2-2M12 4l-2 2"/></svg>;
+    case 'lock': return <svg {...common}><rect x="3" y="7" width="10" height="7" rx="1"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>;
+    case 'kbd': return <svg {...common}><rect x="1.5" y="4.5" width="13" height="8" rx="1.5"/><path d="M4 7h.01M7 7h.01M10 7h.01M4 10h6"/></svg>;
+    case 'keyboard': return <svg {...common}><rect x="1.5" y="4" width="13" height="8" rx="1.5"/><path d="M4 7h0M7 7h0M10 7h0M4 10h6"/></svg>;
+    case 'database': return <svg {...common}><ellipse cx="8" cy="3.5" rx="5.5" ry="1.8"/><path d="M2.5 3.5v9c0 1 2.5 1.8 5.5 1.8s5.5-.8 5.5-1.8v-9M2.5 8c0 1 2.5 1.8 5.5 1.8s5.5-.8 5.5-1.8"/></svg>;
+    case 'info': return <svg {...common}><circle cx="8" cy="8" r="6"/><path d="M8 7.5v3.5M8 5v.01"/></svg>;
+    case 'refresh': return <svg {...common}><path d="M2 8a6 6 0 0 1 10-4.5M14 3v3h-3M14 8a6 6 0 0 1-10 4.5M2 13v-3h3"/></svg>;
+    default: return <svg {...common}><circle cx="8" cy="8" r="5"/></svg>;
+  }
+}
+
+// Keyboard key
+function Kbd({ children, style = {} }) {
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      minWidth: 18, height: 18, padding: '0 5px',
+      borderRadius: 4,
+      background: 'rgba(255,255,255,0.06)',
+      border: '0.5px solid rgba(255,255,255,0.08)',
+      color: T.textSecondary,
+      fontFamily: T.fontMono, fontSize: 10.5, fontWeight: 500,
+      lineHeight: 1,
+      ...style,
+    }}>{children}</span>
+  );
+}
+
+Object.assign(window, { T, TrafficLights, Icon, Kbd });
+
+</script>
+<script type="text/babel">
+// Sample data — realistic but not branded
+
+const PROJECTS = [
+  { id: 'all', name: '全部', count: 11, system: true },
+  { id: 'promptpanel', name: 'PromptPanel', count: 5, current: true },
+  { id: 'fangzhou', name: '方舟业务', count: 2 },
+  { id: 'common', name: '通用项目', count: 4, common: true },
+];
+
+// kind: reply(回复), prompt(Prompt), note(说明)
+const ENTRIES = [
+  {
+    id: 'e1', title: 'Bug 修复回执', kind: 'reply', project: 'promptpanel',
+    tags: ['回执', '工程'], pinned: true, uses: 12, lastUsed: '1小时前',
+    content: '问题现象 根因 修复内容 验证结果 风险与回滚',
+    shortcut: '1',
+  },
+  {
+    id: 'e2', title: '代码审计结论', kind: 'chat', project: 'common',
+    tags: ['审计', '工程'], pinned: true, uses: 18, lastUsed: '40分钟前',
+    content: '请直接列出 P0–P2 级问题、根因、影响面和建议修法。',
+    shortcut: '2',
+  },
+  {
+    id: 'e3', title: '发布前检查清单', kind: 'note', project: 'promptpanel',
+    tags: ['发布', '检查清单'], uses: 6, lastUsed: '3小时前',
+    content: '1. 跑 swift build 和 swift test  2. 验证权限与自动粘贴链路  3. 检查数据目录和备份状态  4. 本地冷启动确认面板弹出  5. 核对快捷键组合',
+    shortcut: '3',
+  },
+  {
+    id: 'e4', title: '设计收口提示词', kind: 'prompt', project: 'promptpanel',
+    tags: ['设计', 'AI'], uses: 4, lastUsed: '1天前',
+    content: '请基于当前截图判断主链路是否足够紧凑,并给出最值得优先解决的 3 个点。',
+    shortcut: '4',
+  },
+  {
+    id: 'e5', title: '交付说明模板', kind: 'reply', project: 'promptpanel',
+    tags: ['交付'], uses: 2, lastUsed: '2天前',
+    content: '本次改动已完成实现、构建验证和窗口级验收,未触及数据结构兼容边界。',
+    shortcut: '5',
+  },
+  {
+    id: 'e6', title: '状态同步', kind: 'reply', project: 'common',
+    tags: ['同步'], uses: 20, lastUsed: '5小时前',
+    content: '已完成本地验证,下面是当前真实状态与剩余风险。',
+    shortcut: '6',
+  },
+  {
+    id: 'e7', title: '日报摘要', kind: 'note', project: 'common',
+    tags: ['日报'], uses: 9, lastUsed: '3天前',
+    content: '今天完成了主链路优化、异常链路收口和验证脚本补齐。',
+    shortcut: '7',
+  },
+  {
+    id: 'e8', title: 'PR Review 反馈', kind: 'chat', project: 'common',
+    tags: ['审计', '协作'], uses: 14, lastUsed: '6小时前',
+    content: '在 diff 上按文件粒度给出可操作反馈,优先级 high/mid/low。',
+    shortcut: '8',
+  },
+  {
+    id: 'e9', title: '周报结构', kind: 'note', project: 'common',
+    tags: ['日报', '周报'], uses: 7, lastUsed: '昨天',
+    content: '本周完成 · 本周未完成 · 下周计划 · 风险 · 需协同事项',
+    shortcut: '9',
+  },
+  {
+    id: 'e10', title: '需求澄清清单', kind: 'prompt', project: 'fangzhou',
+    tags: ['需求', 'AI'], uses: 3, lastUsed: '4天前',
+    content: '请按"目标用户 / 使用场景 / 成功指标 / 边界"四个维度反问,并标注信息缺失点。',
+  },
+  {
+    id: 'e11', title: '埋点规范', kind: 'note', project: 'fangzhou',
+    tags: ['埋点'], uses: 5, lastUsed: '1周前',
+    content: '事件名 snake_case · 属性不超过 6 个 · 必填 user_id / session_id · 版本号随包。',
+  },
+];
+
+// Kind metadata — neutral monochrome, differentiated only by glyph
+const KIND_META = {
+  reply:  { label: '回复',   icon: 'reply' },
+  chat:   { label: '对话',   icon: 'chat' },
+  note:   { label: '说明',   icon: 'doc' },
+  prompt: { label: 'Prompt', icon: 'sparkles' },
+};
+
+Object.assign(window, { PROJECTS, ENTRIES, KIND_META });
+
+</script>
+<script type="text/babel">
+// Quick Panel — Spotlight-style launcher
+// Compact rows, keyboard-first, adaptive project scope, unified filter chips.
+
+function PanelRow({ entry, index, selected, onClick, showNumber, dense, hideUses }) {
+  const meta = KIND_META[entry.kind] || KIND_META.note;
+  const h = dense ? 26 : 30;
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        height: h, padding: '0 12px 0 8px',
+        borderRadius: T.rRow,
+        background: selected ? 'rgba(124,140,248,0.12)' : 'transparent',
+        cursor: 'pointer', userSelect: 'none',
+        position: 'relative',
+      }}
+    >
+      <div style={{
+        width: 16, flexShrink: 0, textAlign: 'center',
+        fontFamily: T.fontMono, fontSize: 10,
+        color: selected ? T.accent : T.textQuaternary,
+        fontWeight: 500,
+      }}>
+        {showNumber && index < 9 ? index + 1 : ''}
+      </div>
+
+      <div style={{
+        width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        color: selected ? T.text : T.textSecondary, flexShrink: 0,
+      }}>
+        <Icon name={meta.icon} size={12.5} />
+      </div>
+
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 10 }}>
+        <div style={{
+          fontSize: 12.5, fontWeight: 500, color: T.text,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          flex: '0 0 min(max(28%, 150px), 260px)',
+        }}>
+          {entry.title}
+          {entry.pinned && (
+            <Icon name="pin" size={9.5} style={{
+              color: T.pin, marginLeft: 5, verticalAlign: 'middle', opacity: 0.85,
+            }} />
+          )}
+        </div>
+        <div style={{
+          fontSize: 11.5, color: T.textSecondary,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          flex: 1, minWidth: 0,
+        }}>
+          {entry.content}
+        </div>
+      </div>
+
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
+        color: T.textQuaternary, fontSize: 10.5,
+      }}>
+        {!hideUses && selected && <span style={{ fontFamily: T.fontMono }}>{entry.uses} 次</span>}
+        <span style={{
+          fontSize: 10, color: selected ? T.textSecondary : T.textTertiary,
+          fontWeight: 500,
+        }}>{meta.label}</span>
+      </div>
+    </div>
+  );
+}
+
+// Project scope — adaptive: pills if ≤ MAX, else current + dropdown
+function ProjectScope({ projects, active, onChange, max = 4 }) {
+  const [open, setOpen] = React.useState(false);
+  const current = projects.find(p => p.id === active) || projects[0];
+  const shouldCollapse = projects.length > max;
+
+  if (!shouldCollapse) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+        {projects.map(p => (
+          <button key={p.id} onClick={() => onChange(p.id)} style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            height: 22, padding: '0 9px', borderRadius: T.rPill,
+            background: active === p.id ? 'rgba(255,255,255,0.08)' : 'transparent',
+            color: active === p.id ? T.text : T.textSecondary,
+            border: 'none', cursor: 'pointer',
+            fontFamily: T.font, fontSize: 11.5, fontWeight: 500,
+            whiteSpace: 'nowrap',
+          }}>
+            {p.name}
+            {p.current && (
+              <span style={{
+                fontSize: 9, color: T.accent,
+                padding: '1px 4px', borderRadius: 3,
+                background: T.accentDim, fontWeight: 600, letterSpacing: 0.3,
+              }}>当前</span>
+            )}
+            <span style={{
+              fontFamily: T.fontMono, fontSize: 10,
+              color: active === p.id ? T.textTertiary : T.textQuaternary,
+            }}>{p.count}</span>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  // Collapsed: only current + chevron, click to open dropdown
+  return (
+    <div style={{ position: 'relative' }}>
+      <button onClick={() => setOpen(!open)} style={{
+        display: 'inline-flex', alignItems: 'center', gap: 5,
+        height: 22, padding: '0 8px 0 10px', borderRadius: T.rPill,
+        background: 'rgba(255,255,255,0.06)', color: T.text,
+        border: 'none', cursor: 'pointer',
+        fontSize: 11.5, fontWeight: 500, fontFamily: T.font,
+      }}>
+        <Icon name="folder" size={11} style={{ color: T.textTertiary }} />
+        {current.name}
+        {current.current && (
+          <span style={{
+            fontSize: 9, color: T.accent,
+            padding: '1px 4px', borderRadius: 3,
+            background: T.accentDim, fontWeight: 600, letterSpacing: 0.3,
+          }}>当前</span>
+        )}
+        <span style={{ fontFamily: T.fontMono, fontSize: 10, color: T.textQuaternary }}>
+          {current.count}
+        </span>
+        <Icon name="chev-down" size={10} style={{ color: T.textTertiary, marginLeft: 2 }} />
+      </button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{
+            position: 'fixed', inset: 0, zIndex: 20,
+          }} />
+          <div style={{
+            position: 'absolute', top: 26, left: 0, zIndex: 21,
+            minWidth: 200, padding: 4,
+            background: T.surfaceRaised,
+            border: '0.5px solid ' + T.borderStrong,
+            borderRadius: 8, boxShadow: T.shadowPopover,
+          }}>
+            {projects.map(p => (
+              <button key={p.id} onClick={() => { onChange(p.id); setOpen(false); }} style={{
+                display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+                height: 26, padding: '0 8px', borderRadius: 5,
+                background: active === p.id ? 'rgba(255,255,255,0.06)' : 'transparent',
+                color: T.text, border: 'none', cursor: 'pointer',
+                fontSize: 11.5, fontWeight: 500, fontFamily: T.font,
+                textAlign: 'left',
+              }}>
+                <Icon name="folder" size={11} style={{ color: T.textTertiary }} />
+                <span style={{ flex: 1 }}>{p.name}</span>
+                {p.current && <span style={{
+                  fontSize: 9, color: T.accent,
+                  padding: '1px 4px', borderRadius: 3,
+                  background: T.accentDim, fontWeight: 600,
+                }}>当前</span>}
+                <span style={{ fontFamily: T.fontMono, fontSize: 10, color: T.textQuaternary }}>
+                  {p.count}
+                </span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Unified filter chip (works for tags and formats alike)
+function FilterChip({ label, icon, count, active, onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 4,
+      height: 22, padding: '0 8px',
+      background: active ? T.accentDim : 'transparent',
+      color: active ? T.accent : T.textTertiary,
+      border: 'none', borderRadius: 4,
+      fontSize: 11, fontFamily: T.font, fontWeight: 500,
+      cursor: 'pointer', whiteSpace: 'nowrap',
+    }}>
+      {icon && <Icon name={icon} size={10.5} />}
+      {label}
+      {count != null && <span style={{
+        fontFamily: T.fontMono, fontSize: 9.5,
+        color: active ? T.accent : T.textQuaternary, opacity: 0.8,
+      }}>{count}</span>}
+    </button>
+  );
+}
+
+function QuickPanel({ width = 720, showFooter = true, compact = false }) {
+  const [query, setQuery] = React.useState('');
+  const [selectedIdx, setSelectedIdx] = React.useState(0);
+  const [activeProject, setActiveProject] = React.useState('all');
+  const [activeFilter, setActiveFilter] = React.useState(null); // {kind:'tag'|'format', value:string}
+
+  const { cleanQuery, tagFilter } = React.useMemo(() => {
+    const m = query.match(/#(\S+)/);
+    return {
+      cleanQuery: query.replace(/#\S+/g, '').trim().toLowerCase(),
+      tagFilter: m ? m[1] : null,
+    };
+  }, [query]);
+
+  const filtered = React.useMemo(() => {
+    let list = ENTRIES;
+    if (activeProject !== 'all') list = list.filter(e => e.project === activeProject);
+    if (tagFilter) list = list.filter(e => e.tags.includes(tagFilter));
+    else if (activeFilter) {
+      if (activeFilter.kind === 'tag') list = list.filter(e => e.tags.includes(activeFilter.value));
+      if (activeFilter.kind === 'format') list = list.filter(e => e.kind === activeFilter.value);
+    }
+    if (cleanQuery) {
+      list = list.filter(e =>
+        e.title.toLowerCase().includes(cleanQuery) ||
+        e.content.toLowerCase().includes(cleanQuery) ||
+        e.tags.some(t => t.toLowerCase().includes(cleanQuery))
+      );
+    }
+    return [...list].sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+      return b.uses - a.uses;
+    });
+  }, [cleanQuery, activeProject, activeFilter, tagFilter]);
+
+  React.useEffect(() => { setSelectedIdx(0); }, [query, activeProject, activeFilter]);
+
+  // Build unified filter list: formats present + most-used tags, in scope
+  const filterChips = React.useMemo(() => {
+    const scope = activeProject === 'all' ? ENTRIES : ENTRIES.filter(e => e.project === activeProject);
+    const formatCounts = new Map();
+    const tagCounts = new Map();
+    scope.forEach(e => {
+      formatCounts.set(e.kind, (formatCounts.get(e.kind) || 0) + 1);
+      e.tags.forEach(t => tagCounts.set(t, (tagCounts.get(t) || 0) + 1));
+    });
+    const formats = [...formatCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, n]) => ({ kind: 'format', value: k, label: KIND_META[k].label, icon: KIND_META[k].icon, count: n }));
+    const tags = [...tagCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([t, n]) => ({ kind: 'tag', value: t, label: '#' + t, count: n }));
+    return [...formats, ...tags];
+  }, [activeProject]);
+
+  const currentProjectName = PROJECTS.find(p => p.id === activeProject)?.name || '全部';
+
+  return (
+    <div style={{
+      width,
+      background: T.surface,
+      borderRadius: 14,
+      border: '0.5px solid ' + T.borderStrong,
+      boxShadow: T.shadowPopover,
+      overflow: 'hidden',
+      fontFamily: T.font, color: T.text,
+      display: 'flex', flexDirection: 'column',
+    }}>
+      {/* Header row: scope + search */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '10px 12px 10px',
+        borderBottom: '0.5px solid ' + T.divider,
+      }}>
+        <ProjectScope projects={PROJECTS} active={activeProject} onChange={setActiveProject} />
+        <div style={{
+          width: 1, height: 16, background: T.divider, margin: '0 2px',
+        }} />
+        <div style={{ color: T.textTertiary, display: 'flex' }}>
+          <Icon name="search" size={13} />
+        </div>
+        <div style={{ flex: 1, position: 'relative', minWidth: 0 }}>
+          {!query && (
+            <div style={{
+              position: 'absolute', inset: '0 auto 0 4px',
+              display: 'flex', alignItems: 'center',
+              color: T.textTertiary, fontSize: 12.5, fontWeight: 500,
+              pointerEvents: 'none', whiteSpace: 'nowrap',
+            }}>
+              搜索 {currentProjectName} · 输入 # 按标签筛选
+            </div>
+          )}
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            autoFocus
+            style={{
+              width: '100%', background: 'transparent', border: 'none', outline: 'none',
+              color: T.text, fontSize: 13, fontFamily: T.font,
+            }}
+          />
+        </div>
+        {query && (
+          <button onClick={() => setQuery('')} style={{
+            background: 'transparent', border: 'none', color: T.textTertiary,
+            cursor: 'pointer', padding: 2, display: 'flex',
+          }}><Icon name="close" size={12} /></button>
+        )}
+        <button title="固定面板" style={{
+          background: 'transparent', border: 'none', color: T.textTertiary,
+          cursor: 'pointer', padding: 2, display: 'flex',
+        }}><Icon name="pin" size={12} /></button>
+      </div>
+
+      {/* Unified filter chips — horizontally scrollable */}
+      {filterChips.length > 0 && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 2,
+          padding: '6px 10px', borderBottom: '0.5px solid ' + T.divider,
+          overflowX: 'auto', whiteSpace: 'nowrap',
+          scrollbarWidth: 'none',
+        }}>
+          <FilterChip label="全部" count={filtered.length}
+            active={!activeFilter}
+            onClick={() => setActiveFilter(null)} />
+          <div style={{ width: 1, height: 14, background: T.divider, margin: '0 4px', flexShrink: 0 }} />
+          {filterChips.map(c => (
+            <FilterChip key={c.kind + ':' + c.value}
+              label={c.label} icon={c.icon} count={c.count}
+              active={activeFilter && activeFilter.kind === c.kind && activeFilter.value === c.value}
+              onClick={() => setActiveFilter(
+                activeFilter && activeFilter.value === c.value ? null : { kind: c.kind, value: c.value }
+              )} />
+          ))}
+        </div>
+      )}
+
+      {/* List */}
+      <div style={{ maxHeight: 420, overflow: 'auto', padding: '6px 6px' }}>
+        {filtered.length === 0 ? (
+          <div style={{
+            padding: '40px 20px', textAlign: 'center',
+            color: T.textTertiary, fontSize: 13,
+          }}>
+            没有匹配的词条
+            <div style={{ color: T.textQuaternary, fontSize: 11.5, marginTop: 4 }}>
+              回车可用当前输入新建词条到「{currentProjectName}」
+            </div>
+          </div>
+        ) : filtered.map((entry, i) => (
+          <PanelRow key={entry.id}
+            entry={entry} index={i}
+            selected={i === selectedIdx}
+            showNumber={!query}
+            dense={compact}
+            onClick={() => setSelectedIdx(i)}
+          />
+        ))}
+      </div>
+
+      {/* Footer — optional */}
+      {showFooter && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 14,
+          height: 28, padding: '0 12px',
+          borderTop: '0.5px solid ' + T.divider,
+          color: T.textTertiary, fontSize: 10.5,
+          background: 'rgba(0,0,0,0.15)',
+        }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Kbd>↑↓</Kbd>选择
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Kbd>⏎</Kbd>执行
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Kbd>Esc</Kbd>关闭
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Kbd>⌘C</Kbd>复制
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Kbd>⌘1-9</Kbd>直达
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Kbd>⌘P</Kbd>固定
+          </span>
+          <div style={{ flex: 1 }} />
+          <span style={{ color: T.textTertiary, fontFamily: T.fontMono }}>
+            {filtered.length}/{ENTRIES.length}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+Object.assign(window, { QuickPanel });
+
+</script>
+<script type="text/babel">
+// Library — three-pane: projects | entries list | preview
+// Unified filter chips; preview has primary action; +N tag overflow.
+
+function ProjectRow({ project, active, onClick }) {
+  return (
+    <div onClick={onClick} style={{
+      display: 'flex', alignItems: 'center', gap: 8,
+      height: 28, padding: '0 8px',
+      borderRadius: T.rRow,
+      background: active ? 'rgba(255,255,255,0.06)' : 'transparent',
+      cursor: 'pointer', userSelect: 'none',
+      color: active ? T.text : T.textSecondary,
+      fontSize: 12.5, fontWeight: 500,
+    }}>
+      <Icon name="folder" size={13} style={{ color: active ? T.textSecondary : T.textTertiary }} />
+      <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {project.name}
+      </span>
+      {project.current && (
+        <span style={{
+          fontSize: 9, color: T.accent,
+          padding: '1px 4px', borderRadius: 3,
+          background: T.accentDim, fontWeight: 600, letterSpacing: 0.3,
+        }}>当前</span>
+      )}
+      <span style={{
+        fontFamily: T.fontMono, fontSize: 10.5, color: T.textQuaternary,
+      }}>{project.count}</span>
+    </div>
+  );
+}
+
+function TagChips({ tags, max = 2 }) {
+  const shown = tags.slice(0, max);
+  const rest = tags.length - max;
+  return (
+    <div style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+      {shown.map(t => (
+        <span key={t} style={{
+          fontFamily: T.font, color: T.textTertiary,
+          padding: '1px 5px', borderRadius: 3,
+          background: 'rgba(255,255,255,0.04)',
+          fontSize: 10, fontWeight: 500,
+        }}>{t}</span>
+      ))}
+      {rest > 0 && (
+        <span style={{
+          fontFamily: T.fontMono, color: T.textQuaternary,
+          fontSize: 10, fontWeight: 500,
+        }}>+{rest}</span>
+      )}
+    </div>
+  );
+}
+
+function EntryRow({ entry, selected, onClick }) {
+  const meta = KIND_META[entry.kind] || KIND_META.note;
+  return (
+    <div onClick={onClick} style={{
+      display: 'flex', alignItems: 'flex-start', gap: 10,
+      padding: '10px 14px 10px 12px',
+      cursor: 'pointer', userSelect: 'none',
+      background: selected ? 'rgba(255,255,255,0.04)' : 'transparent',
+      borderLeft: `2px solid ${selected ? T.accent : 'transparent'}`,
+      position: 'relative',
+    }}>
+      <div style={{
+        width: 18, height: 18, display: 'flex',
+        alignItems: 'center', justifyContent: 'center',
+        color: selected ? T.text : T.textSecondary,
+        marginTop: 1, flexShrink: 0,
+      }}>
+        <Icon name={meta.icon} size={12.5} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2,
+        }}>
+          <span style={{
+            fontSize: 13, fontWeight: 500, color: T.text,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            flex: 1, minWidth: 0,
+          }}>{entry.title}</span>
+          {entry.pinned && <Icon name="pin" size={10} style={{ color: T.pin, opacity: 0.9 }} />}
+        </div>
+        <div style={{
+          fontSize: 11.5, color: T.textTertiary,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          marginBottom: 4,
+        }}>{entry.content}</div>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          fontSize: 10.5, color: T.textQuaternary,
+        }}>
+          <span style={{ fontFamily: T.fontMono }}>{entry.uses}次</span>
+          <span style={{ opacity: 0.5 }}>·</span>
+          <span>{entry.lastUsed}</span>
+          <TagChips tags={entry.tags} max={2} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function iconBtn() {
+  return {
+    width: 26, height: 24, display: 'inline-flex',
+    alignItems: 'center', justifyContent: 'center',
+    background: 'transparent', border: 'none',
+    borderRadius: 5, cursor: 'pointer',
+    color: T.textTertiary,
+  };
+}
+
+function PrimaryBtn({ icon, children, onClick, kbd }) {
+  return (
+    <button onClick={onClick} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      height: 28, padding: '0 12px',
+      background: T.accent, color: '#fff',
+      border: 'none', borderRadius: 6, cursor: 'pointer',
+      fontSize: 12, fontWeight: 600,
+    }}>
+      {icon && <Icon name={icon} size={12} />}
+      {children}
+      {kbd && <span style={{
+        marginLeft: 2, fontFamily: T.fontMono, fontSize: 10,
+        opacity: 0.7, fontWeight: 500,
+      }}>{kbd}</span>}
+    </button>
+  );
+}
+
+function GhostBtn({ icon, children, onClick, kbd }) {
+  return (
+    <button onClick={onClick} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      height: 28, padding: '0 11px',
+      background: 'rgba(255,255,255,0.05)',
+      color: T.text,
+      border: '0.5px solid ' + T.border,
+      borderRadius: 6, cursor: 'pointer',
+      fontSize: 12, fontWeight: 500,
+    }}>
+      {icon && <Icon name={icon} size={12} />}
+      {children}
+      {kbd && <span style={{
+        marginLeft: 2, fontFamily: T.fontMono, fontSize: 10,
+        color: T.textTertiary, fontWeight: 500,
+      }}>{kbd}</span>}
+    </button>
+  );
+}
+
+function PreviewPane({ entry }) {
+  if (!entry) {
+    return (
+      <div style={{
+        flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        color: T.textQuaternary, fontSize: 13,
+      }}>选择一条词条查看</div>
+    );
+  }
+  const meta = KIND_META[entry.kind] || KIND_META.note;
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+      {/* Header */}
+      <div style={{
+        padding: '14px 20px 14px',
+        borderBottom: '0.5px solid ' + T.divider,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            fontSize: 10.5, color: T.textTertiary, fontWeight: 500,
+            padding: '2px 7px', borderRadius: 4,
+            background: 'rgba(255,255,255,0.05)',
+          }}>
+            <Icon name={meta.icon} size={10} />{meta.label}
+          </span>
+          {entry.pinned && (
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 3,
+              fontSize: 10.5, color: T.pin, fontWeight: 500,
+              padding: '2px 7px', borderRadius: 4,
+              background: 'rgba(212,163,90,0.10)',
+            }}>
+              <Icon name="pin" size={10} />已置顶
+            </span>
+          )}
+          <span style={{ color: T.textQuaternary, fontSize: 11, marginLeft: 2 }}>
+            · {entry.uses}次使用 · {entry.lastUsed}
+          </span>
+          <div style={{ flex: 1 }} />
+          <button style={iconBtn()} title="更多"><Icon name="dots" size={12} /></button>
+        </div>
+        <div style={{
+          fontSize: 18, fontWeight: 600, color: T.text,
+          letterSpacing: -0.1, marginBottom: 12,
+        }}>{entry.title}</div>
+        {/* Primary actions */}
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <PrimaryBtn icon="copy" kbd="⌘C">复制</PrimaryBtn>
+          <GhostBtn icon="return" kbd="⏎">插入到应用</GhostBtn>
+          <GhostBtn icon="edit" kbd="⌘E">编辑</GhostBtn>
+          <div style={{ flex: 1 }} />
+          <button style={iconBtn()} title="置顶">
+            <Icon name="pin" size={13} style={{ color: entry.pinned ? T.pin : T.textTertiary }} />
+          </button>
+          <button style={iconBtn()} title="删除">
+            <Icon name="trash" size={13} />
+          </button>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px 20px' }}>
+        <div style={{
+          fontSize: 13, color: T.text, lineHeight: 1.7, whiteSpace: 'pre-wrap',
+        }}>{entry.content}</div>
+      </div>
+
+      {/* Meta footer — single row */}
+      <div style={{
+        padding: '10px 20px',
+        borderTop: '0.5px solid ' + T.divider,
+        display: 'flex', alignItems: 'center', gap: 20,
+        fontSize: 11.5,
+      }}>
+        <MetaInline label="标签" value={
+          entry.tags.length === 0 ? <span style={{ color: T.textQuaternary }}>无</span> :
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            {entry.tags.map(t => (
+              <span key={t} style={{
+                padding: '1px 6px', borderRadius: 3,
+                background: 'rgba(255,255,255,0.05)',
+                color: T.textSecondary, fontSize: 10.5, fontWeight: 500,
+              }}>#{t}</span>
+            ))}
+          </div>
+        } />
+        <div style={{ width: 1, height: 16, background: T.divider }} />
+        <MetaInline label="快捷键" value={
+          entry.shortcut
+            ? <span style={{ display: 'inline-flex', gap: 3 }}><Kbd>⌥</Kbd><Kbd>{entry.shortcut}</Kbd></span>
+            : <button style={{
+                background: 'transparent', border: 'none', color: T.textTertiary,
+                cursor: 'pointer', fontSize: 11, fontFamily: T.font,
+                textDecoration: 'underline', textDecorationStyle: 'dotted',
+                textUnderlineOffset: 2,
+              }}>设置</button>
+        } />
+      </div>
+    </div>
+  );
+}
+
+function MetaInline({ label, value }) {
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+      <span style={{ color: T.textQuaternary, fontSize: 11 }}>{label}</span>
+      <span style={{ color: T.textSecondary }}>{value}</span>
+    </div>
+  );
+}
+
+function Library() {
+  const [activeProject, setActiveProject] = React.useState('promptpanel');
+  const [selectedId, setSelectedId] = React.useState('e1');
+  const [query, setQuery] = React.useState('');
+  const [sortBy, setSortBy] = React.useState('uses');
+  const [activeFilter, setActiveFilter] = React.useState(null);
+
+  const filtered = React.useMemo(() => {
+    let list = ENTRIES;
+    if (activeProject !== 'all') list = list.filter(e => e.project === activeProject);
+    if (activeFilter) {
+      if (activeFilter.kind === 'tag') list = list.filter(e => e.tags.includes(activeFilter.value));
+      if (activeFilter.kind === 'format') list = list.filter(e => e.kind === activeFilter.value);
+    }
+    if (query) {
+      const q = query.toLowerCase();
+      list = list.filter(e =>
+        e.title.toLowerCase().includes(q) ||
+        e.content.toLowerCase().includes(q) ||
+        e.tags.some(t => t.toLowerCase().includes(q))
+      );
+    }
+    return [...list].sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+      if (sortBy === 'uses') return b.uses - a.uses;
+      if (sortBy === 'alpha') return a.title.localeCompare(b.title);
+      return 0;
+    });
+  }, [activeProject, query, sortBy, activeFilter]);
+
+  const selected = filtered.find(e => e.id === selectedId) || filtered[0];
+
+  // Unified filter chips for library's middle column
+  const filterChips = React.useMemo(() => {
+    const scope = activeProject === 'all' ? ENTRIES : ENTRIES.filter(e => e.project === activeProject);
+    const fc = new Map(), tc = new Map();
+    scope.forEach(e => {
+      fc.set(e.kind, (fc.get(e.kind) || 0) + 1);
+      e.tags.forEach(t => tc.set(t, (tc.get(t) || 0) + 1));
+    });
+    return [
+      ...[...fc.entries()].sort((a, b) => b[1] - a[1])
+        .map(([k, n]) => ({ kind: 'format', value: k, label: KIND_META[k].label, icon: KIND_META[k].icon, count: n })),
+      ...[...tc.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
+        .map(([t, n]) => ({ kind: 'tag', value: t, label: '#' + t, count: n })),
+    ];
+  }, [activeProject]);
+
+  return (
+    <div style={{ display: 'flex', height: '100%', background: T.surface }}>
+      {/* Left: projects */}
+      <div style={{
+        width: 200, flexShrink: 0,
+        background: T.sidebar,
+        borderRight: '0.5px solid ' + T.divider,
+        display: 'flex', flexDirection: 'column',
+      }}>
+        <div style={{
+          padding: '14px 12px 8px',
+          display: 'flex', alignItems: 'center', gap: 6,
+        }}>
+          <span style={{
+            flex: 1, fontSize: 10.5, fontWeight: 600,
+            color: T.textQuaternary, letterSpacing: 0.8,
+            textTransform: 'uppercase',
+          }}>项目</span>
+          <button style={{ ...iconBtn(), width: 22, height: 22 }} title="新建项目">
+            <Icon name="plus" size={12} />
+          </button>
+        </div>
+        <div style={{ padding: '0 6px', flex: 1, overflow: 'auto' }}>
+          {PROJECTS.map(p => (
+            <ProjectRow key={p.id} project={p}
+              active={activeProject === p.id}
+              onClick={() => setActiveProject(p.id)} />
+          ))}
+        </div>
+        <div style={{
+          padding: '10px 12px',
+          borderTop: '0.5px solid ' + T.divider,
+          fontSize: 10.5, color: T.textQuaternary, lineHeight: 1.5,
+        }}>
+          <div style={{ color: T.textTertiary }}>
+            面板默认在 <span style={{ color: T.textSecondary, fontWeight: 500 }}>PromptPanel</span> 中搜索
+          </div>
+        </div>
+      </div>
+
+      {/* Middle: list */}
+      <div style={{
+        width: 360, flexShrink: 0,
+        background: T.surface,
+        borderRight: '0.5px solid ' + T.divider,
+        display: 'flex', flexDirection: 'column',
+      }}>
+        {/* Search */}
+        <div style={{ padding: '12px 14px 10px', borderBottom: '0.5px solid ' + T.divider }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            height: 30, padding: '0 10px',
+            background: T.surfaceRaised,
+            borderRadius: 7, border: '0.5px solid ' + T.border,
+          }}>
+            <Icon name="search" size={12} style={{ color: T.textTertiary }} />
+            <input
+              value={query} onChange={e => setQuery(e.target.value)}
+              placeholder="搜索标题或内容"
+              style={{
+                flex: 1, background: 'transparent', border: 'none', outline: 'none',
+                color: T.text, fontSize: 12, fontFamily: T.font,
+              }}
+            />
+            <Kbd>⌘F</Kbd>
+          </div>
+        </div>
+
+        {/* Unified filter chips */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 2,
+          padding: '6px 10px', borderBottom: '0.5px solid ' + T.divider,
+          overflowX: 'auto', whiteSpace: 'nowrap', scrollbarWidth: 'none',
+        }}>
+          <FilterChip label="全部" count={filtered.length}
+            active={!activeFilter}
+            onClick={() => setActiveFilter(null)} />
+          <div style={{ width: 1, height: 14, background: T.divider, margin: '0 4px', flexShrink: 0 }} />
+          {filterChips.map(c => (
+            <FilterChip key={c.kind + ':' + c.value}
+              label={c.label} icon={c.icon} count={c.count}
+              active={activeFilter && activeFilter.kind === c.kind && activeFilter.value === c.value}
+              onClick={() => setActiveFilter(
+                activeFilter && activeFilter.value === c.value ? null : { kind: c.kind, value: c.value }
+              )} />
+          ))}
+        </div>
+
+        {/* Count + sort + new */}
+        <div style={{
+          padding: '6px 14px',
+          display: 'flex', alignItems: 'center',
+          fontSize: 10.5, color: T.textQuaternary,
+          borderBottom: '0.5px solid ' + T.divider,
+        }}>
+          <span style={{ textTransform: 'uppercase', letterSpacing: 0.8, fontWeight: 500 }}>
+            {filtered.length} 条
+          </span>
+          <div style={{ flex: 1 }} />
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{
+            background: 'transparent', border: 'none', color: T.textTertiary,
+            fontSize: 11, fontFamily: T.font, cursor: 'pointer',
+            padding: '2px 4px', outline: 'none',
+          }}>
+            <option value="uses">按使用</option>
+            <option value="recent">按最近</option>
+            <option value="alpha">按字母</option>
+          </select>
+          <button style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            background: 'transparent', border: 'none', cursor: 'pointer',
+            color: T.textSecondary, fontSize: 11, fontWeight: 500,
+            padding: '2px 7px', borderRadius: 4,
+          }}>
+            <Icon name="plus" size={11} />新建
+          </button>
+        </div>
+
+        {/* List */}
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          {filtered.map(entry => (
+            <EntryRow key={entry.id}
+              entry={entry}
+              selected={selected && selected.id === entry.id}
+              onClick={() => setSelectedId(entry.id)} />
+          ))}
+        </div>
+      </div>
+
+      {/* Right: preview */}
+      <PreviewPane entry={selected} />
+    </div>
+  );
+}
+
+Object.assign(window, { Library });
+
+</script>
+<script type="text/babel">
+// Settings — three sub-tabs. Status only when something's wrong.
+// Exposes "show footer" toggle for Quick Panel. Neutral tab underline.
+
+function SettingsRow({ label, hint, control, inline = true }) {
+  return (
+    <div style={{
+      display: 'flex',
+      flexDirection: inline ? 'row' : 'column',
+      alignItems: inline ? 'center' : 'stretch',
+      gap: inline ? 14 : 6,
+      padding: '14px 0',
+      borderBottom: '0.5px solid ' + T.divider,
+    }}>
+      <div style={{ flex: inline ? 1 : undefined, minWidth: 0 }}>
+        <div style={{ fontSize: 13, color: T.text, fontWeight: 500 }}>{label}</div>
+        {hint && <div style={{
+          fontSize: 11.5, color: T.textTertiary, marginTop: 2, lineHeight: 1.5,
+        }}>{hint}</div>}
+      </div>
+      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+        {control}
+      </div>
+    </div>
+  );
+}
+
+function SettingsSection({ title, children }) {
+  return (
+    <div style={{ marginBottom: 28 }}>
+      <div style={{
+        fontSize: 10.5, fontWeight: 600,
+        color: T.textQuaternary, letterSpacing: 0.8,
+        textTransform: 'uppercase',
+        marginBottom: 4, padding: '0 2px',
+      }}>{title}</div>
+      <div>{children}</div>
+    </div>
+  );
+}
+
+function Toggle({ on, onChange }) {
+  return (
+    <button onClick={() => onChange(!on)} style={{
+      width: 30, height: 17, padding: 2,
+      borderRadius: 999, border: 'none',
+      background: on ? T.accent : 'rgba(255,255,255,0.12)',
+      cursor: 'pointer', position: 'relative',
+      transition: 'background 0.15s',
+    }}>
+      <div style={{
+        width: 13, height: 13, borderRadius: '50%',
+        background: '#fff',
+        transform: on ? 'translateX(13px)' : 'translateX(0)',
+        transition: 'transform 0.15s',
+      }} />
+    </button>
+  );
+}
+
+function Btn({ icon, children, variant = 'default', onClick }) {
+  const isPrimary = variant === 'primary';
+  const isDanger = variant === 'danger';
+  return (
+    <button onClick={onClick} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 5,
+      height: 26, padding: '0 10px',
+      background: isPrimary ? T.accent
+        : isDanger ? 'transparent'
+        : 'rgba(255,255,255,0.06)',
+      border: '0.5px solid ' + (isPrimary ? 'transparent'
+        : isDanger ? 'rgba(212,112,112,0.3)'
+        : T.border),
+      borderRadius: 6,
+      color: isPrimary ? '#fff' : isDanger ? T.danger : T.text,
+      fontFamily: T.font, fontSize: 11.5, fontWeight: 500, cursor: 'pointer',
+    }}>
+      {icon && <Icon name={icon} size={11} />}{children}
+    </button>
+  );
+}
+
+// Quiet status: only shows when there's something non-green.
+// Normal state: a single small inline hint.
+function StatusLine({ hasIssue }) {
+  if (!hasIssue) {
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '6px 0 18px', fontSize: 11.5,
+        color: T.textQuaternary,
+      }}>
+        <span style={{
+          width: 5, height: 5, borderRadius: '50%', background: T.success,
+          boxShadow: '0 0 0 2.5px ' + T.successDim,
+        }} />
+        运行正常 · 11 条词条 · 最近备份 今天 06:07
+        <div style={{ flex: 1 }} />
+        <span style={{ fontFamily: T.fontMono, fontSize: 11, color: T.textQuaternary }}>
+          v1.0.0
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10,
+      padding: '10px 14px', marginBottom: 20,
+      background: T.warnDim,
+      border: '0.5px solid rgba(212,163,90,0.25)',
+      borderRadius: 8, fontSize: 12,
+    }}>
+      <Icon name="info" size={13} style={{ color: T.warn }} />
+      <span style={{ color: T.text, fontWeight: 500 }}>辅助功能权限未开启</span>
+      <span style={{ color: T.textTertiary }}>
+        快捷键无法监听，面板呼不出来。
+      </span>
+      <div style={{ flex: 1 }} />
+      <Btn variant="primary">前往授权</Btn>
+    </div>
+  );
+}
+
+function GeneralTab({ prefs, setPrefs }) {
+  const [recording, setRecording] = React.useState(false);
+
+  return (
+    <div>
+      <SettingsSection title="快捷键">
+        <SettingsRow
+          label="呼出面板"
+          hint="这是呼出快捷面板唯一的入口。"
+          control={
+            <button onClick={() => setRecording(!recording)} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              minWidth: 100, height: 28, padding: '0 12px',
+              background: recording ? T.accentDim : T.surfaceRaised,
+              border: '0.5px solid ' + (recording ? T.accentBorder : T.border),
+              borderRadius: 6, cursor: 'pointer',
+              fontFamily: T.fontMono, fontSize: 12.5,
+              color: recording ? T.accent : T.text, fontWeight: 500,
+              justifyContent: 'center',
+            }}>
+              {recording ? '按下组合键…' : '⌥ 2'}
+            </button>
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title="面板行为">
+        <SettingsRow
+          label="固定面板"
+          hint="关闭时面板失焦自动收起，更利落。"
+          control={<Toggle on={prefs.pinPanel} onChange={v => setPrefs({ ...prefs, pinPanel: v })} />}
+        />
+        <SettingsRow
+          label="执行后关闭"
+          hint="粘贴后自动收起面板，不留痕。"
+          control={<Toggle on={prefs.closeAfterRun} onChange={v => setPrefs({ ...prefs, closeAfterRun: v })} />}
+        />
+        <SettingsRow
+          label="默认作用域"
+          hint="面板打开时预置的项目筛选。"
+          control={
+            <select
+              value={prefs.scope}
+              onChange={e => setPrefs({ ...prefs, scope: e.target.value })}
+              style={{
+                height: 26, padding: '0 26px 0 10px',
+                background: T.surfaceRaised,
+                border: '0.5px solid ' + T.border,
+                borderRadius: 6, color: T.text,
+                fontFamily: T.font, fontSize: 11.5,
+                appearance: 'none', cursor: 'pointer',
+              }}>
+              <option value="current">当前执行项目</option>
+              <option value="all">全部</option>
+              <option value="common">通用项目</option>
+            </select>
+          }
+        />
+        <SettingsRow
+          label="显示键盘提示栏"
+          hint="面板底部显示 ⏎/⌘C/⌘1-9 等提示。熟练后可关闭。"
+          control={<Toggle on={prefs.showFooter} onChange={v => setPrefs({ ...prefs, showFooter: v })} />}
+        />
+        <SettingsRow
+          label="紧凑行高"
+          hint="每行更紧凑，一屏可见更多词条（约 12 条）。"
+          control={<Toggle on={prefs.compact} onChange={v => setPrefs({ ...prefs, compact: v })} />}
+        />
+      </SettingsSection>
+
+      <SettingsSection title="权限与启动">
+        <SettingsRow
+          label="辅助功能权限"
+          hint="用于监听快捷键和自动粘贴。"
+          control={
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                color: T.success, fontSize: 11.5, fontWeight: 500,
+                padding: '2px 7px', borderRadius: 4, background: T.successDim,
+              }}>
+                <Icon name="check" size={10} />已授权
+              </span>
+              <Btn icon="refresh">重新检测</Btn>
+            </div>
+          }
+        />
+        <SettingsRow
+          label="登录时启动"
+          hint="系统启动时自动在后台运行。"
+          control={<Toggle on={prefs.launchAtLogin} onChange={v => setPrefs({ ...prefs, launchAtLogin: v })} />}
+        />
+      </SettingsSection>
+    </div>
+  );
+}
+
+function BackupTab() {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <div>
+      <SettingsSection title="备份">
+        <SettingsRow
+          label="自动备份"
+          hint="每次启动时备份一次，最多保留 7 份。"
+          control={<Toggle on={true} onChange={() => {}} />}
+        />
+        <SettingsRow
+          label="备份状态"
+          hint="当前已保存 1 / 7 份，最近一次：今天 06:07。"
+          control={
+            <div style={{ display: 'flex', gap: 6 }}>
+              <Btn icon="database">备份目录</Btn>
+              <Btn icon="plus" variant="primary">立即备份</Btn>
+            </div>
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title="维护">
+        <SettingsRow label="刷新状态" hint="重新读取数据库和权限状态。"
+          control={<Btn icon="refresh">刷新</Btn>} />
+        <SettingsRow label="清理旧日志" hint="当前日志目录约占 4.2 MB。"
+          control={<Btn icon="trash" variant="danger">清理</Btn>} />
+      </SettingsSection>
+
+      <SettingsSection title="数据位置">
+        <div style={{
+          border: '0.5px solid ' + T.border,
+          borderRadius: 8, background: 'rgba(0,0,0,0.15)',
+        }}>
+          <button onClick={() => setOpen(!open)} style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            width: '100%', padding: '12px 14px',
+            background: 'transparent', border: 'none',
+            color: T.textSecondary, cursor: 'pointer',
+            fontFamily: T.font, fontSize: 12,
+          }}>
+            <Icon name={open ? 'chev-down' : 'chev-right'} size={11} style={{ color: T.textTertiary }} />
+            <span style={{ color: T.text, fontWeight: 500 }}>文件路径</span>
+            <span style={{ color: T.textQuaternary, fontSize: 11 }}>
+              落盘、备份、恢复隔离目录
+            </span>
+            <div style={{ flex: 1 }} />
+            <span style={{ color: T.textQuaternary, fontSize: 11 }}>
+              {open ? '收起' : '展开'}
+            </span>
+          </button>
+          {open && (
+            <div style={{ padding: '2px 14px 14px 32px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {[
+                ['数据库', '/var/folders/…/app-support/promptpanel.db'],
+                ['备份', '/var/folders/…/app-support/Backups'],
+                ['恢复隔离', '/var/folders/…/app-support/Recovery'],
+                ['日志', '/var/folders/…/logs'],
+              ].map(([k, v]) => (
+                <div key={k}>
+                  <div style={{ fontSize: 10.5, color: T.textQuaternary, letterSpacing: 0.5, marginBottom: 2 }}>{k}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <code style={{
+                      flex: 1, fontFamily: T.fontMono, fontSize: 11, color: T.textSecondary,
+                      padding: '4px 8px', borderRadius: 4, background: 'rgba(255,255,255,0.03)',
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>{v}</code>
+                    <button style={{
+                      width: 24, height: 24, display: 'inline-flex',
+                      alignItems: 'center', justifyContent: 'center',
+                      background: 'transparent', border: 'none',
+                      borderRadius: 5, cursor: 'pointer', color: T.textTertiary,
+                    }} title="复制">
+                      <Icon name="copy" size={11} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </SettingsSection>
+    </div>
+  );
+}
+
+function AboutTab() {
+  return (
+    <div>
+      <SettingsSection title="版本">
+        <SettingsRow
+          label="当前版本"
+          hint="PromptPanel 1.0.0 (构建 1)"
+          control={<span style={{ fontFamily: T.fontMono, fontSize: 11.5, color: T.textSecondary }}>1.0.0 (1)</span>}
+        />
+        <SettingsRow
+          label="自动更新"
+          hint="当前为开发版本，未配置更新源。发布版本会自动提示新版。"
+          control={<Btn icon="refresh">检查更新</Btn>}
+        />
+      </SettingsSection>
+
+      <SettingsSection title="运行日志">
+        <SettingsRow label="最近执行"
+          control={<span style={{ color: T.textSecondary, fontSize: 12 }}>暂无</span>} />
+        <SettingsRow label="最近异常"
+          control={<span style={{ color: T.textSecondary, fontSize: 12 }}>暂无</span>} />
+        <SettingsRow label="近 7 天" hint="执行 0 次 · 成功 0 · 失败 0"
+          control={<Btn icon="doc">查看日志</Btn>} />
+      </SettingsSection>
+    </div>
+  );
+}
+
+function Settings({ prefs, setPrefs }) {
+  const [tab, setTab] = React.useState('general');
+  return (
+    <div style={{
+      height: '100%', background: T.surface,
+      display: 'flex', flexDirection: 'column', overflow: 'hidden',
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 2,
+        padding: '10px 20px 0',
+        borderBottom: '0.5px solid ' + T.divider,
+      }}>
+        {[
+          ['general', '通用'],
+          ['backup', '备份与数据'],
+          ['about', '关于'],
+        ].map(([id, label]) => (
+          <button key={id} onClick={() => setTab(id)} style={{
+            padding: '8px 12px 10px',
+            background: 'transparent', border: 'none',
+            color: tab === id ? T.text : T.textTertiary,
+            fontFamily: T.font, fontSize: 12.5, fontWeight: 500,
+            cursor: 'pointer',
+            borderBottom: '2px solid ' + (tab === id ? T.text : 'transparent'),
+            marginBottom: -1,
+          }}>{label}</button>
+        ))}
+      </div>
+
+      <div style={{ flex: 1, overflow: 'auto' }}>
+        <div style={{ maxWidth: 680, margin: '0 auto', padding: '14px 20px 40px' }}>
+          <StatusLine hasIssue={false} />
+          {tab === 'general' && <GeneralTab prefs={prefs} setPrefs={setPrefs} />}
+          {tab === 'backup' && <BackupTab />}
+          {tab === 'about' && <AboutTab />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { Settings });
+
+</script>
+
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+function TrafficLightsRow() {
+  const dot = bg => <div style={{ width: 12, height: 12, borderRadius: '50%', background: bg, boxShadow: 'inset 0 0 0 0.5px rgba(0,0,0,0.25)' }} />;
+  return <div style={{ display: 'flex', gap: 8 }}>{dot('#ff5f57')}{dot('#febc2e')}{dot('#28c840')}</div>;
+}
+
+function Window({ children, width, height }) {
+  return (
+    <div style={{
+      width, height, background: T.surface,
+      borderRadius: T.rWindow, overflow: 'hidden',
+      boxShadow: T.shadowWindow,
+      border: '0.5px solid ' + T.borderStrong,
+      display: 'flex', flexDirection: 'column',
+    }}>{children}</div>
+  );
+}
+
+function WindowHeader() {
+  return (
+    <div style={{
+      height: 36, flexShrink: 0,
+      display: 'flex', alignItems: 'center', padding: '0 14px',
+      borderBottom: '0.5px solid ' + T.divider,
+      background: 'rgba(0,0,0,0.2)',
+    }}>
+      <TrafficLightsRow />
+      <div style={{ flex: 1 }} />
+      <span style={{ fontSize: 12, color: T.textTertiary, fontWeight: 500 }}>PromptPanel</span>
+      <div style={{ flex: 1 }} />
+      <div style={{ width: 54 }} />
+    </div>
+  );
+}
+
+function PanelStage({ prefs }) {
+  return (
+    <div style={{
+      width: '100%', height: '100%',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'radial-gradient(ellipse at center, #1a1c20 0%, #0a0b0d 80%)',
+      position: 'relative',
+    }}>
+      <div style={{
+        position: 'absolute', top: 48, left: 0, right: 0,
+        textAlign: 'center', color: T.textQuaternary, fontSize: 11,
+      }}>
+        在任意应用里按 <span style={{ fontFamily: T.fontMono, color: T.textTertiary }}>⌥2</span> 呼出 · 全局浮层
+      </div>
+      <QuickPanel width={780}
+        showFooter={prefs.showFooter}
+        compact={prefs.compact} />
+    </div>
+  );
+}
+
+function App() {
+  const [mode, setMode] = useState(() => localStorage.getItem('pp-mode') || 'panel');
+  useEffect(() => { localStorage.setItem('pp-mode', mode); }, [mode]);
+
+  const [prefs, setPrefs] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('pp-prefs')) || {}; } catch { return {}; }
+  });
+  const mergedPrefs = {
+    pinPanel: false, closeAfterRun: true, scope: 'current',
+    showFooter: true, compact: false, launchAtLogin: false,
+    ...prefs,
+  };
+  const updatePrefs = p => {
+    setPrefs(p);
+    localStorage.setItem('pp-prefs', JSON.stringify(p));
+  };
+
+  useEffect(() => {
+    const h = e => {
+      if ((e.metaKey || e.ctrlKey) && e.key === '1') { setMode('panel'); e.preventDefault(); }
+      if ((e.metaKey || e.ctrlKey) && e.key === '2') { setMode('library'); e.preventDefault(); }
+      if ((e.metaKey || e.ctrlKey) && e.key === '3') { setMode('settings'); e.preventDefault(); }
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, []);
+
+  return (
+    <div data-screen-label={mode === 'panel' ? '01 快捷面板' : mode === 'library' ? '02 内容库' : '03 设置'}
+      style={{
+        width: '100vw', height: '100vh',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 20, position: 'relative',
+      }}>
+      <div style={{
+        position: 'absolute', top: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 10,
+        display: 'flex', gap: 2, padding: 2,
+        background: 'rgba(20,22,26,0.8)', backdropFilter: 'blur(20px)',
+        border: '0.5px solid ' + T.border, borderRadius: 8,
+      }}>
+        {[['panel', '快捷面板', '⌘1'], ['library', '内容库', '⌘2'], ['settings', '设置', '⌘3']].map(([id, label, kb]) => (
+          <button key={id} onClick={() => setMode(id)} style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '5px 12px',
+            background: mode === id ? 'rgba(255,255,255,0.08)' : 'transparent',
+            border: 'none', borderRadius: 6,
+            color: mode === id ? T.text : T.textTertiary,
+            fontSize: 11.5, fontWeight: 500, cursor: 'pointer',
+          }}>{label}
+            <span style={{ fontFamily: T.fontMono, fontSize: 10,
+              color: mode === id ? T.textTertiary : T.textQuaternary }}>{kb}</span>
+          </button>
+        ))}
+      </div>
+
+      <Window width={1100} height={740}>
+        {mode === 'panel' ? <PanelStage prefs={mergedPrefs} /> : (
+          <>
+            <WindowHeader />
+            <div style={{ flex: 1, overflow: 'hidden' }}>
+              {mode === 'library' && <Library />}
+              {mode === 'settings' && <Settings prefs={mergedPrefs} setPrefs={updatePrefs} />}
+            </div>
+          </>
+        )}
+      </Window>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

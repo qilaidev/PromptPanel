@@ -1,0 +1,92 @@
+name: Bug report
+description: Report a reproducible PromptPanel bug.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please remove private prompt content before attaching logs or screenshots.
+  - type: input
+    id: version
+    attributes:
+      label: PromptPanel version or commit
+      placeholder: "v1.0.1 or commit SHA"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and CPU
+      placeholder: "macOS 14.5, Apple Silicon"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Global hotkey
+        - Quick panel
+        - Search
+        - Paste or clipboard
+        - Project or entry management
+        - Settings
+        - Build or release
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: target_app
+    attributes:
+      label: Target app, if paste-related
+      placeholder: "ChatGPT web, Claude web, Cursor, VS Code, Terminal, Slack, Notes..."
+  - type: dropdown
+    id: paste_outcome
+    attributes:
+      label: Paste outcome, if paste-related
+      options:
+        - Not paste-related
+        - Copied and pasted
+        - Copied only
+        - Nothing happened
+        - Pasted into the wrong place
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open...
+        2. Press...
+        3. Select...
+        4. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste recent execution logs with private prompt content removed.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submit checks
+      options:
+        - label: I removed private prompt content from logs/screenshots.
+          required: true
+        - label: I searched existing issues.
+          required: true

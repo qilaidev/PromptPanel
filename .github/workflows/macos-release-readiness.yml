@@ -1,0 +1,71 @@
+name: macOS Release Readiness
+
+on:
+  push:
+    branches:
+      - main
+      - 'linyi/**'
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: macos-14
+    defaults:
+      run:
+        shell: zsh {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Select stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show toolchain
+        run: |
+          xcode-select -p
+          swift --version
+          xcrun --find xctest
+
+      - name: Validate shell scripts
+        run: |
+          zsh -n scripts/build-app.sh
+          zsh -n scripts/check-docs.sh
+          zsh -n scripts/generate-appcast.sh
+          zsh -n scripts/restore-backup.sh
+          zsh -n scripts/release-readiness.sh
+
+      - name: Validate documentation consistency
+        run: scripts/check-docs.sh
+
+      - name: Restore script validates safe targets and rejects invalid backups
+        run: |
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "$tmp_dir"' EXIT
+          valid_backup="$tmp_dir/promptpanel-valid.sqlite"
+          bad_backup="$tmp_dir/not-promptpanel.sqlite"
+          restore_target="$tmp_dir/restore-target"
+
+          sqlite3 "$valid_backup" '
+            CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, is_default INTEGER NOT NULL, created_at TEXT, updated_at TEXT);
+            CREATE TABLE entries (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT, content TEXT);
+            CREATE VIRTUAL TABLE entries_fts USING fts5(title, content);
+            CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT);
+            CREATE TABLE execution_logs (id TEXT PRIMARY KEY);
+            CREATE TABLE grdb_migrations (identifier TEXT PRIMARY KEY);
+            INSERT INTO projects(id, name, is_default) VALUES ("default-project", "Default", 1);
+            INSERT INTO app_settings(key, value) VALUES ("current_project_id", "default-project");
+          '
+          sqlite3 "$bad_backup" 'CREATE TABLE unrelated (id INTEGER PRIMARY KEY);'
+
+          scripts/restore-backup.sh --dry-run --target-dir "$restore_target" "$valid_backup"
+
+          if scripts/restore-backup.sh --dry-run --target-dir "$restore_target" "$bad_backup"; then
+            echo "restore-backup.sh unexpectedly accepted an invalid backup" >&2
+            exit 1
+          fi
+
+      - name: Run formal release-readiness gate
+        run: scripts/release-readiness.sh --output-dir "$RUNNER_TEMP/promptpanel-release"

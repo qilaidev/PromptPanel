@@ -1,0 +1,59 @@
+name: Feature request
+description: Propose a scoped improvement for PromptPanel.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        PromptPanel is deliberately local-first and focused. Cloud sync, team collaboration, and workflow orchestration are permanent non-goals.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What repeated workflow or failure would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Keep it concrete. Describe the user flow and expected behavior.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Hotkey -> search -> execute loop
+        - Prompt or snippet library
+        - Project isolation
+        - Import or export
+        - Paste reliability
+        - UI polish
+        - Build or release
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundary
+    attributes:
+      label: Product boundary
+      options:
+        - label: This does not require cloud sync.
+          required: true
+        - label: This does not require team collaboration.
+          required: true
+        - label: This does not require workflow orchestration.
+          required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
