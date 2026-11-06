@@ -281,7 +281,7 @@ function QuickPanel({ width = 560, showFooter = true, compact = false }) {
               color: T.textTertiary, fontSize: 12.5, fontWeight: 500,
               pointerEvents: 'none', whiteSpace: 'nowrap',
             }}>
-              搜索 {currentProjectName} · 输入 # 按标签筛选
+              搜索 {currentProjectName} 或 #标签
             </div>
           )}
           <input
@@ -336,10 +336,7 @@ function QuickPanel({ width = 560, showFooter = true, compact = false }) {
             padding: '40px 20px', textAlign: 'center',
             color: T.textTertiary, fontSize: 13,
           }}>
-            没有匹配的词条
-            <div style={{ color: T.textQuaternary, fontSize: 11.5, marginTop: 4 }}>
-              回车可用当前输入新建词条到「{currentProjectName}」
-            </div>
+            无匹配词条
           </div>
         ) : filtered.map((entry, i) => (
           <PanelRow key={entry.id}

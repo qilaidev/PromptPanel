@@ -74,7 +74,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _openQuickCreateSheet,
         icon: const Icon(Icons.add),
-        label: Text(_selectedTabIndex == 0 ? '记待办 / 临时文案' : '新建提示词'),
+        label: Text(_selectedTabIndex == 0 ? '新建待办' : '新建词条'),
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedTabIndex,
@@ -98,7 +98,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           NavigationDestination(
             icon: Icon(Icons.folder_outlined),
             selectedIcon: Icon(Icons.folder),
-            label: '项目管理',
+            label: '项目',
           ),
         ],
       ),
@@ -108,11 +108,11 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
   String get _tabTitle {
     switch (_selectedTabIndex) {
       case 0:
-        return '速记与待办（随手记）';
+        return '速记与待办';
       case 1:
-        return '常用类型词库（按类型）';
+        return '常用类型';
       default:
-        return '项目管理（按项目）';
+        return '项目';
     }
   }
 
@@ -175,7 +175,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
   Widget _buildEntryList(List<EntryModel> items, {required bool allowCheckbox}) {
     if (items.isEmpty) {
       return const Center(
-        child: Text('暂无内容，点击右下角按钮快速记录或点击右上角云同步拉取'),
+        child: Text('暂无内容'),
       );
     }
     return ListView.separated(
@@ -265,12 +265,12 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('快速记录', style: Theme.of(ctx).textTheme.titleMedium),
+            Text('新建词条', style: Theme.of(ctx).textTheme.titleMedium),
             const SizedBox(height: 12),
             TextField(
               controller: titleCtrl,
               decoration: const InputDecoration(
-                labelText: '标题（可选，留空自动取首行）',
+                labelText: '标题（可选）',
                 border: OutlineInputBorder(),
               ),
             ),
@@ -280,7 +280,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
               maxLines: 5,
               autofocus: true,
               decoration: const InputDecoration(
-                labelText: '输入待办、临时长文案或提示词…',
+                labelText: '内容',
                 border: OutlineInputBorder(),
               ),
             ),
@@ -307,7 +307,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                 if (ctx.mounted) Navigator.pop(ctx);
                 setState(() {});
               },
-              child: const Text('保存并记录版本 v1'),
+              child: const Text('保存'),
             ),
           ],
         ),
@@ -333,12 +333,12 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('云端同步设置（与 macOS 端互通）', style: Theme.of(ctx).textTheme.titleMedium),
+            Text('云端同步', style: Theme.of(ctx).textTheme.titleMedium),
             const SizedBox(height: 12),
             TextField(
               controller: endpointCtrl,
               decoration: const InputDecoration(
-                labelText: '同步接口地址 (HTTPS)',
+                labelText: '同步地址',
                 border: OutlineInputBorder(),
               ),
             ),
@@ -347,7 +347,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
               controller: keyCtrl,
               obscureText: true,
               decoration: const InputDecoration(
-                labelText: 'Bearer API Token（可选）',
+                labelText: '访问令牌 (Token)',
                 border: OutlineInputBorder(),
               ),
             ),
@@ -360,7 +360,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
                 );
                 if (ctx.mounted) Navigator.pop(ctx);
               },
-              child: const Text('保存同步配置'),
+              child: const Text('保存'),
             ),
           ],
         ),

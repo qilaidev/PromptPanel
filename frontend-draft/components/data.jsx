@@ -80,7 +80,7 @@ const KIND_META = {
   reply:  { label: '回复',   icon: 'reply' },
   chat:   { label: '对话',   icon: 'chat' },
   note:   { label: '说明',   icon: 'doc' },
-  prompt: { label: 'Prompt', icon: 'sparkles' },
+  prompt: { label: '提示词', icon: 'chat' },
 };
 
 Object.assign(window, { PROJECTS, ENTRIES, KIND_META });

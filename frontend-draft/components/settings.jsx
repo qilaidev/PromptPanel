@@ -26,11 +26,10 @@ function SettingsRow({ label, hint, control, inline = true }) {
 
 function SettingsSection({ title, children }) {
   return (
-    <div style={{ marginBottom: 28 }}>
+    <div style={{ marginBottom: 24 }}>
       <div style={{
-        fontSize: 10.5, fontWeight: 600,
-        color: T.textQuaternary, letterSpacing: 0.8,
-        textTransform: 'uppercase',
+        fontSize: 11, fontWeight: 600,
+        color: T.textTertiary,
         marginBottom: 4, padding: '0 2px',
       }}>{title}</div>
       <div>{children}</div>
@@ -125,10 +124,9 @@ function GeneralTab({ prefs, setPrefs }) {
 
   return (
     <div>
-      <SettingsSection title="快捷键">
+      <SettingsSection title="通用">
         <SettingsRow
-          label="呼出面板"
-          hint="这是呼出快捷面板唯一的入口。"
+          label="呼出快捷键"
           control={
             <button onClick={() => setRecording(!recording)} style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -144,22 +142,38 @@ function GeneralTab({ prefs, setPrefs }) {
             </button>
           }
         />
+        <SettingsRow
+          label="登录时启动"
+          control={<Toggle on={prefs.launchAtLogin} onChange={v => setPrefs({ ...prefs, launchAtLogin: v })} />}
+        />
+        <SettingsRow
+          label="辅助功能权限"
+          control={
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                color: T.success, fontSize: 11.5, fontWeight: 500,
+                padding: '2px 7px', borderRadius: 4, background: T.successDim,
+              }}>
+                <Icon name="check" size={10} />已授权
+              </span>
+              <Btn icon="refresh">重新检测</Btn>
+            </div>
+          }
+        />
       </SettingsSection>
 
-      <SettingsSection title="面板行为">
+      <SettingsSection title="快捷面板">
         <SettingsRow
           label="固定面板"
-          hint="关闭时面板失焦自动收起，更利落。"
           control={<Toggle on={prefs.pinPanel} onChange={v => setPrefs({ ...prefs, pinPanel: v })} />}
         />
         <SettingsRow
           label="执行后关闭"
-          hint="粘贴后自动收起面板，不留痕。"
           control={<Toggle on={prefs.closeAfterRun} onChange={v => setPrefs({ ...prefs, closeAfterRun: v })} />}
         />
         <SettingsRow
           label="默认作用域"
-          hint="面板打开时预置的项目筛选。"
           control={
             <select
               value={prefs.scope}
@@ -179,38 +193,12 @@ function GeneralTab({ prefs, setPrefs }) {
           }
         />
         <SettingsRow
-          label="显示键盘提示栏"
-          hint="面板底部显示 ⏎/⌘C/⌘1-9 等提示。熟练后可关闭。"
+          label="显示底栏键位"
           control={<Toggle on={prefs.showFooter} onChange={v => setPrefs({ ...prefs, showFooter: v })} />}
         />
         <SettingsRow
           label="紧凑行高"
-          hint="每行更紧凑，一屏可见更多词条（约 12 条）。"
           control={<Toggle on={prefs.compact} onChange={v => setPrefs({ ...prefs, compact: v })} />}
-        />
-      </SettingsSection>
-
-      <SettingsSection title="权限与启动">
-        <SettingsRow
-          label="辅助功能权限"
-          hint="用于监听快捷键和自动粘贴。"
-          control={
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{
-                display: 'inline-flex', alignItems: 'center', gap: 4,
-                color: T.success, fontSize: 11.5, fontWeight: 500,
-                padding: '2px 7px', borderRadius: 4, background: T.successDim,
-              }}>
-                <Icon name="check" size={10} />已授权
-              </span>
-              <Btn icon="refresh">重新检测</Btn>
-            </div>
-          }
-        />
-        <SettingsRow
-          label="登录时启动"
-          hint="系统启动时自动在后台运行。"
-          control={<Toggle on={prefs.launchAtLogin} onChange={v => setPrefs({ ...prefs, launchAtLogin: v })} />}
         />
       </SettingsSection>
     </div>
@@ -223,13 +211,13 @@ function BackupTab() {
     <div>
       <SettingsSection title="备份">
         <SettingsRow
-          label="自动备份"
-          hint="每次启动时备份一次，最多保留 7 份。"
+          label="启动时自动备份"
+          hint="最多保留 7 份"
           control={<Toggle on={true} onChange={() => {}} />}
         />
         <SettingsRow
-          label="备份状态"
-          hint="当前已保存 1 / 7 份，最近一次：今天 06:07。"
+          label="本地备份"
+          hint="1 / 7 份 · 最近：今天 06:07"
           control={
             <div style={{ display: 'flex', gap: 6 }}>
               <Btn icon="database">备份目录</Btn>
@@ -240,9 +228,9 @@ function BackupTab() {
       </SettingsSection>
 
       <SettingsSection title="维护">
-        <SettingsRow label="刷新状态" hint="重新读取数据库和权限状态。"
+        <SettingsRow label="运行状态"
           control={<Btn icon="refresh">刷新</Btn>} />
-        <SettingsRow label="清理旧日志" hint="当前日志目录约占 4.2 MB。"
+        <SettingsRow label="日志缓存 (4.2 MB)"
           control={<Btn icon="trash" variant="danger">清理</Btn>} />
       </SettingsSection>
 
@@ -259,40 +247,35 @@ function BackupTab() {
             fontFamily: T.font, fontSize: 12,
           }}>
             <Icon name={open ? 'chev-down' : 'chev-right'} size={11} style={{ color: T.textTertiary }} />
-            <span style={{ color: T.text, fontWeight: 500 }}>文件路径</span>
-            <span style={{ color: T.textQuaternary, fontSize: 11 }}>
-              落盘、备份、恢复隔离目录
-            </span>
+            <span style={{ color: T.text, fontWeight: 500 }}>存储目录</span>
             <div style={{ flex: 1 }} />
             <span style={{ color: T.textQuaternary, fontSize: 11 }}>
               {open ? '收起' : '展开'}
             </span>
           </button>
           {open && (
-            <div style={{ padding: '2px 14px 14px 32px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ padding: '2px 14px 14px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
               {[
                 ['数据库', '/var/folders/…/app-support/promptpanel.db'],
-                ['备份', '/var/folders/…/app-support/Backups'],
+                ['备份目录', '/var/folders/…/app-support/Backups'],
                 ['恢复隔离', '/var/folders/…/app-support/Recovery'],
-                ['日志', '/var/folders/…/logs'],
+                ['日志目录', '/var/folders/…/logs'],
               ].map(([k, v]) => (
-                <div key={k}>
-                  <div style={{ fontSize: 10.5, color: T.textQuaternary, letterSpacing: 0.5, marginBottom: 2 }}>{k}</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <code style={{
-                      flex: 1, fontFamily: T.fontMono, fontSize: 11, color: T.textSecondary,
-                      padding: '4px 8px', borderRadius: 4, background: 'rgba(255,255,255,0.03)',
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    }}>{v}</code>
-                    <button style={{
-                      width: 24, height: 24, display: 'inline-flex',
-                      alignItems: 'center', justifyContent: 'center',
-                      background: 'transparent', border: 'none',
-                      borderRadius: 5, cursor: 'pointer', color: T.textTertiary,
-                    }} title="复制">
-                      <Icon name="copy" size={11} />
-                    </button>
-                  </div>
+                <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ width: 56, fontSize: 11, color: T.textSecondary, flexShrink: 0 }}>{k}</div>
+                  <code style={{
+                    flex: 1, fontFamily: T.fontMono, fontSize: 11, color: T.textSecondary,
+                    padding: '4px 8px', borderRadius: 4, background: 'rgba(255,255,255,0.03)',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>{v}</code>
+                  <button style={{
+                    width: 24, height: 24, display: 'inline-flex',
+                    alignItems: 'center', justifyContent: 'center',
+                    background: 'transparent', border: 'none',
+                    borderRadius: 5, cursor: 'pointer', color: T.textTertiary,
+                  }} title="复制">
+                    <Icon name="copy" size={11} />
+                  </button>
                 </div>
               ))}
             </div>
@@ -309,22 +292,18 @@ function AboutTab() {
       <SettingsSection title="版本">
         <SettingsRow
           label="当前版本"
-          hint="PromptPanel 1.0.0 (构建 1)"
           control={<span style={{ fontFamily: T.fontMono, fontSize: 11.5, color: T.textSecondary }}>1.0.0 (1)</span>}
         />
         <SettingsRow
-          label="自动更新"
-          hint="当前为开发版本，未配置更新源。发布版本会自动提示新版。"
+          label="软件更新"
           control={<Btn icon="refresh">检查更新</Btn>}
         />
       </SettingsSection>
 
-      <SettingsSection title="运行日志">
+      <SettingsSection title="运行记录">
         <SettingsRow label="最近执行"
           control={<span style={{ color: T.textSecondary, fontSize: 12 }}>暂无</span>} />
-        <SettingsRow label="最近异常"
-          control={<span style={{ color: T.textSecondary, fontSize: 12 }}>暂无</span>} />
-        <SettingsRow label="近 7 天" hint="执行 0 次 · 成功 0 · 失败 0"
+        <SettingsRow label="近 7 天统计" hint="0 次执行 · 0 成功 · 0 失败"
           control={<Btn icon="doc">查看日志</Btn>} />
       </SettingsSection>
     </div>

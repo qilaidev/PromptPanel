@@ -326,9 +326,8 @@ function Library() {
           display: 'flex', alignItems: 'center', gap: 6,
         }}>
           <span style={{
-            flex: 1, fontSize: 10.5, fontWeight: 600,
-            color: T.textQuaternary, letterSpacing: 0.8,
-            textTransform: 'uppercase',
+            flex: 1, fontSize: 11, fontWeight: 600,
+            color: T.textTertiary,
           }}>项目</span>
           <button style={{ ...iconBtn(), width: 22, height: 22 }} title="新建项目">
             <Icon name="plus" size={12} />
@@ -340,15 +339,6 @@ function Library() {
               active={activeProject === p.id}
               onClick={() => setActiveProject(p.id)} />
           ))}
-        </div>
-        <div style={{
-          padding: '10px 12px',
-          borderTop: '0.5px solid ' + T.divider,
-          fontSize: 10.5, color: T.textQuaternary, lineHeight: 1.5,
-        }}>
-          <div style={{ color: T.textTertiary }}>
-            面板默认在 <span style={{ color: T.textSecondary, fontWeight: 500 }}>PromptPanel</span> 中搜索
-          </div>
         </div>
       </div>
 
