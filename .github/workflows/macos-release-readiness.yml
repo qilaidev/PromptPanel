@@ -1,4 +1,4 @@
-name: macOS Release Readiness
+name: Release Readiness
 
 on:
   push:
@@ -7,27 +7,25 @@ on:
       - 'linyi/**'
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   verify:
-    runs-on: macos-14
+    runs-on: ubuntu-latest
     defaults:
       run:
         shell: zsh {0}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
-      - name: Select stable Xcode
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: latest-stable
-
-      - name: Show toolchain
+      - name: Ensure sqlite3 is available
         run: |
-          xcode-select -p
-          swift --version
-          xcrun --find xctest
+          if ! command -v sqlite3 >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y sqlite3
+          fi
 
       - name: Validate shell scripts
         run: |
@@ -36,6 +34,7 @@ jobs:
           zsh -n scripts/generate-appcast.sh
           zsh -n scripts/restore-backup.sh
           zsh -n scripts/release-readiness.sh
+          zsh -n mobile/build-android.sh
 
       - name: Validate documentation consistency
         run: scripts/check-docs.sh
@@ -67,5 +66,10 @@ jobs:
             exit 1
           fi
 
-      - name: Run formal release-readiness gate
+      - name: Validate self-hosted cloud sync server
+        run: |
+          python3 -m py_compile server/promptpanel_sync_server.py
+
+      - name: Run formal release-readiness gate on macOS runner
+        if: runner.os == 'macOS'
         run: scripts/release-readiness.sh --output-dir "$RUNNER_TEMP/promptpanel-release"
