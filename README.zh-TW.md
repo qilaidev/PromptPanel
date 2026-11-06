@@ -9,7 +9,7 @@
 
 PromptPanel 是一款本地優先的 **macOS Prompt 管理器**、**AI Prompt 啟動器** 和 **程式碼片段啟動器**：全域快捷鍵喚出快捷面板，瞬間檢索你的 **Prompt 庫 / 程式碼片段 / 範本**，把內容一鍵送進 **ChatGPT、Claude、Cursor、Copilot、VS Code、Terminal、瀏覽器或任意輸入框**。
 
-[![Release: v1.5.0](https://img.shields.io/badge/Release-v1.5.0-blue.svg)](CHANGELOG.md)
+[![Release: v1.6.0](https://img.shields.io/badge/Release-v1.6.0-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: macOS 14+](https://img.shields.io/badge/Platform-macOS%2014%2B-lightgrey.svg)](https://www.apple.com/macos)
 [![Swift 5.10](https://img.shields.io/badge/Swift-5.10-orange.svg)](https://swift.org)
@@ -32,7 +32,7 @@ PromptPanel 是一款本地優先的 **macOS Prompt 管理器**、**AI Prompt �
 | 專案類型 | 開源、本地優先的 macOS Prompt manager / AI prompt launcher / snippet launcher。 |
 | 核心問題 | 解決高頻複製貼上同一批 ChatGPT、Claude、Cursor、Copilot、VS Code、Terminal Prompt、專案上下文、命令片段和範本的問題。 |
 | 適合族群 | AI 重度使用者、開發者、Prompt engineers、技術寫作者、PM、顧問、需要按專案隔離 Prompt 庫的獨立開發者。 |
-| 核心功能 | 全域快捷鍵、即時搜尋、專案隔離、`通用專案 / Universal`、`#tag` 過濾、剪貼簿優先、Accessibility 權限下自動貼上、執行日誌、JSON/Markdown 匯入匯出。 |
+| 核心功能 | 全域快捷鍵、即時搜尋（FTS5 + 子字串匹配）、三層工作區（`速記與待辦` / `常用類型` / `專案管理` + 專案封存）、雙窗參考與剪貼簿裝配台（`參考視窗`）、詞條歷史版本與一鍵回滾、`#tag` 過濾、剪貼簿優先、Accessibility 權限下自動貼上、執行日誌、JSON/Markdown 匯入匯出、可選開源自託管多端同步（`server/` + `mobile/`）。 |
 | 技術棧 | Swift 5.10、AppKit `NSPanel`、SwiftUI、SQLite/GRDB、KeyboardShortcuts、Sparkle 2、Swift Package Manager。 |
 | 快速開始 | `git clone` → `./scripts/build-app.sh` → `open dist/PromptPanel.app`。首次執行建議授予 Accessibility 權限；不授權也能複製到剪貼簿。 |
 | 典型情境 | ChatGPT/Claude role prompt、Cursor project context、PR review checklist、terminal command snippet、會議紀要範本、客戶回覆範本。 |

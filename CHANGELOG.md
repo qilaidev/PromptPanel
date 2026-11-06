@@ -6,15 +6,25 @@ The format is based on Keep a Changelog, and this project uses Conventional Comm
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-06
+
+工作区三层分组、版本历史与双窗装配版本（V7）。在保持本地优先与单文件 SQLite 零云依赖默认行为的前提下，主窗口内容库升级为「速记与待办（Inbox）/ 常用类型（Categories）/ 项目管理（Projects）+ 项目归档」三层结构，新增「双窗对照与剪贴板装配台」（`参考窗口`）、词条每次修改自动生成不可变历史版本（`EntryVersion`）并支持一键回滚，以及可选的开源自托管云同步（`CloudSyncService` + `server/` + `mobile/`）。同时补齐 GitHub README 界面截图入库与全量文档同步。
+
 ### Added
 
-- **主窗口键盘导航与词条右键菜单。** 内容库支持 `⌘N` 新建词条，以及在未处于输入法组字（`hasMarkedText`）或文本选区状态下直接按 `↑` / `↓` 切换选中词条；内容库词条行新增右键菜单（复制内容 `⇧⌘C`、编辑词条 `⌘E`、置顶/取消置顶、删除词条），快捷面板词条行也补齐右键菜单（执行词条 `Enter`、仅复制内容 `⌘C`）并在 `⌘C` 复制后弹出 Toast 提示。
+- **三层工作区架构与项目归档（Migration V7）。** `projects` 新增 `group_kind`（`inbox` 速记与待办、`category` 常用类型、`project` 具体项目）、`is_archived` 与 `icon_name`；内置不可删除的 `速记与待办`（`builtin-inbox`）用于随手记待办（`todo` 类型，支持勾选完成 `is_completed`）与临时记录（`note`）；具体项目完成后可一键归档，自动从快捷面板项目切换器中隐藏并收拢至主窗口归档折叠区。
+- **双窗对照与剪贴板装配台（`ReferenceLibraryWindowView`）。** 主窗口顶部与左下角新增 `参考窗口` 入口，支持边看「常用类型」通用模板或实时预览系统剪贴板，边一键克隆到目标项目（记录 `source_entry_id` 血缘），在项目内定制修改不会污染通用模板。
+- **词条版本历史与无损回滚（`EntryVersion` / `entry_versions`）。** 每次修改词条标题或正文时自动留存版本号递增的历史快照（`v1`, `v2`, …）；预览区顶部可直接查看任意历史版本正文、复制历史版本或一键回滚（回滚前自动将当前状态存为新版本，绝不丢字）。
+- **可选的开源自托管多端同步（`CloudSyncService` + `server/` + `mobile/`）。** 默认保持纯本地零网络请求；用户可在「设置 → 偏好 → 云端同步」中按需配置本地网盘/iCloud 同步文件路径，或接入仓库自带的零外部依赖 Python + SQLite WAL 自托管同步服务端（`server/`，按 Bearer Token SHA-256 哈希物理隔离数据库）与 Flutter 跨平台移动端（`mobile/`）。并发修改冲突时自动将被覆盖版本转存进 `entry_versions` 历史记录。
+- **主窗口键盘导航与词条右键菜单。** 内容库支持 `⌘N` 新建词条，以及在未处于输入法组字（`hasMarkedText`）或文本选区状态下直接按 `↑` / `↓` 切换选中词条；内容库词条行新增右键菜单（复制内容 `⇧⌘C`、编辑词条 `⌘E`、克隆到项目、置顶/取消置顶、删除词条），快捷面板词条行也补齐右键菜单（执行词条 `Enter`、仅复制内容 `⌘C`）并在 `⌘C` 复制后弹出 Toast 提示。
 - **跨全部项目 FTS 搜索与中文子串/标签召回增强。** `EntryRepository` 新增 `searchAll(query:tag:)`，主窗口与快捷面板统一支持 `#tag` 语法并在 `LIMIT 100` 截断前完成标签过滤；SQL 查询结合 FTS5 前缀匹配与 `INSTR` 大小写不敏感子串匹配，解决连续中文中段词（如在“并发安全”中搜“安全”）漏召回问题。
 
 ### Changed
 
+- **macOS 原生视觉与高密度三栏细节打磨。** 快捷面板与主窗口侧边栏引入原生 `NSVisualEffectView` 毛玻璃材质与系统语义色；词条详情区支持所见即所得内联编辑，并直接展示精确到分的创建时间、最后修改时间与最近使用统计。
 - **面板与搜索启动预热、去动画与低延迟预算收紧。** 启动时通过 `quickPanelViewModel.warmUp()` 与 `panelService.warmUp()` 预建 `NSPanel` 与宿主视图；`NSPanel`、`ToastService` 与主窗口/快捷面板根视图统一禁用冗余系统与隐式动画；`Entry.previewLine` 改为模型层缓存属性，列表滚动与 diff 时 O(1) 读取；搜索防抖收紧为面板 `0ms` / 主窗口 `16ms`，内部耗时预算收紧为搜索 `< 50ms`、执行 `< 180ms`。
 - **作用域切换检索期间的安全执行门禁与衔接。** 当面板刚唤出或切换项目/查询词、后台检索尚未返回（`isScopeSearchInFlight`）时，自动拦截过期行的鼠标点击与 `⌘C`，并将用户按下的 `Enter` 或 `⌘1–9` 暂存到 `deferredExecutionRequest`（区分 `.selected` 与 `.index(Int)`），待新结果落地后精准衔接执行；`⌘C` 仅复制同步接入 `ClipboardService` 并记录词条使用统计以驱动 frecency 排序。
+- **GitHub README 截图纳入版本控制并支持无 TCC 权限窗口级快照。** 移除 `.gitignore` 中对 `docs/ui-qa/latest/` 的忽略规则，使 GitHub 页面直接渲染最新四张高分截图；`capture-ui-qa.sh` 在终端缺少屏幕录制权限时自动回退到应用内 `NSWindow` 位图快照（`PROMPTPANEL_QA_SNAPSHOT_PATH`）。
 
 ## [1.5.0] - 2026-09-06
 
@@ -122,7 +132,8 @@ The format is based on Keep a Changelog, and this project uses Conventional Comm
 > 1.1.2 及更早版本的条目已从本文件移除。这些版本的完整记录仍在 git 历史中
 > （`git log -- CHANGELOG.md`），其中 v1.1.2 的 tag 也仍在仓库里。
 
-[Unreleased]: https://github.com/qilaidev/PromptPanel/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/qilaidev/PromptPanel/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/qilaidev/PromptPanel/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/qilaidev/PromptPanel/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/qilaidev/PromptPanel/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/qilaidev/PromptPanel/compare/v1.2.0...v1.3.0

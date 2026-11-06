@@ -12,7 +12,7 @@ PromptPanel（项目快贴）est un **gestionnaire de prompts macOS**, un **lanc
 
 PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, and **snippet launcher**. It is built for developers and AI power users who reuse multiline prompts, coding templates, project context blocks, terminal commands, and reply snippets across apps.
 
-[![Release: v1.5.0](https://img.shields.io/badge/Release-v1.5.0-blue.svg)](CHANGELOG.md)
+[![Release: v1.6.0](https://img.shields.io/badge/Release-v1.6.0-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: macOS 14+](https://img.shields.io/badge/Platform-macOS%2014%2B-lightgrey.svg)](https://www.apple.com/macos)
 [![Swift 5.10](https://img.shields.io/badge/Swift-5.10-orange.svg)](https://swift.org)
@@ -35,7 +35,7 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 | Ce que c'est / What it is | Un macOS Prompt manager and snippet launcher open source et local-first, qui invoque un panneau natif via un raccourci global pour rechercher et coller du texte réutilisable. |
 | Problème résolu / Problem solved | Éviter aux utilisateurs intensifs de ChatGPT, Claude, Cursor, Copilot, VS Code et du Terminal de fouiller sans cesse leurs notes ou de recopier le même system prompt, contexte de projet ou template de commande. |
 | Pour qui / Audience | Utilisateurs intensifs d'IA, développeurs, Prompt engineers, rédacteurs techniques, PM, consultants et développeurs indépendants qui doivent isoler leur prompt library par projet. |
-| Fonctions clés / Core features | Raccourci global, recherche instantanée, isolation par projet, `Universal / projet universel`, filtrage par `#tag`, priorité au presse-papiers, collage automatique via Accessibility, journal d'exécution, import/export JSON/Markdown. |
+| Fonctions clés / Core features | Raccourci global, recherche instantanée (FTS5 + sous-chaîne), espace de travail à 3 niveaux (`速记与待办` / `常用类型` / `项目管理` + archivage), double fenêtre de référence et presse-papiers (`参考窗口`), historique de versions et restauration, filtrage par `#tag`, priorité au presse-papiers, collage automatique via Accessibility, journal d'exécution, import/export JSON/Markdown et synchronisation auto-hébergée optionnelle (`server/` + `mobile/`). |
 | Pile technique / Tech stack | Swift 5.10, AppKit `NSPanel`, SwiftUI, SQLite/GRDB, KeyboardShortcuts, Sparkle 2, Swift Package Manager. |
 | Démarrage rapide / Quick start | `git clone` -> `./scripts/build-app.sh` -> `open dist/PromptPanel.app`. Après octroi de la permission Accessibility au premier lancement, le collage automatique fonctionne ; sans elle, la copie vers le presse-papiers reste possible. |
 | Cas d'usage typiques / Use cases | Role prompt ChatGPT/Claude, contexte de projet Cursor, checklist de revue de PR, snippet de commande Terminal, template de notes de réunion, template de réponse propre à un client. |

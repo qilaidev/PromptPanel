@@ -11,7 +11,7 @@ PromptPanel(项目快贴)은 로컬 우선(local-first) **macOS 프롬프트 관
 
 PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, and **snippet launcher**. It is built for developers and AI power users who reuse multiline prompts, coding templates, project context blocks, terminal commands, and reply snippets across apps.
 
-[![Release: v1.5.0](https://img.shields.io/badge/Release-v1.5.0-blue.svg)](CHANGELOG.md)
+[![Release: v1.6.0](https://img.shields.io/badge/Release-v1.6.0-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: macOS 14+](https://img.shields.io/badge/Platform-macOS%2014%2B-lightgrey.svg)](https://www.apple.com/macos)
 [![Swift 5.10](https://img.shields.io/badge/Swift-5.10-orange.svg)](https://swift.org)
@@ -34,7 +34,7 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 | 무엇인가 / What it is | 오픈 소스, 로컬 우선 macOS prompt manager and snippet launcher. 전역 단축키로 네이티브 패널을 불러내 재사용 가능한 텍스트를 검색하고 붙여넣습니다. |
 | 어떤 문제를 해결하는가 / Problem solved | ChatGPT, Claude, Cursor, Copilot, VS Code, Terminal을 자주 쓰는 사용자가 노트를 반복해서 뒤지거나 동일한 system prompt, 프로젝트 컨텍스트, 명령 템플릿을 매번 복사하지 않도록 합니다. |
 | 누구를 위한 것인가 / Audience | AI heavy users, 개발자, Prompt engineers, 기술 문서 작성자, PM, 컨설턴트, 그리고 프로젝트별로 prompt library를 분리해야 하는 인디 개발자. |
-| 핵심 기능 / Core features | 전역 단축키, 즉시 검색, 프로젝트 격리, `Universal / 공용 프로젝트`, `#tag` 필터, 클립보드 우선, Accessibility 자동 붙여넣기, 실행 로그, JSON/Markdown 가져오기·내보내기. |
+| 핵심 기능 / Core features | 전역 단축키, 즉시 검색(FTS5 + 부분 문자열 일치), 3단계 워크스페이스(`速记与待办` / `常用类型` / `项目管理` + 프로젝트 보관), 듀얼 윈도우 참조 및 클립보드 벤치(`参考窗口`), 항목 버전 기록 및 롤백, `#tag` 필터, 클립보드 우선, Accessibility 자동 붙여넣기, 실행 로그, JSON/Markdown 가져오기·내보내기, 선택적 셀프 호스팅 동기화(`server/` + `mobile/`). |
 | 기술 스택 / Tech stack | Swift 5.10, AppKit `NSPanel`, SwiftUI, SQLite/GRDB, KeyboardShortcuts, Sparkle 2, Swift Package Manager. |
 | 빠른 시작 / Quick start | `git clone` -> `./scripts/build-app.sh` -> `open dist/PromptPanel.app`. 첫 실행 시 Accessibility 권한을 부여하면 자동 붙여넣기가 가능하며, 부여하지 않아도 클립보드에 복사됩니다. |
 | 대표 시나리오 / Use cases | ChatGPT/Claude role prompt, Cursor project context, PR review checklist, terminal command snippet, meeting notes template, client-specific response template. |

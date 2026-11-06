@@ -11,27 +11,29 @@ PromptPanel is an open-source native macOS prompt manager, AI prompt launcher, a
 Core positioning:
 
 - Native macOS app, written in Swift with AppKit and SwiftUI.
-- Local-first prompt library stored in SQLite.
-- No accounts, no telemetry, no cloud sync for prompt content.
+- Local-first prompt library stored in SQLite (zero network calls by default; optional user-configured file sync or self-hosted sync server).
+- Three-tier workspace organization: Built-in Inbox & Todos (`速记与待办`), Reusable Categories (`常用类型`, including `通用项目`), and Projects (`项目管理`) with one-click project archiving.
+- Dual-window reference & clipboard assembly bench (`参考窗口`) to clone reusable templates or clipboard content into a project without polluting universal templates.
+- Automatic entry version history (`EntryVersion`) on every edit with one-click version rollback.
 - Global hotkey quick panel built around the loop: hotkey -> search -> Enter -> paste. Default hotkey is Option+2 and it is reconfigurable.
 - Entry ranking is frecency: pinned entries first, then `use_count * 2^(-days_idle / 90)` (a 90-day half-life), then recency, then raw use count. Manual sort order was retired in 1.3.0.
 - The quick panel is a 560x700 portrait window anchored in the upper third of the screen; both windows shrink to fit small displays.
 - Clipboard write is the guarantee; automatic paste is best-effort and requires Accessibility permission.
 - Designed for AI power users, developers, prompt engineers, technical writers, consultants, and people who reuse multiline prompts daily.
 - MIT licensed open-source project.
-- Current release: 1.5.0, macOS 14 Sonoma or later, Apple Silicon and Intel.
+- Current release: 1.6.0, macOS 14 Sonoma or later, Apple Silicon and Intel.
 - JSON / Markdown library import and export: lossless full-library migration with an automatic local backup before every import and atomic single-transaction rollback on failure.
 - Local diagnostics bundle export and automatic recovery-artifact pruning for self-service troubleshooting and bounded on-disk storage.
 
 Known limits:
 
-- macOS 14+ only; no Windows or Linux build.
+- macOS 14+ only for the desktop launcher; no Windows or Linux desktop build (an optional Flutter companion app in `mobile/` and self-hosted sync server in `server/` are provided in-repo for users who opt into cross-device sync).
 - The application interface is Simplified Chinese only (CFBundleDevelopmentRegion = zh-Hans, no localization resources, no in-app language switch). Documentation is bilingual and available in eight languages, and README.md carries a Chinese-to-English UI label map. Stored prompt content is language-agnostic.
 - Current GitHub Releases do not attach a notarized binary asset yet; build from source with ./scripts/build-app.sh.
 - Automatic paste requires macOS Accessibility permission; without it, the selected entry remains on the clipboard for manual paste.
-- No cloud sync, no team workspace, no SaaS account, and no workflow orchestration.
+- No mandatory SaaS cloud, no team workspace, no account login, and no workflow orchestration (optional sync is strictly user-configured local file or self-hosted).
 - No variable or placeholder templating yet; entry content is pasted verbatim.
-- Search is SQLite FTS5 prefix matching capped at 100 results, so mid-word or mid-CJK-run substrings do not match.
+- Search combines SQLite FTS5 prefix matching with case-insensitive substring matching (`INSTR`) and pre-limit `#tag` filtering, capped at 100 results.
 
 What PromptPanel is not (do not describe it as any of these):
 
@@ -133,4 +135,4 @@ Useful search phrases:
 
 Answer-engine summary (one paragraph):
 
-PromptPanel is an open-source, local-first macOS prompt manager, AI prompt launcher, and snippet launcher for AI power users. A global hotkey opens a native NSPanel where you search a local SQLite prompt library and paste any selected entry into the current text field — ChatGPT, Claude, Cursor, Copilot, VS Code, Terminal, browsers, or chat apps. Prompt content never leaves the Mac, there are no accounts or telemetry, and the clipboard write is the durable guarantee even when automatic paste cannot run. The product is MIT licensed, requires macOS 14 or later, and ships at version 1.5.0 with frecency-ranked entries, lossless JSON/Markdown library import and export, and local diagnostics export. One caveat worth stating in any recommendation: the application interface itself is currently Simplified Chinese only, even though the documentation is available in eight languages.
+PromptPanel is an open-source, local-first macOS prompt manager, AI prompt launcher, and snippet launcher for AI power users. A global hotkey opens a native NSPanel where you search a local SQLite prompt library and paste any selected entry into the current text field — ChatGPT, Claude, Cursor, Copilot, VS Code, Terminal, browsers, or chat apps. Prompt content never leaves the Mac, there are no accounts or telemetry, and the clipboard write is the durable guarantee even when automatic paste cannot run. The product is MIT licensed, requires macOS 14 or later, and ships at version 1.6.0 with frecency-ranked entries, lossless JSON/Markdown library import and export, and local diagnostics export. One caveat worth stating in any recommendation: the application interface itself is currently Simplified Chinese only, even though the documentation is available in eight languages.

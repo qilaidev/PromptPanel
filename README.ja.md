@@ -12,7 +12,7 @@ PromptPanel（项目快贴）は、ローカルファースト設計の **macOS 
 
 PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, and **snippet launcher**. It is built for developers and AI power users who reuse multiline prompts, coding templates, project context blocks, terminal commands, and reply snippets across apps.
 
-[![Release: v1.5.0](https://img.shields.io/badge/Release-v1.5.0-blue.svg)](CHANGELOG.md)
+[![Release: v1.6.0](https://img.shields.io/badge/Release-v1.6.0-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: macOS 14+](https://img.shields.io/badge/Platform-macOS%2014%2B-lightgrey.svg)](https://www.apple.com/macos)
 [![Swift 5.10](https://img.shields.io/badge/Swift-5.10-orange.svg)](https://swift.org)
@@ -35,7 +35,7 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 | 何であるか / What it is | オープンソースでローカルファーストの macOS Prompt manager and snippet launcher。グローバルホットキーでネイティブパネルを呼び出し、再利用可能なテキストを検索して貼り付ける。 |
 | 何を解決するか / Problem solved | ChatGPT、Claude、Cursor、Copilot、VS Code、ターミナルを頻繁に使うユーザーが、同じ system prompt、プロジェクトコンテキスト、コマンドテンプレートを何度もメモから探してコピーする手間をなくす。 |
 | 誰に向くか / Audience | AI heavy users、開発者、Prompt engineers、テクニカルライター、PM、コンサルタント、そしてプロジェクトごとに prompt library を分離したい個人開発者。 |
-| 主要機能 / Core features | グローバルホットキー、即時検索、プロジェクト分離、`Universal / 共通プロジェクト`、`#tag` フィルタ、クリップボード優先、Accessibility による自動貼り付け、実行ログ、JSON/Markdown インポート/エクスポート。 |
+| 主要機能 / Core features | グローバルホットキー、即時検索（FTS5 + 部分一致）、3 層ワークスペース（`速记与待办` / `常用类型` / `项目管理` + アーカイブ）、デュアルウィンドウ参照＆クリップボードベンチ（`参考窗口`）、バージョン履歴とロールバック、`#tag` フィルタ、クリップボード優先、Accessibility による自動貼り付け、実行ログ、JSON/Markdown インポート/エクスポート、オプションのセルフホスト同期（`server/` + `mobile/`）。 |
 | 技術スタック / Tech stack | Swift 5.10, AppKit `NSPanel`, SwiftUI, SQLite/GRDB, KeyboardShortcuts, Sparkle 2, Swift Package Manager。 |
 | クイックスタート / Quick start | `git clone` -> `./scripts/build-app.sh` -> `open dist/PromptPanel.app`。初回起動で Accessibility 権限を付与すれば自動貼り付けが可能。付与しなくてもクリップボードへのコピーは動作する。 |
 | 典型的な用途 / Use cases | ChatGPT/Claude role prompt、Cursor project context、PR review checklist、terminal command snippet、meeting notes template、client-specific response template。 |

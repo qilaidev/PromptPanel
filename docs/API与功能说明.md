@@ -1,22 +1,25 @@
 # PromptPanel API 与功能说明
 
-更新时间：`2026-11-02`
+更新时间：`2026-11-06`
 
-PromptPanel 当前没有 HTTP API、云端 API 或公开 SDK。这里的“API”指项目对维护者和贡献者暴露的稳定契约：用户功能契约、内部服务接口、数据库结构、脚本入口、环境变量和搜索行为。
+PromptPanel 桌面端本身是一个纯本地优先的原生应用（不暴露本地后台监听端口）；同时仓库提供可选的开源自托管同步服务端（`server/`）供有跨设备协同需求的用户自行部署。这里的“API”主要指项目对维护者和贡献者暴露的稳定契约：用户功能契约、内部服务接口、数据库结构、脚本入口、环境变量和搜索行为。
 
 ## 1. 用户功能契约
 
 | 功能 | 用户可见行为 | 维护约束 |
 | --- | --- | --- |
 | 快捷面板 | 全局快捷键唤出面板，搜索框自动聚焦。 | 面板打开后必须尽快可输入；任何改动都要保留键盘优先路径。 |
-| 搜索 | 输入标题或正文关键词实时过滤。 | 空查询是浏览模式；非空查询走 FTS5；结果上限保持可控。 |
-| 项目隔离 | 当前项目词条 + `通用项目` 同时展示。 | 默认项目不可删除；跨项目排序不能让默认项目覆盖当前项目优先级。 |
-| 标签过滤 | 查询里第一个 `#tag` 作为标签过滤。 | 标签过滤是 FTS 结果后的本地过滤，不能破坏普通关键词搜索。 |
+| 搜索 | 输入标题、正文或标签关键词实时过滤（FTS5 前缀 + `INSTR` 子串兜底）。 | 空查询是浏览模式；非空查询结合 FTS5 与子串匹配；结果上限 100 条。 |
+| 三层工作区与项目隔离 | 侧边栏分为 `速记与待办`（内置 Inbox）、`常用类型`（含默认 `通用项目`）、`项目管理`（可一键归档）。快捷面板展示当前项目词条 + `通用项目`。 | 内置系统分组（`通用项目` 与 `速记与待办`）不可删除；已归档项目在快捷面板切换器中自动隐藏。 |
+| 双窗参考与剪贴板装配台 | 主窗口点击 `参考窗口` 打开伴侣窗，可边看常用类型模板或系统剪贴板，边一键克隆到目标项目。 | 克隆后词条记录 `source_entry_id`，在目标项目内修改不能反向污染源模板。 |
+| 词条版本历史与回滚 | 词条每次修改标题或正文自动保存 `EntryVersion`（`v1`, `v2`, …），支持查看历史与一键恢复。 | 回滚前必须先将当前未归档状态存为新版本，保证历史链条单调递增且零丢失。 |
+| 标签过滤 | 查询里第一个 `#tag` 作为标签过滤。 | 标签过滤下沉到 SQL `LIMIT 100` 截断前执行，不能因 100 条截断漏掉匹配标签的词条。 |
 | 执行词条 | 回车或点击词条后，内容进入目标输入框。 | 剪贴板写入是硬保证；自动粘贴是尽力而为。 |
 | 仅复制 | 快捷面板 `Command-C`（或右键菜单）可复制选中词条并关闭面板；主窗口内容库用 `Shift-Command-C` 复制选中词条。 | 不应触发自动粘贴，不应改变词条正文；主窗口普通 `Command-C` 留给预览区文本选区复制。 |
 | 主窗口键盘导航 | 内容库支持 `Command-F` 聚焦搜索、`Command-N` 新建词条、`Command-E` 编辑选中词条、`↑`/`↓` 上下切换选中词条。 | 方向键导航在输入法组字（`hasMarkedText`）或存在文本选区时必须让位给输入框本身。 |
 | 面板固定 | 图钉按钮或 `Command-P` 切换固定状态。 | 固定面板时目标 app 跟踪仍要可靠，避免粘贴回 PromptPanel。 |
 | 词库导入导出 | 设置页维护区支持 JSON / Markdown 导入导出。 | JSON 用于无损迁移；Markdown 用于审阅和轻量迁移；导入写库前必须自动创建本地安全快照备份（`import` 类型）；写入阶段必须保持单事务，失败整体回滚。 |
+| 可选多端同步 | 设置页偏好区支持配置本地网盘文件路径或自托管 `server/` 同步地址。 | 默认关闭且零网络调用；并发修改冲突时自动将被覆盖的本地版本转存进 `entry_versions` 历史记录。 |
 | 运行健康 | 主窗口展示最近执行状态和运行诊断。 | 执行日志不能保存词条正文。 |
 | 备份恢复 | 启动备份、恢复脚本和恢复演练保护本地 SQLite。 | migration 失败不能自动擦库；损坏库隔离和 migration 失败是不同事件。 |
 
@@ -42,6 +45,7 @@ AppDelegate / AppState
 | `PermissionService` | `Sources/PromptPanel/Core/Services/PermissionService.swift` | 读取并引导辅助功能权限。 |
 | `StorageMaintenanceService` | `Sources/PromptPanel/Core/Services/StorageMaintenanceService.swift` | 启动备份、备份保留、日志保留、恢复入口辅助。 |
 | `LibraryTransferService` | `Sources/PromptPanel/Core/Services/LibraryTransferService.swift` | JSON / Markdown 词库导入导出；解析校验后、写库前调用 `createImportSafetyBackup()` 创建导入安全快照，导入写入必须在单个 SQLite 事务内完成。 |
+| `CloudSyncService` | `Sources/PromptPanel/Core/Services/CloudSyncService.swift` | 可选的本地网盘文件或自托管 HTTP/HTTPS 同步信封（`CloudSyncEnvelope v2`）导入导出与冲突自动转存历史版本（`EntryVersion`）。 |
 | `QuickPanelViewModel` | `Sources/PromptPanel/Features/Panel/QuickPanelViewModel.swift` | 面板状态、搜索调度、项目切换、快捷键动作和执行入口。 |
 | `MainWindowViewModel` | `Sources/PromptPanel/Features/MainWindow/MainWindowViewModel.swift` | 内容库、项目维护、词条编辑、设置和运行健康入口。 |
 
@@ -64,10 +68,12 @@ AppDelegate / AppState
 
 | 表 | 用途 | 关键字段 |
 | --- | --- | --- |
-| `projects` | 项目分组。 | `id`, `name`, `is_default`, `created_at`, `updated_at` |
-| `entries` | Prompt / snippet / template 词条。 | `project_id`, `title`, `content`, `type`, `is_pinned`, `sort_order`, `use_count`, `last_used_at`, `tags` |
+| `projects` | 工作区分组（速记与待办 / 常用类型 / 项目）。 | `id`, `name`, `is_default`, `group_kind`, `is_archived`, `icon_name`, `created_at`, `updated_at`, `deleted_at` |
+| `entries` | Prompt / snippet / todo / note 词条。 | `project_id`, `title`, `content`, `type`, `is_pinned`, `is_completed`, `sort_order`, `use_count`, `last_used_at`, `source_entry_id`, `tags`, `deleted_at` |
+| `entry_versions` | 词条历史版本快照。 | `id`, `entry_id`, `version_number`, `title`, `content`, `change_note`, `created_at` |
 | `entries_fts` | FTS5 全文索引。 | `title`, `content` |
 | `app_settings` | 本地设置键值。 | `key`, `value` |
+| `sync_metadata` | 可选多端同步元数据。 | `key`, `value`, `updated_at` |
 | `execution_logs` | 执行诊断。 | `entry_id`, `project_id`, `front_app_bundle_id`, `observed_app_bundle_id`, `failure_reason`, `total_duration_ms` |
 | `grdb_migrations` | GRDB migration 记录。 | `identifier` |
 
@@ -81,6 +87,7 @@ AppDelegate / AppState
 | v4 | `v4_entry_tags` | 给词条增加 JSON 字符串数组形式的 `tags` 字段。 |
 | v5 | `v5_drop_unused_entry_tags_index` | 删除未使用的历史 tags 索引。 |
 | v6 | `v6_retire_entry_sort_order` | 清零历史 `entries.sort_order`，排序全面改用 frecency（列保留仅兼容归档导入导出）。 |
+| v7 | `v7_workspace_versions_and_sync` | 新增工作区三层角色（`group_kind`）、归档状态、内置 `速记与待办`、待办完成态、`entry_versions` 历史版本表及 `sync_metadata` 同步元数据表。 |
 
 数据约束：
 
@@ -176,6 +183,7 @@ ProjectRepository.writeInTransaction(_:)
 | `PROMPTPANEL_ALLOW_EXISTING_INSTANCE` | 允许隔离 smoke 与已运行实例并存。 | 只用于测试；正式运行仍应单实例。 |
 | `PROMPTPANEL_ERASE_ON_SCHEMA_CHANGE` | schema 变化时允许擦库重建。 | 破坏性，仅限本地开发。 |
 | `PROMPTPANEL_TRACE_SQL` | 打开 GRDB 语句级 trace 日志。 | 只用于排查 SQL；开启后日志量与查询行数同量级。 |
+| `PROMPTPANEL_QA_SNAPSHOT_PATH` | 在自动打开 QA 窗口后将窗口位图直接输出到指定 PNG 路径。 | 供 `capture-ui-qa.sh` 在无屏幕录制 TCC 权限时采集窗口级截图。 |
 
 ## 7. 对外没有的 API
 

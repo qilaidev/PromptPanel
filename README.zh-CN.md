@@ -9,7 +9,7 @@
 
 PromptPanel 是一款本地优先的 **macOS Prompt 管理器**、**AI Prompt 启动器** 和 **代码片段启动器**：全局快捷键唤出快捷面板，瞬间检索你的 **Prompt 库 / 代码片段 / 模板**，把内容一键送进 **ChatGPT、Claude、Cursor、Copilot、VS Code、终端、浏览器或任意输入框**。
 
-[![Release: v1.5.0](https://img.shields.io/badge/Release-v1.5.0-blue.svg)](CHANGELOG.md)
+[![Release: v1.6.0](https://img.shields.io/badge/Release-v1.6.0-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: macOS 14+](https://img.shields.io/badge/Platform-macOS%2014%2B-lightgrey.svg)](https://www.apple.com/macos)
 [![Swift 5.10](https://img.shields.io/badge/Swift-5.10-orange.svg)](https://swift.org)
@@ -32,12 +32,12 @@ PromptPanel 是一款本地优先的 **macOS Prompt 管理器**、**AI Prompt �
 | 项目类型 | 开源、本地优先的 macOS Prompt manager / AI prompt launcher / snippet launcher。 |
 | 核心问题 | 解决高频复制粘贴同一批 ChatGPT、Claude、Cursor、Copilot、VS Code、Terminal Prompt、项目上下文、命令片段和模板的问题。 |
 | 适合人群 | AI 重度用户、开发者、Prompt engineers、技术写作者、PM、顾问、需要按项目隔离 Prompt 库的独立开发者。 |
-| 核心功能 | 全局快捷键、即时搜索（SQLite FTS5）、项目隔离、`通用项目 / Universal`、`#tag` 过滤、frecency 智能排序、剪贴板优先、辅助功能权限下自动粘贴、执行日志、JSON/Markdown 导入导出。 |
-| 技术栈 | Swift 5.10、AppKit `NSPanel`、SwiftUI、SQLite/GRDB、KeyboardShortcuts、Sparkle 2、Swift Package Manager。 |
+| 核心功能 | 全局快捷键、即时搜索（SQLite FTS5 + 子串匹配）、三层工作区（`速记与待办` / `常用类型` / `项目管理` + 项目归档）、双窗参考与剪贴板装配台（`参考窗口`）、词条历史版本与一键回滚、`#tag` 过滤、frecency 智能排序、剪贴板优先、辅助功能权限下自动粘贴、执行日志、JSON/Markdown 导入导出、可选开源自托管多端同步（`server/` + `mobile/`）。 |
+| 技术栈 | Swift 5.10、AppKit `NSPanel`、SwiftUI、SQLite/GRDB、KeyboardShortcuts、Sparkle 2、Swift Package Manager（另附可选 Python 自托管同步服务与 Flutter 移动端）。 |
 | 快速开始 | `git clone` → `./scripts/build-app.sh` → `open dist/PromptPanel.app`。首次运行建议授予辅助功能权限；不授权也能复制到剪贴板。 |
-| 典型场景 | ChatGPT/Claude role prompt、Cursor project context、PR review checklist、terminal command snippet、会议纪要模板、客户回复模板。 |
+| 典型场景 | ChatGPT/Claude role prompt、Cursor project context、PR review checklist、terminal command snippet、会议纪要模板、客户回复模板、跨端速记与待办。 |
 | 界面语言 | 应用界面目前只有**简体中文**（`CFBundleDevelopmentRegion = zh-Hans`，无本地化资源与语言切换入口）。文档为中英双语、共 8 个语言版本。词条内容本身不限语言。 |
-| 限制边界 | 仅支持 macOS 14+；界面仅简体中文；当前 Release 暂无已公证二进制包；无云同步、无团队协作、无 Windows/Linux 版本；暂不支持变量模板；自动粘贴依赖 macOS Accessibility。 |
+| 限制边界 | 桌面端仅支持 macOS 14+；界面仅简体中文；当前 Release 暂无已公证二进制包；默认纯本地零网络请求（可选多端同步需自行配置本地网盘路径或自托管服务端）；无多人团队协作、无工作流编排；暂不支持变量模板；自动粘贴依赖 macOS Accessibility。 |
 
 ## 界面截图 / Screenshots
 
@@ -117,23 +117,26 @@ PromptPanel 把上面这些全部塌进一条 sub-second 的链路——而你�
 ### 核心功能
 
 - 🔥 **全局快捷键**：在任何前台应用里都能唤出，可自定义
-- ⚡ **< 300 ms 主链路**：基于 `NSPanel`，没有 Electron、没有 Web 运行时、没有冷启动
-- 🔍 **即时搜索**：按标题或正文实时过滤，不需要点提交
-- 🗂️ **项目隔离**：按客户、仓库、上下文区分；`通用项目` 永远可见
+- ⚡ **< 300 ms 主链路**：基于 `NSPanel` 启动预热，没有 Electron、没有 Web 运行时、没有冷启动
+- 🔍 **即时混合搜索**：按标题、正文或标签实时过滤（SQLite FTS5 前缀匹配 + 大小写不敏感子串兜底 + `LIMIT` 前置 `#tag` 过滤），不需要点提交
+- 🗂️ **三层工作区与项目归档**：划分为 `速记与待办`（内置收件箱，随手记待办并支持勾选完成）、`常用类型`（长期常驻不归档的通用/分类模板，含 `通用项目`）、`项目管理`（按客户或仓库隔离，结项后可一键归档隐藏）
+- 🪟 **双窗对照与剪贴板装配台（`参考窗口`）**：主窗口旁一键打开独立参考窗，边看「常用类型」或系统剪贴板实时预览，边一键克隆到目标项目（记录 `source_entry_id`），在项目内修改绝不污染通用模板
+- 🕰️ **词条版本历史与无损回滚（`EntryVersion`）**：每次修改词条标题或正文自动留存 `v1`、`v2` 等历史版本，随时查看任意历史版本或一键恢复
 - 📋 **自动粘贴 + 剪贴板兜底**：用 `CGEvent` 模拟 ⌘V，权限缺失时优雅降级
-- 🎯 **键盘优先**：方向键选择，回车执行，Esc 关闭
+- 🎯 **键盘优先**：方向键选择，回车执行，Esc 关闭；面板与内容库词条均支持右键菜单
 - 📌 **置顶 + frecency 排序**：必须常驻的词条置顶；其余按 `使用次数 × 2^(-闲置天数 / 90)` 打分，高频词条自动上浮，久不使用的自然下沉
-- 🌗 **浅色 / 深色 / 跟随系统**
+- 🌗 **浅色 / 深色 / 跟随系统**：采用 macOS 原生毛玻璃材质与系统语义色
 - 🪶 **菜单栏常驻**：不打扰，要用就来
 - 🚀 **开机启动**：基于 `SMAppService`
 - 🔐 **权限缺失也能用**：没辅助功能权限时只走"复制"，UI 明确告知
 - 📝 **多行内容**：模板正文不限长度
 - 📊 **执行日志**：粘贴失败时可查
+- ☁️ **可选的开源自托管多端同步（`CloudSyncService` + `server/` + `mobile/`）**：默认 100% 纯本地零网络请求；需要跨设备协同的用户可在「设置 → 偏好 → 云端同步」中配置本地网盘/iCloud 文件路径，或一键部署仓库自带的零外部依赖 Python 同步服务端（`server/`）与 Flutter 手机端（`mobile/`），并发冲突自动留存进历史版本
 - 🔄 **手动更新（GitHub Releases）**：Sparkle 已接入但默认关闭；正式 appcast 托管位就绪后再开启自动检查
 
 ### 永远不会做（产品边界）
 
-PromptPanel **永远不会**加入云同步、团队协作、复杂工作流编排。这不是"以后再说"，而是"以后也不做"。这个工具就是单用户、纯本地、轻量快速，这才是它存在的理由。详见 [PRD §4.2](docs/项目快贴-PRD.md)。
+PromptPanel **永远不会**加入强制 SaaS 账号体系、多人团队协作、复杂工作流编排。这个工具的核心就是单用户、本地优先、轻量快速（多端同步仅作为完全由用户自托管/自控的可选增强）。详见 [PRD §4.2](docs/项目快贴-PRD.md)。
 
 ## 工作原理
 
@@ -208,13 +211,13 @@ open dist/PromptPanel.app
 
 | 你输入 | 实际行为 |
 |---|---|
-| `review` | 对词条标题和正文做 SQLite **FTS5 前缀匹配** |
-| `code rev` | 空格分隔的每个 token 都是前缀词，彼此是 AND 关系 |
-| `#sql` | 只保留打了 `sql` 标签的词条；`#tag` 这个 token 会从文本查询里剔除 |
+| `review` | 对词条标题、正文和标签做 SQLite **FTS5 前缀匹配 + 大小写不敏感子串匹配（`INSTR`）** |
+| `code rev` | 空格分隔的每个 token 都是 AND 关系，同时支持英文前缀与中文连写串中段词召回 |
+| `#sql` | 只保留打了 `sql` 标签的词条（在 SQL `LIMIT 100` 截断前完成过滤）；`#tag` 这个 token 会从文本查询里剔除 |
 | `#sql migrate` | 标签 `sql` **且** 文本命中 `migrate` |
 | *(空)* | 浏览「当前项目 + 通用项目」，按 置顶 → frecency → 最近使用 → 使用次数 排列 |
 
-注意：一次查询只取**第一个** `#tag` 作为标签过滤，且标签是**精确、区分大小写**匹配（`#SQL` 匹配不到 `sql` 标签）；搜索结果上限 100 条；文本匹配是前缀式的，所以从词中间截取的片段（包括中文连写串的中段）匹配不到。
+注意：一次查询只取**第一个** `#tag` 作为标签过滤，且标签是**精确、区分大小写**匹配（`#SQL` 匹配不到 `sql` 标签）；搜索结果上限 100 条；查询结合了 FTS5 前缀索引与 `INSTR` 子串匹配，因此在“并发安全”里搜“安全”也能直接命中。
 
 切换当前项目可以直接在面板内完成，不必打开主窗口——纯键盘，零绕路。
 
@@ -319,9 +322,11 @@ PromptPanel/
 │   ├── Integrations/     # 剪贴板 / 粘贴 / 菜单栏 / 快捷键 / 更新器
 │   ├── Features/
 │   │   ├── Panel/        # QuickPanelView + ViewModel — 主链路
-│   │   └── MainWindow/   # 库管理 + 设置
+│   │   └── MainWindow/   # 库管理 + 双窗参考台 + 设置
 │   └── Resources/        # Info.plist / entitlements / 图标 / Assets
 ├── Tests/PromptPanelTests/
+├── server/               # 可选的零外部依赖 Python + SQLite 自托管同步服务端
+├── mobile/               # 可选的 Flutter (Android & iOS) 跨平台手机端应用
 ├── frontend-draft/       # UI 唯一基准（HTML/JSX 设计稿）
 ├── scripts/              # 构建、公证、发布预检、备份恢复
 ├── docs/                 # 公开架构、FAQ、PRD、部署、运维、交接文档
@@ -376,6 +381,7 @@ PromptPanel 走的是**刻意收敛**的路线。PRD 已经把"永不做"列出�
 
 - [x] v1.0 — 主链路完成：快捷键 → 搜索 → 执行、项目、剪贴板兜底、明暗、开机启动、Sparkle、签名 + 公证脚本
 - [x] JSON / Markdown 导入导出，导入前自动创建本地备份
+- [x] v1.6 — 三层工作区（`速记与待办` / `常用类型` / `项目管理` + 项目归档）、双窗参考与剪贴板装配台（`参考窗口`）、`EntryVersion` 历史版本与一键回滚、中文子串搜索召回、可选开源自托管同步（`server/` + `mobile/`）
 - [ ] 一键"重复执行上一条词条"
 - [ ] 变量模板（`{{name}}`）—— 仅当不拖累主链路时才做
 
@@ -430,15 +436,15 @@ rm -rf ~/Library/Logs/PromptPanel                   # 运行日志
 
 ### 我的 Prompt 会不会被发到云上？
 
-不会。当前版本完全没有网络调用。Sparkle 已打包，但 appcast feed 未配置，因此根本不会发出任何对外请求。Prompt 正文从不离开你的 Mac。
+默认完全不会。核心存储、检索、粘贴与历史版本全部保存在本机 SQLite（`~/Library/Application Support/PromptPanel/promptpanel.db`），默认零网络调用。只有当你在 `设置 → 偏好 → 云端同步` 中显式开启并填写了你自己的本地网盘路径或自托管 `server/` 地址时，才会与你指定的目标同步。
 
 ### 为什么要辅助功能权限？
 
 为了在面板退场后给前一个 app 合成一次 `⌘V`。不给权限工具也能用，只是停在剪贴板那一步、需要你手动 `⌘V`。
 
-### 会加云同步 / 团队共享 / 工作流吗？
+### 会加中心化 SaaS 账号 / 团队共享 / 工作流吗？
 
-不会，这是有意决定。这些项在 [PRD §4.2](docs/项目快贴-PRD.md) 里被列为**永不做**。产品的核心身份就是"单用户、纯本地、快"，加了那些就不是这个产品了。
+不会，这是有意决定。中心化 SaaS 账号、多人团队协作和复杂工作流编排在 [PRD §4.2](docs/项目快贴-PRD.md) 里被列为**永不做**。针对个人跨设备场景，仓库提供了完全开源、可自托管的 `server/` 与 `mobile/` 选配方案，不绑架任何本地用户。
 
 ### 为什么不用 Electron / Tauri？
 

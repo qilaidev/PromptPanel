@@ -46,10 +46,12 @@ PromptPanel turns each of these into the same loop: press the global hotkey, typ
 - Global hotkey quick panel.
 - Native macOS `NSPanel` UI.
 - Keyboard-first search and execution.
-- Project-scoped prompt and snippet library.
-- Built-in universal project for shared entries.
+- Project-scoped prompt and snippet library with three-tier workspace groups: Built-in Inbox & Todos (`速记与待办`), Reusable Categories (`常用类型`, including `通用项目`), and Projects (`项目管理`) with one-click project archiving.
+- Dual-window reference & clipboard assembly bench (`参考窗口`) for cloning reusable templates or system clipboard text into an active project.
+- Automatic immutable version history (`EntryVersion`) on every edit with one-click version rollback.
 - Local SQLite database using GRDB.
-- Instant title/body search with FTS-backed storage.
+- Instant title/body/tag search combining SQLite FTS5 prefix matching with case-insensitive substring fallback (`INSTR`) and pre-limit `#tag` filtering.
+- Optional user-controlled cross-device sync (`CloudSyncService` + self-hosted `server/` + Flutter `mobile/` companion) with conflict-free version preservation; 100% offline by default.
 - Clipboard-first execution guarantee.
 - Best-effort automatic paste with Accessibility permission.
 - Clear clipboard-only fallback when automatic paste is unavailable.
@@ -90,7 +92,7 @@ These are permanent product boundaries, not missing v1 features.
 - macOS 14 Sonoma or later only; there is no Windows or Linux build.
 - The application interface is Simplified Chinese only. The bundle declares `CFBundleDevelopmentRegion = zh-Hans`, UI strings are hard-coded in Swift, and there are no localization resources or in-app language switch. Documentation is bilingual and published in eight languages, and `README.md` includes a Chinese-to-English UI label map. Stored prompt content is language-agnostic. An English or multi-language UI is not currently on the roadmap.
 - No variable or placeholder templating; entry content is pasted verbatim. Variable templates are roadmap-conditional, allowed only if they do not slow the main link.
-- Search is SQLite FTS5 prefix matching over title and content, capped at 100 results, so a term taken from the middle of a word or of an unspaced CJK run does not match.
+- Search combines SQLite FTS5 prefix matching with case-insensitive substring matching (`INSTR`) over title, content, and tags, plus pre-limit `#tag` filtering, capped at 100 results.
 - Current GitHub Releases do not attach a notarized binary asset yet. The supported public install path is building from source with `./scripts/build-app.sh`.
 - Automatic paste needs macOS Accessibility permission. Without it, PromptPanel still writes the selected entry to the clipboard and asks the user to paste manually.
 - Sparkle is bundled, but update checks are disabled unless a feed URL and public key are configured.
@@ -229,7 +231,7 @@ Q: How do I change the global hotkey if it conflicts with another app?
 A: Open `设置 → 偏好 → 快捷键 → 呼出面板` (Settings → Preferences → Hotkey → Toggle panel) and record a new combination. The default is `⌥2`, there is exactly one panel hotkey, and pressing it again while the panel is open dismisses it. If a recorded shortcut does nothing, another app or a macOS system shortcut is claiming it first.
 
 Q: How do I search or filter entries in the quick panel?
-A: Type in the search field with no submit step. Plain text runs a SQLite FTS5 prefix match over title and content, with each whitespace-separated token ANDed. A leading `#tag` token filters by tag and is removed from the text query, so `#sql migrate` means "tagged sql AND matching migrate". Only the first `#tag` token is used and it matches exactly and case-sensitively, results are capped at 100 rows, and text matching is prefix-based.
+A: Type in the search field with no submit step. Plain text runs a SQLite FTS5 prefix match plus case-insensitive substring fallback (`INSTR`) over title, content, and tags, with each whitespace-separated token ANDed. A leading `#tag` token filters by tag before the 100-row limit and is removed from the text query, so `#sql migrate` means "tagged sql AND matching migrate". Only the first `#tag` token is used and it matches exactly and case-sensitively.
 
 Q: Does PromptPanel support variables or template placeholders?
 A: Not today. Entry content is pasted verbatim. Variable templates are roadmap-conditional and will only be added if they do not slow the hotkey-to-paste main link.

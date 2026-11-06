@@ -11,7 +11,7 @@ PromptPanel（项目快贴）是一款本地优先的 **macOS Prompt 管理器**
 
 PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, and **snippet launcher**. It is built for developers and AI power users who reuse multiline prompts, coding templates, project context blocks, terminal commands, and reply snippets across apps.
 
-[![Release: v1.5.0](https://img.shields.io/badge/Release-v1.5.0-blue.svg)](CHANGELOG.md)
+[![Release: v1.6.0](https://img.shields.io/badge/Release-v1.6.0-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: macOS 14+](https://img.shields.io/badge/Platform-macOS%2014%2B-lightgrey.svg)](https://www.apple.com/macos)
 [![Swift 5.10](https://img.shields.io/badge/Swift-5.10-orange.svg)](https://swift.org)
@@ -34,12 +34,12 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 | 项目是什么 / What it is | 开源、本地优先的 macOS Prompt manager and snippet launcher，用全局快捷键唤出原生面板，搜索并粘贴可复用文本。 |
 | 解决什么问题 / Problem solved | 让高频使用 ChatGPT、Claude、Cursor、Copilot、VS Code、Terminal 的用户不用反复翻笔记、复制同一段 system prompt、项目上下文或命令模板。 |
 | 适合谁 / Audience | AI heavy users、开发者、Prompt engineers、技术写作者、PM、顾问和需要按项目隔离 prompt library 的独立开发者。 |
-| 核心功能 / Core features | 全局快捷键、即时搜索（SQLite FTS5）、项目隔离、`Universal / 通用项目`、`#tag` 过滤、frecency 智能排序、剪贴板优先、Accessibility 自动粘贴、执行日志、JSON/Markdown 导入导出。 |
-| 技术栈 / Tech stack | Swift 5.10, AppKit `NSPanel`, SwiftUI, SQLite/GRDB, KeyboardShortcuts, Sparkle 2, Swift Package Manager。 |
+| 核心功能 / Core features | 全局快捷键、即时搜索（SQLite FTS5 + 子串匹配）、三层工作区（`速记与待办` / `常用类型` / `项目管理` + 项目归档）、双窗参考与剪贴板装配台（`参考窗口`）、词条版本历史与一键回滚、`#tag` 过滤、frecency 智能排序、剪贴板优先、Accessibility 自动粘贴、执行日志、JSON/Markdown 导入导出、可选的开源自托管多端同步（`server/` + `mobile/`）。 |
+| 技术栈 / Tech stack | Swift 5.10, AppKit `NSPanel`, SwiftUI, SQLite/GRDB, KeyboardShortcuts, Sparkle 2, Swift Package Manager（另附可选 Python 自托管同步服务与 Flutter 移动端）。 |
 | 快速开始 / Quick start | `git clone` -> `./scripts/build-app.sh` -> `open dist/PromptPanel.app`。首次运行授予 Accessibility 权限后可自动粘贴；不授权也能复制到剪贴板。 |
-| 典型场景 / Use cases | ChatGPT/Claude role prompt、Cursor project context、PR review checklist、terminal command snippet、meeting notes template、client-specific response template。 |
+| 典型场景 / Use cases | ChatGPT/Claude role prompt、Cursor project context、PR review checklist、terminal command snippet、meeting notes template、client-specific response template、跨端速记与待办。 |
 | 界面语言 / UI language | **应用界面目前只有简体中文**（`CFBundleDevelopmentRegion = zh-Hans`，无本地化资源）。The app UI is currently **Simplified Chinese only**; documentation is available in 8 languages. 你存储的 prompt 内容本身不限语言。 |
-| 限制 / Limits | 仅支持 macOS 14+；应用界面仅简体中文；当前 Release 暂无已公证二进制包；无云同步、无团队协作、无 Windows/Linux 版本；自动粘贴依赖 macOS Accessibility 权限。 |
+| 限制 / Limits | 桌面端仅支持 macOS 14+；应用界面仅简体中文；当前 Release 暂无已公证二进制包；默认纯本地零网络请求（可选多端同步需自行配置本地网盘路径或自托管服务端）；无多人团队协作、无工作流编排；自动粘贴依赖 macOS Accessibility 权限。 |
 
 ## Screenshots
 
@@ -117,23 +117,26 @@ If "I copy and paste the same multiline prompt twenty times a day" describes you
 ### Core
 
 - 🔥 **Global hotkey** — summon the panel from any foreground app, configurable shortcut
-- ⚡ **< 300 ms time-to-input** — `NSPanel`-based, no Electron, no web runtime, no cold start
-- 🔍 **Instant search** across title and body, no submit step
-- 🗂️ **Projects** — isolate prompts per client, repo, or context; `Universal` project always visible
+- ⚡ **< 300 ms time-to-input** — `NSPanel`-based, pre-warmed at launch, no Electron, no web runtime, no cold start
+- 🔍 **Instant hybrid search** across title, body, and tags (SQLite FTS5 prefix match + case-insensitive substring fallback + pre-limit `#tag` filter), no submit step
+- 🗂️ **Three-tier workspace & project archiving** — organize content into `速记与待办` (built-in Inbox for todos & quick scratchpad notes), `常用类型` (long-lived reusable categories including `通用项目`), and `项目管理` (client/repo projects that can be archived with one click when finished)
+- 🪟 **Dual-window reference & clipboard assembly bench (`参考窗口`)** — open a companion window alongside the main library to preview the system clipboard or clone reusable category templates directly into a target project without polluting universal templates
+- 🕰️ **Immutable version history & rollback (`EntryVersion`)** — every edit to an entry's title or content automatically snapshots `v1`, `v2`, … so you can inspect or restore any historical version with one click
 - 📋 **Auto-paste with clipboard fallback** — uses `CGEvent` to send ⌘V, falls back gracefully if Accessibility permission is missing
-- 🎯 **Keyboard-first** — arrow keys to navigate, Enter to execute, Esc to dismiss
+- 🎯 **Keyboard-first** — arrow keys to navigate, Enter to execute, Esc to dismiss, context menus on both panel and library rows
 - 📌 **Pin & frecency ranking** — pin what must stay on top; everything else is ordered by `use_count × 2^(-days_idle / 90)`, so frequently used entries float up and prompts you stopped using sink on their own
-- 🌗 **Light / dark / system** theme
+- 🌗 **Light / dark / system** theme with native macOS translucent materials
 - 🪶 **Menu-bar resident** — out of the way until you summon it
 - 🚀 **Launch at login** via `SMAppService`
 - 🔐 **Permission-aware degradation** — without Accessibility, you still get one-key copy and a clear UI hint
 - 📝 **Multiline content** — full template bodies, no length limit on storage
 - 📊 **Execution log** for diagnosing paste failures
+- ☁️ **Optional open-source self-hosted sync (`CloudSyncService` + `server/` + `mobile/`)** — 100% offline by default; optionally sync across Macs and mobile (`mobile/` Flutter Android/iOS app) via a local cloud-drive file or the bundled zero-dependency Python sync server (`server/`) with conflict-free version preservation
 - 🔄 **Manual update via GitHub Releases** (Sparkle auto-update is wired in but ships off-by-default; the maintainer will enable it once a signed appcast feed is hosted)
 
 ### Explicitly *not* doing (project boundaries)
 
-By design PromptPanel will **never** add cloud sync, team collaboration, or complex workflow orchestration. These are not "later" — they are out of scope forever. The tool is a single-user, local-only utility, and that is the point. See [PRD §4.2](docs/项目快贴-PRD.md) for the rationale.
+By design PromptPanel will **never** add mandatory SaaS cloud accounts, multi-user team collaboration, or complex workflow orchestration. The tool is a single-user, local-first utility (with optional self-hosted sync completely under your control), and that is the point. See [PRD §4.2](docs/项目快贴-PRD.md) for the rationale.
 
 ## How does it work?
 
@@ -198,14 +201,17 @@ GitHub Releases currently carry source/documentation release notes only; no nota
 | Chinese label | English meaning |
 |---|---|
 | `内容库` / `设置` | Library / Settings (main window tabs) |
+| `参考窗口` | Dual-window reference & clipboard assembly bench |
+| `速记与待办` · `常用类型` · `项目管理` | Inbox & Todos · Reusable Categories · Active Projects (sidebar sections) |
 | `偏好` · `维护` | Preferences · Maintenance (settings tabs) |
 | `呼出面板` | Toggle quick panel (the global hotkey) |
-| `通用项目` | The built-in `Universal` project |
-| `词条` | Entry (one prompt / snippet) |
+| `通用项目` | The built-in `Universal` reusable category |
+| `词条` / `历史(N)` / `克隆` | Entry / Version history & rollback / Clone entry to target project |
 | `立即备份` | Back up now |
 | `导出 JSON` / `导入 JSON` | Export / Import JSON (lossless library transfer) |
 | `导出 MD` / `导入 MD` | Export / Import Markdown |
 | `导出诊断` | Export diagnostics bundle |
+| `云端同步` | Optional self-hosted or cloud-drive file sync |
 | `运行概况` / `最近执行记录` | Runtime overview / recent execution log |
 | `数据位置` | Data locations (database, backups, logs) |
 
@@ -226,13 +232,13 @@ Assuming the app is built and running (menu-bar icon visible):
 
 | You type | What happens |
 |---|---|
-| `review` | SQLite **FTS5 prefix match** over entry title and content |
-| `code rev` | Every whitespace-separated token is a prefix term, combined with AND — matches "code review…" |
-| `#sql` | Filters to entries tagged `sql`; the `#tag` token is stripped from the text query |
+| `review` | SQLite **FTS5 prefix match + case-insensitive substring fallback (`INSTR`)** over entry title, content, and tags |
+| `code rev` | Every whitespace-separated token is combined with AND — matches "code review…" as well as CJK mid-word substrings |
+| `#sql` | Filters to entries tagged `sql` (evaluated inside SQL before the 100-row limit); the `#tag` token is stripped from the text query |
 | `#sql migrate` | Tag filter `sql` **and** text match `migrate` |
 | *(empty)* | Browses the current project plus `Universal`, sorted by pin → frecency → recency → use count |
 
-Notes: only the first `#tag` token in a query is used as a tag filter, and the tag must match **exactly and case-sensitively** (`#SQL` will not match a `sql` tag); search results are capped at 100 rows; text matching is prefix-based, so a term from the *middle* of a word (or of an unspaced CJK run) will not match.
+Notes: only the first `#tag` token in a query is used as a tag filter, and the tag must match **exactly and case-sensitively** (`#SQL` will not match a `sql` tag); search results are capped at 100 rows; combining FTS5 prefix tokens with `INSTR` substring fallback ensures both fast token lookup and reliable mid-word CJK recall.
 
 You can switch the active project from inside the panel without opening the main window — keyboard-only, no detour.
 
@@ -337,9 +343,11 @@ PromptPanel/
 │   ├── Integrations/     # Clipboard, Paste (CGEvent), Tray, Hotkey, Updater
 │   ├── Features/
 │   │   ├── Panel/        # QuickPanelView + ViewModel — the hero feature
-│   │   └── MainWindow/   # Library + Settings
+│   │   └── MainWindow/   # Library + ReferenceWindow + Settings
 │   └── Resources/        # Info.plist, entitlements, AppIcon, Assets
 ├── Tests/PromptPanelTests/
+├── server/               # Optional zero-dependency Python + SQLite self-hosted sync server
+├── mobile/               # Optional Flutter (Android & iOS) mobile companion app
 ├── frontend-draft/       # UI source-of-truth (HTML/JSX mockups)
 ├── scripts/              # build-app.sh, notarize, release readiness, restore
 ├── docs/                 # public architecture, FAQ, PRD, release, ops, handoff docs
@@ -390,10 +398,11 @@ PromptPanel keeps classic SEO and GEO surfaces in-repo so users and answer engin
 
 ## Roadmap
 
-PromptPanel follows a **deliberately small** roadmap. The PRD lists items that are explicitly off the table forever (cloud sync, teams, workflow orchestration). Within scope:
+PromptPanel follows a **deliberately focused** roadmap. Core principles remain single-user, local-first, and sub-second execution:
 
 - [x] v1.0 — main link complete: hotkey → search → execute, projects, clipboard fallback, light/dark, login item, Sparkle, signing & notarization scripts
 - [x] JSON / Markdown import & export, with automatic backup before import
+- [x] v1.6 — three-tier workspace (`速记与待办` / `常用类型` / `项目管理` + project archiving), dual-window reference & clipboard bench (`参考窗口`), immutable `EntryVersion` history & rollback, CJK substring search, and optional self-hosted sync (`server/` + `mobile/`)
 - [ ] One-tap "repeat last entry"
 - [ ] Variable templates (`{{name}}` style) — only if it can be added without slowing the main link
 
@@ -436,15 +445,15 @@ Yes — the release is built as a universal binary (arm64 + x86_64), so it runs 
 
 ### Does it send my prompts anywhere?
 
-No. The current release makes zero network calls. Sparkle is bundled but the update feed is not configured in this build, so no outbound traffic happens at all. Your prompt content never leaves your Mac.
+No by default. Core storage, search, execution, and version history live entirely in your local SQLite file (`~/Library/Application Support/PromptPanel/promptpanel.db`) with zero outbound network calls. If you explicitly opt into `设置 → 偏好 → 云端同步` (Settings → Preferences → Cloud Sync), it only syncs with the local cloud-drive file path or self-hosted `server/` endpoint that you configure yourself.
 
 ### Why does it ask for Accessibility permission?
 
 To synthesize a `⌘V` keystroke after the panel hides and your previous app regains focus. Without this permission the app still works — it just stops at the clipboard step and shows you a "press ⌘V to paste" toast.
 
-### Will you add cloud sync / team sharing / workflows?
+### Will you add SaaS accounts / team sharing / workflows?
 
-No, deliberately. Those are listed as **permanent non-goals** in the [PRD §4.2](docs/项目快贴-PRD.md). The product's identity is "single-user, local-only, fast." Adding any of those would change what the product is.
+No, deliberately. Mandatory SaaS accounts, multi-user team collaboration, and workflow orchestration are **permanent non-goals** in the [PRD §4.2](docs/项目快贴-PRD.md). For personal cross-device continuity, PromptPanel provides optional local-file / self-hosted sync (`server/` + `mobile/`) with automatic conflict-to-version-history protection while keeping the core desktop loop 100% local-first.
 
 ### Why not Electron / Tauri?
 

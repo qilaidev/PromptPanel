@@ -51,13 +51,13 @@ Type in the search field; there is no submit step.
 
 | Input | Behavior |
 | --- | --- |
-| `review` | SQLite FTS5 prefix match over entry title and content |
-| `code rev` | Each whitespace-separated token is a prefix term, ANDed together |
-| `#sql` | Filters to entries tagged `sql`; the `#tag` token is removed from the text query |
+| `review` | SQLite FTS5 prefix match + case-insensitive substring fallback (`INSTR`) over entry title, content, and tags |
+| `code rev` | Each whitespace-separated token is combined with AND |
+| `#sql` | Filters to entries tagged `sql` (evaluated before the 100-row limit); the `#tag` token is removed from the text query |
 | `#sql migrate` | Tag filter `sql` **and** text match `migrate` |
 | *(empty)* | Browses the current project plus the universal project |
 
-Only the first `#tag` token is treated as a tag filter and it matches exactly and case-sensitively (`#SQL` will not match a `sql` tag). Results are capped at 100 rows, and text matching is prefix-based — a term taken from the middle of a word (or of an unspaced CJK run) will not match.
+Only the first `#tag` token is treated as a tag filter and it matches exactly and case-sensitively (`#SQL` will not match a `sql` tag). Results are capped at 100 rows, and combining FTS5 prefix tokens with `INSTR` substring fallback ensures mid-word and mid-CJK-run terms (such as searching `安全` inside `并发安全`) are matched reliably.
 
 ## Why do entries change position in the list? / 词条顺序为什么会变？
 
@@ -143,7 +143,7 @@ Open `设置 → 维护 → 维护操作` (Settings → Maintenance). Use `导�
 
 ## Does PromptPanel upload prompt content?
 
-No. Core prompt storage, search, execution, and logging are local. The current release also makes zero outbound calls — Sparkle is bundled but the appcast feed and signing key are not configured in this build, so no update probe happens at all.
+No by default. Core prompt storage, search, version history, execution, and logging are 100% local (`~/Library/Application Support/PromptPanel/promptpanel.db`) with zero outbound network calls. Only if you explicitly enable `设置 → 偏好 → 云端同步` (Settings → Preferences → Cloud Sync) and configure your own local cloud-drive file path or self-hosted `server/` endpoint will PromptPanel sync with that target.
 
 ## How do I upgrade PromptPanel?
 
@@ -172,13 +172,13 @@ Accessibility permission lets PromptPanel synthesize `Command-V` after it restor
 
 The clipboard write happens first and is treated as the durable fallback. If paste cannot be dispatched or the target app does not regain focus, PromptPanel records the failure reason in the execution log and leaves the content on the clipboard.
 
-## Can I sync prompts through the cloud or use teams?
+## Can I sync prompts across my own devices or use teams?
 
-No. Cloud sync, team collaboration, and complex workflow orchestration are permanent non-goals in `docs/项目快贴-PRD.md`. PromptPanel is intentionally single-user and local-first.
+Mandatory SaaS accounts, multi-user team collaboration, and complex workflow orchestration remain permanent non-goals in `docs/项目快贴-PRD.md`. For single-user multi-device continuity, v1.6.0 includes optional, user-controlled sync (`设置 → 偏好 → 云端同步`) via a local cloud-drive file or the bundled open-source self-hosted Python sync server (`server/`) and Flutter mobile companion (`mobile/`), with conflict-free version history preservation.
 
 ## Does PromptPanel have a public API?
 
-No HTTP, cloud, GraphQL, plugin, or remote execution API exists today. The documented "API" surface is the local feature contract, Swift service boundaries, SQLite schema, script interfaces, and environment variables in `docs/API与功能说明.md`.
+The macOS desktop app itself does not expose a local HTTP server. The documented "API" surface is the local feature contract, Swift service boundaries, SQLite schema, script interfaces, and environment variables in `docs/API与功能说明.md` (plus the optional self-hosted sync protocol in `server/README.md`).
 
 ## How do I build from source?
 
@@ -201,15 +201,15 @@ On machines with only Command Line Tools, `xctest` may be unavailable. In that c
 
 ## How should UI changes be made?
 
-Update `frontend-draft/` first because it is the visual source of truth. Then align the SwiftUI/AppKit implementation and include the corresponding validation in the PR.
+Update `frontend-draft/` first because it is the visual source of truth. Then align the SwiftUI/AppKit implementation and regenerate `docs/ui-qa/latest/*.png` via `./scripts/capture-ui-qa.sh`.
 
 ## Where is the roadmap?
 
-The public roadmap and contribution scope are in `docs/路线图与贡献指南.md`. JSON/Markdown import/export is now built into `Settings → Maintenance`; repeat last entry, search/tag improvements, and compatibility samples remain in scope. Cloud sync, teams, and workflow orchestration are not.
+The public roadmap and contribution scope are in `docs/路线图与贡献指南.md`. Three-tier workspace groups (`速记与待办` / `常用类型` / `项目管理`), the dual-window reference bench (`参考窗口`), `EntryVersion` history & rollback, JSON/Markdown import/export, and optional self-hosted sync are shipped; repeat last entry, search/tag refinements, and compatibility samples remain in scope.
 
 ## What version is current?
 
-The current shipping version is `1.5.0`. `Sources/PromptPanel/Resources/Info.plist`, `codemeta.json`, and `docs/search-metadata.schema.jsonld` are the authoritative version surfaces. Release notes live in `CHANGELOG.md`.
+The current shipping version is `1.6.0`. `Sources/PromptPanel/Resources/Info.plist`, `codemeta.json`, and `docs/search-metadata.schema.jsonld` are the authoritative version surfaces. Release notes live in `CHANGELOG.md`.
 
 ## What macOS versions does PromptPanel support?
 
