@@ -35,6 +35,7 @@ struct MainWindowView: View {
             }
         }
         .preferredColorScheme(viewModel.appTheme.preferredColorScheme)
+        .tint(Constants.VisualStyle.accent)
         .frame(
             minWidth: Constants.MainWindowLayout.minContentSize.width,
             minHeight: Constants.MainWindowLayout.minContentSize.height
@@ -97,21 +98,58 @@ struct MainWindowView: View {
     // MARK: - Header
 
     private var windowHeader: some View {
-        HStack(alignment: .center, spacing: 8) {
-            Spacer()
-                .frame(width: 72) // reserve space for traffic lights
-
-            Spacer(minLength: 0)
-
+        ZStack {
             segmentedControl
 
-            Spacer(minLength: 0)
+            HStack(alignment: .center, spacing: 8) {
+                Menu {
+                    ForEach(viewModel.activeProjects) { project in
+                        Button {
+                            viewModel.setCurrentProject(project.id)
+                        } label: {
+                            if project.id == viewModel.currentProjectId {
+                                Label(project.name, systemImage: "checkmark")
+                            } else {
+                                Text(project.name)
+                            }
+                        }
+                    }
+                } label: {
+                    Label("当前面板：\(viewModel.projectName(for: viewModel.currentProjectId))", systemImage: "scope")
+                        .font(.ui(.caption, weight: .medium))
+                        .lineLimit(1)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .tint(Constants.VisualStyle.textSecondary)
+                .fixedSize()
+                .padding(.leading, 7)
+                .padding(.trailing, 18)
+                .frame(height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Constants.VisualStyle.tintSubtle)
+                )
+                .overlay(alignment: .trailing) {
+                    Image(systemName: "chevron.down")
+                        .font(.icon(.micro, weight: .semibold))
+                        .foregroundStyle(Constants.VisualStyle.textTertiary)
+                        .padding(.trailing, 6)
+                        .allowsHitTesting(false)
+                }
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
+                )
+                .help("切换快捷面板默认绑定的项目")
 
-            // Balances the traffic-light gutter so the segmented control stays
-            // centred. This used to hold a second "PromptPanel" label, which the
-            // titlebar already shows and which wrapped to two lines inside 72pt.
-            Spacer()
-                .frame(width: 72)
+                Spacer(minLength: 0)
+
+                SettingsPillButton("参考窗口", systemImage: "rectangle.split.2x1") {
+                    viewModel.openReferenceWindow()
+                }
+                .help("打开参考窗口 (⌘⇧N)")
+            }
         }
         .padding(.horizontal, Design.Space.lg)
         .frame(height: Constants.Layout.headerHeight)
@@ -135,11 +173,11 @@ struct MainWindowView: View {
         }
         .padding(2)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Constants.VisualStyle.tintSubtle)
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Constants.VisualStyle.inputFill)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
         )
     }
@@ -159,13 +197,17 @@ struct MainWindowView: View {
             Text(title)
                 .font(.ui(.body, weight: .medium))
                 .foregroundStyle(isActive ? Constants.VisualStyle.text : Constants.VisualStyle.textTertiary)
-                .padding(.horizontal, Design.Space.lg)
-                .padding(.vertical, 3)
+                .padding(.horizontal, 14)
+                .frame(height: 22)
                 .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(isActive ? Constants.VisualStyle.tintMedium : Color.clear)
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(isActive ? Constants.VisualStyle.segmentActiveFill : Color.clear)
                 )
-                .roundedHitTarget(cornerRadius: 6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .strokeBorder(isActive ? Constants.VisualStyle.border : Color.clear, lineWidth: Constants.Layout.hairline)
+                )
+                .roundedHitTarget(cornerRadius: 5)
         }
         .buttonStyle(.plain)
     }
@@ -213,11 +255,22 @@ private struct ProjectEditorSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SheetHeader(title: draft.existingProject == nil ? "新建项目" : "重命名项目")
+            SheetHeader(title: draft.existingProject == nil ? "新建分组" : "编辑分组")
 
-            VStack(alignment: .leading, spacing: Design.Space.md) {
-                SheetField(label: "项目名称") {
-                    TextField("项目名称", text: $draft.name)
+            VStack(alignment: .leading, spacing: Design.Space.lg) {
+                if draft.existingProject?.isSystemProtected != true {
+                    SheetField(label: "分组类型") {
+                        Picker("", selection: $draft.groupKind) {
+                            Text("常用类型").tag(Project.GroupKind.category)
+                            Text("项目").tag(Project.GroupKind.project)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                    }
+                }
+
+                SheetField(label: "名称") {
+                    TextField(draft.groupKind == .category ? "如：开发、写作" : "如：PromptPanel 2.0", text: $draft.name)
                         .textFieldStyle(.roundedBorder)
                         .font(.ui(.title))
                         .focused($isNameFocused)
@@ -229,7 +282,6 @@ private struct ProjectEditorSheet: View {
             SheetActionFooter(
                 primaryTitle: "保存",
                 canSubmit: isProjectDraftValid,
-                message: isProjectDraftValid ? nil : "项目名称不能为空。",
                 onCancel: { dismiss() },
                 onPrimary: saveAndDismiss
             )
@@ -268,7 +320,7 @@ private struct EntryEditorSheet: View {
 
             VStack(alignment: .leading, spacing: Design.Space.lg) {
                 SheetField(label: "标题") {
-                    TextField("给这条内容起个短标题", text: $draft.title)
+                    TextField("输入标题", text: $draft.title)
                         .textFieldStyle(.roundedBorder)
                         .font(.ui(.title))
                         .focused($focusedField, equals: .title)
@@ -308,11 +360,8 @@ private struct EntryEditorSheet: View {
                     Spacer(minLength: 0)
                 }
 
-                SheetField(
-                    label: "标签",
-                    footer: "短标签用于筛选，保持简洁（每个标签不超过 10 个字）。"
-                ) {
-                    TextField("用逗号分隔，例如：发布, 检查清单", text: $draft.tagsText)
+                SheetField(label: "标签") {
+                    TextField("多个标签用逗号分隔（单标签不超过 10 字）", text: $draft.tagsText)
                         .textFieldStyle(.roundedBorder)
                         .font(.ui(.title))
                 }
@@ -325,7 +374,6 @@ private struct EntryEditorSheet: View {
             SheetActionFooter(
                 primaryTitle: "保存",
                 canSubmit: isEntryDraftValid,
-                message: isEntryDraftValid ? nil : "标题和内容都填完后才能保存。",
                 onCancel: { dismiss() },
                 onPrimary: saveAndDismiss
             )

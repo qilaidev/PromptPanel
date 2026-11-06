@@ -121,6 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private var mainWindow: NSWindow?
+    private var referenceWindow: NSWindow?
     private var mainWindowKeyMonitor: Any?
     private let launchMaintenanceQueue = DispatchQueue(label: "PromptPanel.launch-maintenance", qos: .utility)
     /// Panel geometry is persisted through `SettleWriter`, not written inline from the
@@ -145,6 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var loginItemService: LoginItemService!
     private var storageMaintenanceService: StorageMaintenanceService!
     private var libraryTransferService: LibraryTransferService!
+    private var cloudSyncService: CloudSyncService!
     private var updaterService: UpdaterService!
 
     private var executeService: ExecuteService!
@@ -313,6 +315,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             entryRepository: entryRepository,
             storageMaintenanceService: storageMaintenanceService
         )
+        cloudSyncService = CloudSyncService(dbQueue: databaseManager.dbQueue)
 
         let initializedProjectRepository = projectRepository!
         let defaultProject = try initializedProjectRepository.fetchDefault()
@@ -405,6 +408,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             loginItemService: loginItemService,
             storageMaintenanceService: storageMaintenanceService,
             libraryTransferService: libraryTransferService,
+            cloudSyncService: cloudSyncService,
             updaterService: updaterService,
             launchRecoveryReport: databaseManager.launchRecoveryReport,
             onSetPanelPinned: { [weak self] isPinned in
@@ -417,6 +421,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.mainWindow
             }
         )
+        mainWindowViewModel.onOpenReferenceWindow = { [weak self] in
+            self?.openReferenceWindow()
+        }
 
         panelService.contentViewProvider = { [weak self] in
             guard let self else { return NSView() }
@@ -438,7 +445,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.panelOriginWriter?.schedule(origin)
         }
         panelService.onPanelKeyEvent = { [weak self] event in
-            self?.handlePanelKeyEvent(event) ?? false
+            if ProcessInfo.processInfo.environment["PROMPTPANEL_QA_SNAPSHOT_PATH"] != nil {
+                return true
+            }
+            return self?.handlePanelKeyEvent(event) ?? false
         }
 
         trayManager = TrayManager(
@@ -512,6 +522,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return
             }
             self.panelService.show()
+            if ProcessInfo.processInfo.environment["PROMPTPANEL_QA_SNAPSHOT_PATH"] != nil {
+                self.quickPanelViewModel.query = ""
+            }
+            self.scheduleQASnapshotIfNeeded(windowProvider: { [weak self] in
+                self?.panelService.activePanelWindow()
+            })
         }
     }
 
@@ -528,6 +544,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(max(delayMs, 0))) { [weak self] in
             guard let self else { return }
             self.openMainWindow(targetTab: targetTab)
+            self.scheduleQASnapshotIfNeeded(windowProvider: { [weak self] in
+                self?.mainWindow
+            })
+        }
+    }
+
+    private func scheduleQASnapshotIfNeeded(windowProvider: @escaping () -> NSWindow?) {
+        let environment = ProcessInfo.processInfo.environment
+        guard let rawPath = environment["PROMPTPANEL_QA_SNAPSHOT_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawPath.isEmpty else {
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(750)) { [weak self] in
+            if self?.appState.isPanelVisible == true,
+               !(self?.quickPanelViewModel.query.isEmpty ?? true) {
+                self?.quickPanelViewModel.query = ""
+            }
+            guard let window = windowProvider(),
+                  let rootView = window.contentView?.superview ?? window.contentView else {
+                return
+            }
+
+            let effectiveAppearance = window.appearance ?? NSApp.appearance ?? window.effectiveAppearance
+            effectiveAppearance.performAsCurrentDrawingAppearance {
+                rootView.layoutSubtreeIfNeeded()
+                rootView.displayIfNeeded()
+                let bounds = rootView.bounds
+                guard bounds.width > 0, bounds.height > 0,
+                      let bitmapRep = rootView.bitmapImageRepForCachingDisplay(in: bounds) else {
+                    return
+                }
+                rootView.cacheDisplay(in: bounds, to: bitmapRep)
+                if let pngData = bitmapRep.representation(using: .png, properties: [:]) {
+                    let outputURL = URL(fileURLWithPath: rawPath)
+                    try? FileManager.default.createDirectory(
+                        at: outputURL.deletingLastPathComponent(),
+                        withIntermediateDirectories: true
+                    )
+                    try? pngData.write(to: outputURL, options: .atomic)
+                }
+            }
         }
     }
 
@@ -587,6 +645,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         appState.isMainWindowVisible = true
         updateAppActivationPolicy()
         mainWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func openReferenceWindow() {
+        if referenceWindow == nil {
+            let contentView = ReferenceLibraryWindowView(viewModel: mainWindowViewModel)
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 580, height: 640),
+                styleMask: [.titled, .closable, .resizable, .miniaturizable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "\(Constants.appName) · 双窗参考与剪贴板装配台"
+            window.contentMinSize = NSSize(width: 500, height: 520)
+            if let mainFrame = mainWindow?.frame {
+                let targetOrigin = NSPoint(x: mainFrame.maxX + 16, y: mainFrame.minY + 40)
+                window.setFrameOrigin(targetOrigin)
+            } else {
+                window.center()
+            }
+            window.contentView = NSHostingView(rootView: contentView)
+            window.isReleasedWhenClosed = false
+            referenceWindow = window
+        }
+        mainWindowViewModel.refreshClipboardPreview()
+        mainWindowViewModel.refreshReferenceEntries()
+        referenceWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -659,6 +744,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }()
         NSApp.appearance = appearance
         mainWindow?.appearance = appearance
+        referenceWindow?.appearance = appearance
         panelService?.setAppearance(appearance)
     }
 

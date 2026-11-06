@@ -25,14 +25,14 @@ final class UpdaterService: NSObject, ObservableObject {
 
         var statusMessage: String {
             switch (feedURL, publicKey?.isEmpty == false) {
-            case (.some(let feedURL), true):
-                return "已接入 Sparkle，当前使用 \(feedURL.absoluteString)"
+            case (.some, true):
+                return "已启用"
             case (.none, true):
-                return "已接入 Sparkle，但缺少 appcast feed URL。"
+                return "缺少更新源地址 (SUFeedURL)"
             case (.some, false):
-                return "已接入 Sparkle，但缺少 SUPublicEDKey。"
+                return "缺少签名公钥 (SUPublicEDKey)"
             case (.none, false):
-                return "已接入 Sparkle，但当前未配置 feed URL 和 SUPublicEDKey。"
+                return "未配置更新源"
             }
         }
     }

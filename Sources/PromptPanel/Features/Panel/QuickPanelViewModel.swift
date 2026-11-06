@@ -279,7 +279,7 @@ final class QuickPanelViewModel: ObservableObject {
 
     private func loadProjects() {
         do {
-            projects = try projectRepository.fetchAll()
+            projects = try projectRepository.fetchAll(includeArchived: false)
             if currentProjectId.isEmpty || !projects.contains(where: { $0.id == currentProjectId }) {
                 currentProjectId = appState.effectiveProjectId
             }
@@ -332,9 +332,6 @@ final class QuickPanelViewModel: ObservableObject {
                         defaultProjectId: defaultProjectId,
                         tag: tagFilter
                     )
-                    if let tagFilter {
-                        entries = entries.filter { $0.tags.contains(tagFilter) }
-                    }
                     entries = Self.applyPanelRankingSort(entries, currentProjectId: effectiveCurrentProjectId)
                     result = .success(entries)
                 } catch {

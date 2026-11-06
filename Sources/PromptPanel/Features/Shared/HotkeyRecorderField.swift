@@ -226,29 +226,29 @@ struct HotkeyRecorderField: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             Button {
                 model.toggleRecording()
             } label: {
                 Text(model.displayText)
-                    .font(.ui(.body, weight: .medium))
+                    .font(.ui(.body, weight: .medium, mono: !model.isRecording && model.shortcutDescription != nil))
                     .foregroundStyle(
                         model.isRecording
                             ? Constants.VisualStyle.accent
                             : Constants.VisualStyle.text
                     )
-                    .frame(minWidth: 96, minHeight: Constants.Layout.compactControlHeight)
+                    .frame(minWidth: 88, minHeight: Constants.Layout.compactControlHeight)
                     .padding(.horizontal, 10)
                     .background(
-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .fill(
                                 model.isRecording
                                     ? Constants.VisualStyle.accentDim
-                                    : Constants.VisualStyle.tintMedium
+                                    : Constants.VisualStyle.inputFill
                             )
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .strokeBorder(
                                 model.isRecording
                                     ? Constants.VisualStyle.accentBorder
@@ -256,24 +256,24 @@ struct HotkeyRecorderField: View {
                                 lineWidth: Constants.Layout.hairline
                             )
                     )
-                    .roundedHitTarget(cornerRadius: 5)
+                    .roundedHitTarget(cornerRadius: 6)
             }
             .buttonStyle(.plain)
             .help(model.isRecording ? "按下想要的组合键，Esc 取消，Delete 清除" : "点击后按下想要的组合键")
 
-            Button {
-                model.clearShortcut()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.icon(.base))
-                    .foregroundStyle(Constants.VisualStyle.textQuaternary)
-                    .frame(width: 18, height: 18)
-                    .contentShape(Rectangle())
+            if model.shortcutDescription != nil {
+                Button {
+                    model.clearShortcut()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.icon(.base))
+                        .foregroundStyle(Constants.VisualStyle.textTertiary)
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("清除快捷键")
             }
-            .buttonStyle(.plain)
-            .help("清除快捷键")
-            .opacity(model.shortcutDescription == nil ? 0 : 1)
-            .disabled(model.shortcutDescription == nil)
         }
         .onDisappear {
             model.stopRecording()

@@ -178,6 +178,9 @@ struct KeyAwareSearchField: NSViewRepresentable {
 
                 self.activateWindowIfNeeded(for: field)
                 _ = field.window?.makeFirstResponder(field)
+                if let editor = field.currentEditor() as? NSTextView {
+                    editor.insertionPointColor = NSColor(srgbRed: 0.49, green: 0.55, blue: 0.97, alpha: 1.0)
+                }
                 let focusResult = self.makeFocusResult(field: field, token: focusToken, attempt: attempt)
 
                 if focusResult.succeeded {
@@ -358,11 +361,17 @@ final class PromptSearchField: NSSearchField {
         translatesAutoresizingMaskIntoConstraints = false
         lineBreakMode = .byTruncatingTail
         cell?.usesSingleLineMode = true
-        (cell as? NSSearchFieldCell)?.searchButtonCell = nil
+        if let searchCell = cell as? NSSearchFieldCell {
+            searchCell.searchButtonCell = nil
+            searchCell.cancelButtonCell = nil
+        }
         applyAppearance(isFocused: false)
     }
 
     private func applyAppearance(isFocused: Bool) {
+        if let editor = currentEditor() as? NSTextView {
+            editor.insertionPointColor = NSColor(srgbRed: 0.49, green: 0.55, blue: 0.97, alpha: 1.0)
+        }
         guard let layer else {
             return
         }

@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class MainWindowViewModel: ObservableObject {
-    static let allProjectsSelection = "__all_projects__"
+    nonisolated static let allProjectsSelection = "__all_projects__"
 
     enum Tab: Hashable {
         case library
@@ -49,11 +49,13 @@ final class MainWindowViewModel: ObservableObject {
         let id: String
         let existingProject: Project?
         var name: String
+        var groupKind: Project.GroupKind
 
-        init(existingProject: Project?) {
+        init(existingProject: Project?, defaultKind: Project.GroupKind = .project) {
             self.id = existingProject?.id ?? UUID().uuidString
             self.existingProject = existingProject
             self.name = existingProject?.name ?? ""
+            self.groupKind = existingProject?.groupKind ?? defaultKind
         }
     }
 
@@ -124,7 +126,32 @@ final class MainWindowViewModel: ObservableObject {
             scheduleEntriesRefresh(delayMs: Constants.mainWindowSearchDebounceMs)
         }
     }
-    @Published var selectedEntryId: String?
+    @Published var selectedEntryId: String? {
+        didSet {
+            if selectedEntryId != oldValue {
+                refreshSelectedEntryVersions()
+                if let entry = selectedEntry {
+                    syncInlineDraft(with: entry, force: true)
+                }
+            }
+        }
+    }
+    @Published private(set) var selectedEntryVersions: [EntryVersion] = []
+    @Published var isArchivedSectionExpanded: Bool = false
+    @Published var isShowingVersionPopover: Bool = false
+    @Published var inlineDraftEntryId: String = ""
+    @Published var inlineDraftTitle: String = ""
+    @Published var inlineDraftContent: String = ""
+    @Published var inlineDraftProjectId: String = ""
+    @Published var inlineDraftType: String = Constants.EntryType.prompt.rawValue
+    @Published var inlineDraftIsPinned: Bool = false
+    @Published var inlineDraftIsCompleted: Bool = false
+    @Published var inlineDraftTagsText: String = ""
+    @Published var referenceTargetProjectId: String = ""
+    @Published var referenceSourceProjectId: String = MainWindowViewModel.allProjectsSelection
+    @Published var referenceSearchText: String = ""
+    @Published private(set) var referenceEntries: [Entry] = []
+    @Published var clipboardPreviewText: String = ""
     /// Bumped to move focus into the library search field (⌘F).
     @Published private(set) var searchFocusToken: Int = 0
     @Published var entryKindFilter: String? {
@@ -183,6 +210,15 @@ final class MainWindowViewModel: ObservableObject {
     @Published var panelCompactRows: Bool = false
     @Published var panelContentSize: NSSize = Constants.panelContentSize
     @Published var appTheme: AppTheme = .system
+    @Published var cloudSyncEnabled: Bool = false
+    @Published var cloudSyncEndpoint: String = ""
+    @Published var cloudSyncApiKey: String = ""
+    @Published private(set) var cloudSyncLastStatus: String = "尚未执行云端同步"
+    @Published private(set) var cloudSyncConnectionStatus: String = "未检测"
+    @Published private(set) var cloudSyncConnectionHealthy: Bool? = nil
+    private var pendingAutoCloudSyncWorkItem: DispatchWorkItem?
+    private var isApplyingCloudSyncChanges = false
+    private var isCloudSyncInFlight = false
     private let appState: AppState
     private let projectRepository: ProjectRepository
     private let entryRepository: EntryRepository
@@ -192,11 +228,13 @@ final class MainWindowViewModel: ObservableObject {
     private let loginItemService: LoginItemService
     private let storageMaintenanceService: StorageMaintenanceService
     private let libraryTransferService: LibraryTransferService
+    private let cloudSyncService: CloudSyncService?
     private let updaterService: UpdaterService
     private let launchRecoveryReport: LaunchRecoveryReport?
     private let onSetPanelPinned: (Bool) -> Bool
     private let onSetPanelContentSize: (NSSize) -> Bool
     private let onCopyEntry: ((Entry) -> Bool)?
+    var onOpenReferenceWindow: (() -> Void)?
     /// The window that save/open panels attach to as a sheet. A sheet keeps the
     /// window responsive; `runModal()` used to spin a nested modal loop on the
     /// main thread, which is what made "导出" look like it had frozen the window.
@@ -226,6 +264,7 @@ final class MainWindowViewModel: ObservableObject {
         loginItemService: LoginItemService,
         storageMaintenanceService: StorageMaintenanceService,
         libraryTransferService: LibraryTransferService? = nil,
+        cloudSyncService: CloudSyncService? = nil,
         updaterService: UpdaterService,
         launchRecoveryReport: LaunchRecoveryReport?,
         onSetPanelPinned: @escaping (Bool) -> Bool = { _ in false },
@@ -246,6 +285,7 @@ final class MainWindowViewModel: ObservableObject {
             entryRepository: entryRepository,
             storageMaintenanceService: storageMaintenanceService
         )
+        self.cloudSyncService = cloudSyncService
         self.updaterService = updaterService
         self.launchRecoveryReport = launchRecoveryReport
         self.onSetPanelPinned = onSetPanelPinned
@@ -259,6 +299,7 @@ final class MainWindowViewModel: ObservableObject {
         if let stored = try? settingsRepository.getEntrySortMode() {
             self.entrySortMode = EntrySortMode.resolve(stored)
         }
+        refreshCloudSyncState()
 
         observeChanges()
     }
@@ -292,6 +333,22 @@ final class MainWindowViewModel: ObservableObject {
 
     var projectOptions: [Project] {
         projects
+    }
+
+    var inboxProject: Project? {
+        projects.first(where: { $0.groupKind == .inbox })
+    }
+
+    var categoryProjects: [Project] {
+        projects.filter { $0.groupKind == .category && !$0.isArchived }
+    }
+
+    var activeProjects: [Project] {
+        projects.filter { $0.groupKind == .project && !$0.isArchived }
+    }
+
+    var archivedProjects: [Project] {
+        projects.filter { $0.isArchived }
     }
 
     var selectedEntry: Entry? {
@@ -395,6 +452,110 @@ final class MainWindowViewModel: ObservableObject {
         } else if selectedEntryId == nil {
             selectedEntryId = displayedEntries.first?.id
         }
+        if let entry = selectedEntry {
+            let shouldForceSync = inlineDraftEntryId != entry.id || !hasUnsavedInlineChanges(for: entry)
+            syncInlineDraft(with: entry, force: shouldForceSync)
+        }
+        refreshSelectedEntryVersions()
+        refreshReferenceEntries()
+    }
+
+    func syncInlineDraft(with entry: Entry, force: Bool = false) {
+        guard force || inlineDraftEntryId != entry.id else { return }
+        inlineDraftEntryId = entry.id
+        inlineDraftTitle = entry.title
+        inlineDraftContent = entry.content
+        inlineDraftProjectId = entry.projectId
+        inlineDraftType = entry.type
+        inlineDraftIsPinned = entry.isPinned
+        inlineDraftIsCompleted = entry.isCompleted
+        inlineDraftTagsText = entry.tags.joined(separator: ", ")
+    }
+
+    func hasUnsavedInlineChanges(for entry: Entry) -> Bool {
+        guard inlineDraftEntryId == entry.id else { return false }
+        let parsedTags = Entry.normalizeTags(
+            inlineDraftTagsText
+                .components(separatedBy: CharacterSet(charactersIn: ",，、"))
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        )
+        return inlineDraftTitle.trimmingCharacters(in: .whitespacesAndNewlines) != entry.title
+            || inlineDraftContent != entry.content
+            || inlineDraftProjectId != entry.projectId
+            || inlineDraftType != entry.type
+            || inlineDraftIsPinned != entry.isPinned
+            || inlineDraftIsCompleted != entry.isCompleted
+            || parsedTags != entry.tags
+    }
+
+    func hasUnsavedInlineContentChanges(for entry: Entry) -> Bool {
+        guard inlineDraftEntryId == entry.id else { return false }
+        return inlineDraftTitle.trimmingCharacters(in: .whitespacesAndNewlines) != entry.title
+            || inlineDraftContent != entry.content
+    }
+
+    @discardableResult
+    func commitInlineChanges(for entry: Entry) -> Bool {
+        saveInlineEntry(
+            entry,
+            title: inlineDraftTitle,
+            content: inlineDraftContent,
+            projectId: inlineDraftProjectId,
+            type: inlineDraftType,
+            isPinned: inlineDraftIsPinned,
+            isCompleted: inlineDraftIsCompleted,
+            tagsText: inlineDraftTagsText,
+            changeNote: "内联编辑保存"
+        )
+    }
+
+    func refreshReferenceEntries() {
+        let sourceId = referenceSourceProjectId
+        let query = referenceSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let entryRepository = self.entryRepository
+        let categoryIds = Set(categoryProjects.map(\.id))
+        entriesLoadQueue.async { [weak self] in
+            let allEntries: [Entry]
+            if sourceId == Self.allProjectsSelection {
+                allEntries = (try? entryRepository.fetchAll()) ?? []
+            } else {
+                allEntries = (try? entryRepository.fetchByProject(sourceId)) ?? []
+            }
+            let filtered = allEntries.filter { entry in
+                if sourceId == Self.allProjectsSelection && !categoryIds.isEmpty {
+                    // Show category templates first or all entries when searching
+                    if query.isEmpty {
+                        return true
+                    }
+                }
+                guard !query.isEmpty else { return true }
+                return entry.title.localizedCaseInsensitiveContains(query)
+                    || entry.content.localizedCaseInsensitiveContains(query)
+                    || entry.tags.contains(where: { $0.localizedCaseInsensitiveContains(query) })
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.referenceEntries = filtered
+            }
+        }
+    }
+
+    func refreshClipboardPreview() {
+        clipboardPreviewText = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    func refreshSelectedEntryVersions() {
+        guard let entryId = selectedEntry?.id else {
+            selectedEntryVersions = []
+            return
+        }
+        let entryRepository = self.entryRepository
+        entriesLoadQueue.async { [weak self] in
+            let versions = (try? entryRepository.fetchVersions(forEntryId: entryId)) ?? []
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.selectedEntry?.id == entryId else { return }
+                self.selectedEntryVersions = versions
+            }
+        }
     }
 
     private func refreshDisplayedEntriesUnlessBatching() {
@@ -482,6 +643,7 @@ final class MainWindowViewModel: ObservableObject {
         case copySelectedEntry
         case editSelectedEntry
         case createNewEntry
+        case openReferenceWindow
         case moveSelectionUp
         case moveSelectionDown
     }
@@ -513,7 +675,11 @@ final class MainWindowViewModel: ObservableObject {
         }
         let characters = charactersIgnoringModifiers?.lowercased()
         if modifierFlags.contains(.shift) {
-            return characters == "c" ? .copySelectedEntry : nil
+            switch characters {
+            case "c": return .copySelectedEntry
+            case "n": return .openReferenceWindow
+            default: return nil
+            }
         }
         switch characters {
         case "f": return .focusSearch
@@ -568,6 +734,8 @@ final class MainWindowViewModel: ObservableObject {
             startEditEntry(entry)
         case .createNewEntry:
             startCreateEntry()
+        case .openReferenceWindow:
+            openReferenceWindow()
         case .moveSelectionUp:
             return moveSelectedEntry(offset: -1)
         case .moveSelectionDown:
@@ -591,14 +759,24 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     func copyEntryContent(_ entry: Entry) {
-        if let onCopyEntry, onCopyEntry(entry) {
-            bannerMessage = "已复制到剪贴板：\(entry.title)"
+        var effectiveEntry = entry
+        if inlineDraftEntryId == entry.id,
+           hasUnsavedInlineChanges(for: entry),
+           !inlineDraftContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let draftTitle = inlineDraftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !draftTitle.isEmpty {
+                effectiveEntry.title = draftTitle
+            }
+            effectiveEntry.content = inlineDraftContent
+        }
+        if let onCopyEntry, onCopyEntry(effectiveEntry) {
+            bannerMessage = "已复制到剪贴板：\(effectiveEntry.title)"
             return
         }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        if pasteboard.setString(entry.content, forType: .string) {
-            bannerMessage = "已复制到剪贴板：\(entry.title)"
+        if pasteboard.setString(effectiveEntry.content, forType: .string) {
+            bannerMessage = "已复制到剪贴板：\(effectiveEntry.title)"
         } else {
             bannerMessage = "复制到剪贴板失败，请重试。"
         }
@@ -610,6 +788,9 @@ final class MainWindowViewModel: ObservableObject {
         updated.updatedAt = Date()
         do {
             try entryRepository.update(updated)
+            if inlineDraftEntryId == entry.id {
+                inlineDraftIsPinned = updated.isPinned
+            }
             NotificationCenter.default.post(name: .entriesDidChange, object: nil)
             bannerMessage = updated.isPinned ? "已置顶词条。" : "已取消置顶。"
         } catch {
@@ -991,6 +1172,182 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Cloud Sync Actions
+
+    func refreshCloudSyncState() {
+        cloudSyncEnabled = (try? settingsRepository.isCloudSyncEnabled()) ?? false
+        cloudSyncEndpoint = (try? settingsRepository.getCloudSyncEndpoint()) ?? ""
+        cloudSyncApiKey = (try? settingsRepository.getCloudSyncApiKey()) ?? ""
+        if let status = try? cloudSyncService?.lastSyncStatus(), !status.isEmpty {
+            cloudSyncLastStatus = status
+        }
+        if cloudSyncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            cloudSyncConnectionStatus = "未配置同步地址"
+            cloudSyncConnectionHealthy = nil
+        }
+    }
+
+    func saveCloudSyncSettings() {
+        do {
+            try settingsRepository.setCloudSyncEnabled(cloudSyncEnabled)
+            try settingsRepository.setCloudSyncEndpoint(cloudSyncEndpoint)
+            try settingsRepository.setCloudSyncApiKey(cloudSyncApiKey)
+            bannerMessage = "云端同步配置已保存。"
+        } catch {
+            PPLogger.app.error("Failed to save cloud sync settings: \(error.localizedDescription)")
+            bannerMessage = "保存云端同步配置失败，请重试。"
+        }
+    }
+
+    func generateNewCloudSyncToken() {
+        let randomPart = (UUID().uuidString + UUID().uuidString)
+            .replacingOccurrences(of: "-", with: "")
+            .lowercased()
+            .prefix(28)
+        let token = "pp_live_\(randomPart)"
+        cloudSyncApiKey = token
+        saveCloudSyncSettings()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(token, forType: .string)
+        bannerMessage = "已生成专属隔离 Token 并复制到剪贴板。"
+    }
+
+    func copyMobileSyncBundleToClipboard() {
+        let trimmedEndpoint = cloudSyncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedEndpoint.isEmpty else {
+            bannerMessage = "请先填写同步地址后再复制手机端配置。"
+            return
+        }
+        let payload: [String: String] = [
+            "endpoint": trimmedEndpoint,
+            "apiKey": cloudSyncApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]),
+           let text = String(data: data, encoding: .utf8) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            bannerMessage = "已复制手机端同步配置（Endpoint + Token），可直接发送至手机端。"
+        }
+    }
+
+    func copyOpenSourceDeployCommand() {
+        let command = "cd server && sudo PP_SYNC_PORT=18787 ./deploy-systemd.sh"
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(command, forType: .string)
+        bannerMessage = "已复制开源服务端一键部署命令：\(command)"
+    }
+
+    func testCloudSyncConnection() {
+        guard let cloudSyncService else {
+            bannerMessage = "云端同步服务未初始化。"
+            return
+        }
+        saveCloudSyncSettings()
+        let endpoint = cloudSyncEndpoint
+        let apiKey = cloudSyncApiKey
+        cloudSyncConnectionStatus = "正在检测连接…"
+        statusQueue.async { [weak self] in
+            let result = Result {
+                try cloudSyncService.testConnection(endpoint: endpoint, apiKey: apiKey)
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                switch result {
+                case .success(let report):
+                    self.cloudSyncConnectionHealthy = report.isReachable && report.authenticated
+                    self.cloudSyncConnectionStatus = report.summaryText
+                    self.bannerMessage = report.summaryText
+                case .failure(let error):
+                    self.cloudSyncConnectionHealthy = false
+                    self.cloudSyncConnectionStatus = "连接异常：\(error.localizedDescription)"
+                    self.bannerMessage = "测试连接失败：\(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    func chooseCloudSyncFileLocation() {
+        presentSavePanel(
+            title: "选择云端网盘 / iCloud 同步文件路径",
+            fileName: "PromptPanel-CloudSync.json",
+            contentTypes: [.json]
+        ) { [weak self] url in
+            guard let self else { return }
+            self.cloudSyncEndpoint = url.path
+            self.cloudSyncEnabled = true
+            self.saveCloudSyncSettings()
+        }
+    }
+
+    func syncCloudNow() {
+        guard let cloudSyncService else {
+            bannerMessage = "云端同步服务未初始化。"
+            return
+        }
+        guard !isCloudSyncInFlight else {
+            bannerMessage = "云端同步正在进行中，请稍候。"
+            return
+        }
+        saveCloudSyncSettings()
+        let endpoint = cloudSyncEndpoint
+        let apiKey = cloudSyncApiKey
+        isCloudSyncInFlight = true
+        runMaintenance("正在执行云端双向同步…") {
+            try cloudSyncService.syncNow(endpoint: endpoint, apiKey: apiKey)
+        } onSuccess: { [weak self] summary in
+            guard let self else { return }
+            self.isCloudSyncInFlight = false
+            self.isApplyingCloudSyncChanges = true
+            defer { self.isApplyingCloudSyncChanges = false }
+            self.cloudSyncConnectionHealthy = true
+            self.refreshCloudSyncState()
+            self.notifyProjectsChanged()
+            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            self.refreshSelectedEntryVersions()
+            self.bannerMessage = "云端同步成功：项目 +\(summary.projectsCreated)/更\(summary.projectsUpdated)，词条 +\(summary.entriesCreated)/更\(summary.entriesUpdated)，冲突版本保护 \(summary.conflictsPreservedInVersions) 处。"
+        } onFailure: { [weak self] error in
+            self?.isCloudSyncInFlight = false
+            self?.cloudSyncConnectionHealthy = false
+            return error.localizedDescription
+        }
+    }
+
+    private func scheduleAutoCloudSyncIfNeeded() {
+        guard cloudSyncEnabled,
+              !isApplyingCloudSyncChanges,
+              let cloudSyncService else {
+            return
+        }
+        let endpoint = cloudSyncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !endpoint.isEmpty else { return }
+        let apiKey = cloudSyncApiKey
+
+        pendingAutoCloudSyncWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.activeMaintenanceTask == nil, !self.isCloudSyncInFlight else { return }
+            self.isCloudSyncInFlight = true
+            self.maintenanceQueue.async { [weak self] in
+                let summary = try? cloudSyncService.syncNow(endpoint: endpoint, apiKey: apiKey)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.isCloudSyncInFlight = false
+                    guard let summary else { return }
+                    self.cloudSyncConnectionHealthy = true
+                    self.refreshCloudSyncState()
+                    if summary.entriesCreated > 0 || summary.entriesUpdated > 0 || summary.projectsCreated > 0 || summary.projectsUpdated > 0 {
+                        self.isApplyingCloudSyncChanges = true
+                        self.loadProjects()
+                        self.scheduleEntriesRefresh(delayMs: 0)
+                        self.refreshProjectEntryCounts()
+                        self.isApplyingCloudSyncChanges = false
+                    }
+                }
+            }
+        }
+        pendingAutoCloudSyncWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: workItem)
+    }
+
     // MARK: - Off-main maintenance plumbing
 
     private func runMaintenance<T: Sendable>(
@@ -1087,6 +1444,13 @@ final class MainWindowViewModel: ObservableObject {
         refreshUpdaterStatus()
     }
 
+    func setCurrentProject(_ projectId: String) {
+        persistCurrentProject(projectId)
+        if let project = projects.first(where: { $0.id == projectId }) {
+            bannerMessage = "当前项目已切换为 \(project.name)。"
+        }
+    }
+
     func setCurrentProjectToSelected() {
         guard let project = selectedProject else {
             bannerMessage = "请先选择一个具体项目。"
@@ -1096,16 +1460,16 @@ final class MainWindowViewModel: ObservableObject {
         bannerMessage = "当前项目已切换为 \(project.name)。"
     }
 
-    func startCreateProject() {
-        projectDraft = ProjectDraft(existingProject: nil)
+    func startCreateProject(kind: Project.GroupKind = .project) {
+        projectDraft = ProjectDraft(existingProject: nil, defaultKind: kind)
     }
 
     func startRenameSelectedProject() {
         guard let project = selectedProject else {
-            bannerMessage = "请先选择要重命名的项目。"
+            bannerMessage = "请先选择要重命名的项目或分类。"
             return
         }
-        projectDraft = ProjectDraft(existingProject: project)
+        projectDraft = ProjectDraft(existingProject: project, defaultKind: project.groupKind)
     }
 
     func saveProjectDraft() -> Bool {
@@ -1115,19 +1479,23 @@ final class MainWindowViewModel: ObservableObject {
 
         draft.name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !draft.name.isEmpty else {
-            bannerMessage = "项目名称不能为空。"
+            bannerMessage = "名称不能为空。"
             return false
         }
 
         do {
             if let existingProject = draft.existingProject {
-                try projectRepository.rename(id: existingProject.id, newName: draft.name)
-                bannerMessage = "项目已重命名。"
+                try projectRepository.rename(
+                    id: existingProject.id,
+                    newName: draft.name,
+                    groupKind: draft.groupKind
+                )
+                bannerMessage = "已保存「\(draft.name)」。"
             } else {
-                let project = Project(name: draft.name)
+                let project = Project(name: draft.name, groupKind: draft.groupKind)
                 try projectRepository.create(project)
                 selectedProjectId = project.id
-                bannerMessage = "项目已创建。"
+                bannerMessage = "已创建\(draft.groupKind.displayName)「\(draft.name)」。"
             }
 
             projectDraft = nil
@@ -1135,8 +1503,42 @@ final class MainWindowViewModel: ObservableObject {
             return true
         } catch {
             PPLogger.project.error("Failed to save project draft: \(error.localizedDescription)")
-            bannerMessage = "保存项目失败，请重试。"
+            bannerMessage = "保存失败，请重试。"
             return false
+        }
+    }
+
+    func toggleArchiveProject(_ project: Project) {
+        guard !project.isSystemProtected else {
+            bannerMessage = "系统内置分组不可归档。"
+            return
+        }
+        let targetState = !project.isArchived
+        do {
+            try projectRepository.setArchived(id: project.id, isArchived: targetState)
+            if targetState && appState.currentProjectId == project.id {
+                persistCurrentProject(appState.defaultProjectId)
+            }
+            notifyProjectsChanged()
+            bannerMessage = targetState ? "项目「\(project.name)」已归档（词条与版本历史已留存）。" : "项目「\(project.name)」已取消归档。"
+        } catch {
+            PPLogger.project.error("Failed to toggle project archive state: \(error.localizedDescription)")
+            bannerMessage = "更新归档状态失败，请重试。"
+        }
+    }
+
+    func setProjectGroupKind(_ project: Project, kind: Project.GroupKind) {
+        guard !project.isSystemProtected else {
+            bannerMessage = "系统内置分组不可更改类型。"
+            return
+        }
+        do {
+            try projectRepository.setGroupKind(id: project.id, groupKind: kind)
+            notifyProjectsChanged()
+            bannerMessage = "已将「\(project.name)」标记为\(kind.displayName)。"
+        } catch {
+            PPLogger.project.error("Failed to set project group kind: \(error.localizedDescription)")
+            bannerMessage = "更改分组标记失败，请重试。"
         }
     }
 
@@ -1145,8 +1547,8 @@ final class MainWindowViewModel: ObservableObject {
             bannerMessage = "请先选择要删除的项目。"
             return
         }
-        guard !project.isDefault else {
-            bannerMessage = "通用项目不能删除。"
+        guard !project.isSystemProtected else {
+            bannerMessage = project.isDefault ? "通用项目不能删除。" : "系统内置分组不能删除。"
             return
         }
 
@@ -1221,14 +1623,20 @@ final class MainWindowViewModel: ObservableObject {
                     content: draft.content,
                     type: draft.type,
                     isPinned: draft.isPinned,
+                    isCompleted: existingEntry.isCompleted,
                     sortOrder: draft.sortOrder,
                     useCount: existingEntry.useCount,
                     lastUsedAt: existingEntry.lastUsedAt,
                     createdAt: existingEntry.createdAt,
                     updatedAt: Date(),
+                    deletedAt: existingEntry.deletedAt,
+                    sourceEntryId: existingEntry.sourceEntryId,
                     tags: parsedTags
                 )
                 try entryRepository.update(updated)
+                if inlineDraftEntryId == updated.id {
+                    syncInlineDraft(with: updated, force: true)
+                }
                 bannerMessage = "词条已更新。"
             } else {
                 let entry = Entry(
@@ -1256,6 +1664,140 @@ final class MainWindowViewModel: ObservableObject {
 
     func requestDeleteEntry(_ entry: Entry) {
         entryPendingDeletion = entry
+    }
+
+    func toggleEntryCompleted(_ entry: Entry) {
+        let nextState = !entry.isCompleted
+        do {
+            try entryRepository.setCompleted(id: entry.id, isCompleted: nextState)
+            if inlineDraftEntryId == entry.id {
+                inlineDraftIsCompleted = nextState
+            }
+            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            bannerMessage = nextState ? "已标记为完成：\(entry.title)" : "已恢复为待办：\(entry.title)"
+        } catch {
+            PPLogger.entry.error("Failed to toggle entry completed state: \(error.localizedDescription)")
+            bannerMessage = "更新完成状态失败，请重试。"
+        }
+    }
+
+    @discardableResult
+    func saveInlineEntry(
+        _ entry: Entry,
+        title: String,
+        content: String,
+        projectId: String,
+        type: String,
+        isPinned: Bool,
+        isCompleted: Bool,
+        tagsText: String,
+        changeNote: String? = nil
+    ) -> Bool {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty, !trimmedContent.isEmpty else {
+            bannerMessage = "标题和内容都不能为空。"
+            return false
+        }
+
+        let parsedTags = Entry.normalizeTags(
+            tagsText
+                .components(separatedBy: CharacterSet(charactersIn: ",，、"))
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        )
+
+        let updated = Entry(
+            id: entry.id,
+            projectId: projectId,
+            title: trimmedTitle,
+            content: content,
+            type: type,
+            isPinned: isPinned,
+            isCompleted: isCompleted,
+            sortOrder: entry.sortOrder,
+            useCount: entry.useCount,
+            lastUsedAt: entry.lastUsedAt,
+            createdAt: entry.createdAt,
+            updatedAt: Date(),
+            deletedAt: entry.deletedAt,
+            sourceEntryId: entry.sourceEntryId,
+            tags: parsedTags
+        )
+
+        let didChangeContent = entry.title != trimmedTitle || entry.content != content
+        do {
+            try entryRepository.update(updated, changeNote: changeNote)
+            syncInlineDraft(with: updated, force: true)
+            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            refreshSelectedEntryVersions()
+            bannerMessage = didChangeContent ? "已保存修改并留存历史版本。" : "已保存词条属性修改。"
+            return true
+        } catch {
+            PPLogger.entry.error("Failed to save inline entry: \(error.localizedDescription)")
+            bannerMessage = "保存修改失败，请重试。"
+            return false
+        }
+    }
+
+    func restoreEntryVersion(_ version: EntryVersion) {
+        do {
+            let restored = try entryRepository.restoreVersion(versionId: version.id)
+            selectedEntryId = restored.id
+            syncInlineDraft(with: restored, force: true)
+            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            refreshSelectedEntryVersions()
+            bannerMessage = "已恢复至历史版本 v\(version.versionNumber)。"
+        } catch {
+            PPLogger.entry.error("Failed to restore entry version: \(error.localizedDescription)")
+            bannerMessage = "恢复历史版本失败，请重试。"
+        }
+    }
+
+    @discardableResult
+    func cloneEntry(_ entry: Entry, toProjectId targetProjectId: String) -> Entry? {
+        do {
+            let cloned = try entryRepository.cloneEntry(id: entry.id, toProjectId: targetProjectId)
+            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            let targetName = projectName(for: targetProjectId)
+            bannerMessage = "已将「\(entry.title)」复制到「\(targetName)」。"
+            return cloned
+        } catch {
+            PPLogger.entry.error("Failed to clone entry: \(error.localizedDescription)")
+            bannerMessage = "复制词条到目标分组失败，请重试。"
+            return nil
+        }
+    }
+
+    func createQuickEntryFromClipboard(intoProjectId targetProjectId: String, type: Constants.EntryType = .prompt) {
+        guard let rawText = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawText.isEmpty else {
+            bannerMessage = "当前剪贴板中没有可用的文本内容。"
+            return
+        }
+        let firstLine = rawText
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty }) ?? "剪贴板快贴"
+        let title = String(firstLine.prefix(36))
+        let newEntry = Entry(
+            projectId: targetProjectId,
+            title: title,
+            content: rawText,
+            type: type.rawValue
+        )
+        do {
+            try entryRepository.create(newEntry, changeNote: "从剪贴板创建")
+            selectedEntryId = newEntry.id
+            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            bannerMessage = "已从剪贴板创建词条：\(title)"
+        } catch {
+            PPLogger.entry.error("Failed to create entry from clipboard: \(error.localizedDescription)")
+            bannerMessage = "从剪贴板创建失败，请重试。"
+        }
+    }
+
+    func openReferenceWindow() {
+        onOpenReferenceWindow?()
     }
 
     func confirmDeleteEntry() {
@@ -1322,6 +1864,7 @@ final class MainWindowViewModel: ObservableObject {
             .sink { [weak self] _ in
                 self?.loadProjects()
                 self?.scheduleEntriesRefresh(delayMs: 0)
+                self?.scheduleAutoCloudSyncIfNeeded()
             }
             .store(in: &cancellables)
 
@@ -1329,6 +1872,7 @@ final class MainWindowViewModel: ObservableObject {
             .sink { [weak self] _ in
                 self?.scheduleEntriesRefresh(delayMs: 0)
                 self?.refreshProjectEntryCounts()
+                self?.scheduleAutoCloudSyncIfNeeded()
             }
             .store(in: &cancellables)
 

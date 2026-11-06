@@ -60,11 +60,11 @@ struct QuickPanelView: View {
             ZStack(alignment: .leading) {
                 if viewModel.query.isEmpty {
                     Text(searchPlaceholder)
-                        .font(.ui(.title, weight: .medium))
+                        .font(.ui(.title))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                        .padding(.leading, 4)
+                        .padding(.leading, 6)
                         .allowsHitTesting(false)
                 }
 
@@ -107,50 +107,68 @@ struct QuickPanelView: View {
 
     private var searchPlaceholder: String {
         let name = currentProjectName
-        return "搜索 \(name) · 输入 # 按标签筛选"
+        return "搜索 \(name) 或 #标签"
+    }
+
+    private var currentProject: Project? {
+        viewModel.projects.first(where: { $0.id == viewModel.currentProjectId })
     }
 
     private var currentProjectName: String {
-        viewModel.projects.first(where: { $0.id == viewModel.currentProjectId })?.name ?? "当前项目"
+        currentProject?.name ?? "当前项目"
     }
 
     private var projectScope: some View {
-        Menu {
-            ForEach(viewModel.projects) { project in
-                Button {
-                    viewModel.activateProject(project.id)
-                } label: {
-                    HStack {
-                        Text(project.name)
-                        if project.id == appState.defaultProjectId {
-                            Text("通用")
-                                .font(.caption2)
+        let inboxProjects = viewModel.projects.filter { $0.groupKind == .inbox }
+        let categoryProjects = viewModel.projects.filter { $0.groupKind == .category }
+        let activeProjects = viewModel.projects.filter { $0.groupKind == .project }
+
+        return Menu {
+            if !inboxProjects.isEmpty {
+                Section("速记与待办") {
+                    ForEach(inboxProjects) { project in
+                        Button {
+                            viewModel.activateProject(project.id)
+                        } label: {
+                            Label(project.name, systemImage: project.effectiveIconName)
+                        }
+                    }
+                }
+            }
+
+            if !categoryProjects.isEmpty {
+                Section("常用类型") {
+                    ForEach(categoryProjects) { project in
+                        Button {
+                            viewModel.activateProject(project.id)
+                        } label: {
+                            Label(project.name, systemImage: project.effectiveIconName)
+                        }
+                    }
+                }
+            }
+
+            if !activeProjects.isEmpty {
+                Section("项目") {
+                    ForEach(activeProjects) { project in
+                        Button {
+                            viewModel.activateProject(project.id)
+                        } label: {
+                            Label(project.name, systemImage: project.effectiveIconName)
                         }
                     }
                 }
             }
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: "folder.fill")
+                Image(systemName: currentProject?.effectiveIconName ?? "folder.fill")
                     .font(.icon(.micro))
-                    .foregroundStyle(Constants.VisualStyle.textTertiary)
+                    .foregroundStyle(Constants.VisualStyle.accent)
                 Text(currentProjectName)
                     .font(.ui(.body, weight: .medium))
                     .foregroundStyle(Constants.VisualStyle.text)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                if viewModel.currentProjectId == appState.defaultProjectId {
-                    Text("通用")
-                        .font(.ui(.micro, weight: .semibold))
-                        .tracking(0.3)
-                        .foregroundStyle(Constants.VisualStyle.accent)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(
-                            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                .fill(Constants.VisualStyle.accentDim)
-                        )
-                }
                 Image(systemName: "chevron.down")
                     .font(.icon(.micro, weight: .semibold))
                     .foregroundStyle(Constants.VisualStyle.textTertiary)
@@ -159,7 +177,7 @@ struct QuickPanelView: View {
             .frame(height: Constants.Layout.compactControlHeight)
             .background(
                 RoundedRectangle(cornerRadius: Design.pillCornerRadius, style: .continuous)
-                    .fill(Constants.VisualStyle.surfaceRaised)
+                    .fill(Constants.VisualStyle.tintSubtle)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Design.pillCornerRadius, style: .continuous)
@@ -457,9 +475,9 @@ private struct PanelRow: View {
                         .frame(width: 18, alignment: .center)
                 }
 
-                Image(systemName: type.symbolName)
+                Image(systemName: entry.isCompleted ? "checkmark.circle.fill" : type.symbolName)
                     .font(.icon(.base))
-                    .foregroundStyle(level.color)
+                    .foregroundStyle(entry.isCompleted ? Constants.VisualStyle.success : level.color)
                     .frame(width: 16, height: 16)
 
                 HStack(alignment: .firstTextBaseline, spacing: Design.Space.lg) {
@@ -541,7 +559,8 @@ private struct PanelRow: View {
         HStack(spacing: Design.Space.xs) {
             Text(entry.title)
                 .font(.ui(.title, weight: .medium))
-                .foregroundStyle(Constants.VisualStyle.text)
+                .foregroundStyle(entry.isCompleted ? Constants.VisualStyle.textTertiary : Constants.VisualStyle.text)
+                .strikethrough(entry.isCompleted, color: Constants.VisualStyle.textTertiary)
                 .lineLimit(1)
                 .truncationMode(.tail)
             if entry.isPinned {

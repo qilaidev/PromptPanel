@@ -1,4 +1,26 @@
+import AppKit
 import SwiftUI
+
+/// Native macOS NSVisualEffectView bridge for sidebars, HUD panels, and popovers.
+struct VisualEffectMaterialView: NSViewRepresentable {
+    var material: NSVisualEffectView.Material
+    var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
+    var state: NSVisualEffectView.State = .followsWindowActiveState
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = material
+        view.blendingMode = blendingMode
+        view.state = state
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        nsView.material = material
+        nsView.blendingMode = blendingMode
+        nsView.state = state
+    }
+}
 
 enum Design {
     static let rowCornerRadius: CGFloat = 6
@@ -31,6 +53,8 @@ enum Design {
     /// Glyph scale for SF Symbols, deliberately one step finer than the type
     /// scale because symbols read larger than text at the same point size.
     enum IconSize: CGFloat {
+        /// Ultra-compact chevrons.
+        case nano = 8
         /// Chevrons and inline pin markers.
         case micro = 9
         case small = 11
@@ -86,15 +110,15 @@ struct KbdLabel: View {
         Text(text)
             .font(.ui(.micro, weight: .medium, mono: true))
             .foregroundStyle(Constants.VisualStyle.textSecondary)
-            .padding(.horizontal, Design.Space.xs)
-            .frame(minWidth: 17, minHeight: 17)
+            .padding(.horizontal, 5)
+            .frame(minWidth: 18, minHeight: 18)
             .background(
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(Constants.VisualStyle.tintMedium)
+                    .fill(Constants.VisualStyle.tintSubtle)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .strokeBorder(Constants.VisualStyle.tintStrong, lineWidth: Constants.Layout.hairline)
+                    .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
             )
     }
 }
@@ -152,10 +176,10 @@ struct SectionHeading: View {
     let text: String
 
     var body: some View {
-        Text(text.uppercased())
+        Text(text)
             .font(.ui(.caption, weight: .semibold))
-            .tracking(0.8)
-            .foregroundStyle(Constants.VisualStyle.textQuaternary)
+            .tracking(0.2)
+            .foregroundStyle(Constants.VisualStyle.textTertiary)
     }
 }
 

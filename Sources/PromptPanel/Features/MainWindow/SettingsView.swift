@@ -9,9 +9,15 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Constants.Layout.sectionSpacing) {
-                SettingsHealthStrip(viewModel: viewModel)
+                HStack(alignment: .center, spacing: 12) {
+                    SettingsAreaPicker(selection: $viewModel.selectedSettingsArea)
+                    Spacer(minLength: 8)
+                    SettingsHealthSummaryInline(viewModel: viewModel)
+                }
 
-                SettingsAreaPicker(selection: $viewModel.selectedSettingsArea)
+                if let issue = SettingsHealthStrip.resolvePrimaryIssue(viewModel: viewModel) {
+                    SettingsHealthIssueBanner(issue: issue)
+                }
 
                 selectedAreaContent
             }
@@ -21,7 +27,7 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.hidden)
-        .background(Constants.VisualStyle.surface)
+        .background(Constants.VisualStyle.bg)
     }
 
     @ViewBuilder
@@ -30,15 +36,13 @@ struct SettingsView: View {
         case .preferences:
             HStack(alignment: .top, spacing: columnSpacing) {
                 SettingsColumn {
-                    AppearanceSection(viewModel: viewModel)
-                    LibrarySection(viewModel: viewModel)
+                    GeneralSettingsSection(viewModel: viewModel)
                     PanelBehaviorSection(viewModel: viewModel)
                 }
 
                 SettingsColumn {
-                    HotkeySection(viewModel: viewModel)
                     PermissionSection(viewModel: viewModel)
-                    PermissionTroubleshootingSection(viewModel: viewModel)
+                    CloudSyncSection(viewModel: viewModel)
                 }
             }
         case .maintenance:
@@ -101,7 +105,7 @@ private struct SettingsAreaPicker: View {
         .padding(2)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Constants.VisualStyle.tintSubtle)
+                .fill(Constants.VisualStyle.surfaceRaised)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -121,11 +125,15 @@ private struct SettingsAreaPicker: View {
                     .font(.ui(.body, weight: .medium))
             }
             .foregroundStyle(isActive ? Constants.VisualStyle.text : Constants.VisualStyle.textTertiary)
-            .padding(.horizontal, Design.Space.lg)
+            .padding(.horizontal, 12)
             .frame(height: Constants.Layout.compactControlHeight)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isActive ? Constants.VisualStyle.tintStrong : Color.clear)
+                    .fill(isActive ? Constants.VisualStyle.accentDim : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(isActive ? Constants.VisualStyle.accentBorder : Color.clear, lineWidth: Constants.Layout.hairline)
             )
             .roundedHitTarget(cornerRadius: 6)
         }
@@ -247,85 +255,94 @@ struct SettingsBanner: View {
     }
 }
 
-private struct SettingsHealthStrip: View {
+private enum SettingsHealthStrip {
+    struct Issue {
+        let message: String
+        let systemImage: String
+        let color: Color
+        let background: Color
+    }
+
+    @MainActor
+    static func resolvePrimaryIssue(viewModel: MainWindowViewModel) -> Issue? {
+        if viewModel.hasAccessibilityPermission == false {
+            return Issue(
+                message: "未开启辅助功能权限，当前仅支持复制到剪贴板",
+                systemImage: "exclamationmark.triangle.fill",
+                color: Constants.VisualStyle.warn,
+                background: Constants.VisualStyle.warnDim
+            )
+        }
+        if let snapshot = viewModel.storageHealthSnapshot, snapshot.backupCount == 0 {
+            return Issue(
+                message: "暂无本地备份，建议手动备份一次",
+                systemImage: "externaldrive.badge.exclamationmark",
+                color: Constants.VisualStyle.warn,
+                background: Constants.VisualStyle.warnDim
+            )
+        }
+        if let summary = viewModel.executionHealthSummary, summary.failedCount > 0 {
+            return Issue(
+                message: "近 7 天有 \(summary.failedCount) 次执行失败",
+                systemImage: "exclamationmark.octagon.fill",
+                color: Constants.VisualStyle.danger,
+                background: Constants.VisualStyle.dangerDim
+            )
+        }
+        return nil
+    }
+}
+
+private struct SettingsHealthSummaryInline: View {
     @ObservedObject var viewModel: MainWindowViewModel
 
     var body: some View {
-        Group {
-            if let issue = primaryIssue {
-                HStack(spacing: 8) {
-                    Image(systemName: issue.systemImage)
-                        .font(.icon(.base))
-                        .foregroundStyle(issue.color)
-                    Text(issue.message)
-                        .font(.ui(.body, weight: .medium))
-                        .foregroundStyle(Constants.VisualStyle.textSecondary)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, Design.Space.lg)
-                .padding(.vertical, Design.Space.sm)
-                .background(
-                    RoundedRectangle(cornerRadius: Constants.Layout.sectionCornerRadius, style: .continuous)
-                        .fill(issue.background)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: Constants.Layout.sectionCornerRadius, style: .continuous)
-                        .strokeBorder(issue.color.opacity(0.25), lineWidth: Constants.Layout.hairline)
-                )
-            } else {
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(Constants.VisualStyle.success)
-                        .frame(width: 6, height: 6)
-                    Text(summaryText)
-                        .font(.ui(.body))
-                        .foregroundStyle(Constants.VisualStyle.textSecondary)
-                    Spacer(minLength: 0)
-                    Text(versionText)
-                        .font(.ui(.caption, weight: .medium, mono: true))
-                        .foregroundStyle(Constants.VisualStyle.textQuaternary)
-                }
-                .padding(.vertical, 2)
-            }
+        HStack(spacing: 8) {
+            Circle()
+                .fill(viewModel.hasAccessibilityPermission ? Constants.VisualStyle.success : Constants.VisualStyle.warn)
+                .frame(width: 6, height: 6)
+            Text(summaryText)
+                .font(.ui(.caption, weight: .medium))
+                .foregroundStyle(Constants.VisualStyle.textSecondary)
+            Text("·")
+                .font(.ui(.caption))
+                .foregroundStyle(Constants.VisualStyle.textQuaternary)
+            Text("v" + Constants.appVersionDisplay)
+                .font(.ui(.caption, weight: .medium, mono: true))
+                .foregroundStyle(Constants.VisualStyle.textTertiary)
         }
     }
 
     private var summaryText: String {
-        let backupText = viewModel.storageHealthSnapshot.map { "备份 \($0.backupCount)/\(Constants.automaticBackupRetentionCount)" } ?? "备份信息未加载"
-        let recentText = viewModel.executionHealthSummary.map { $0.totalCount == 0 ? "近 7 天暂无执行" : "近 7 天执行 \($0.totalCount) 次" } ?? "执行信息未加载"
-        return "运行正常 · \(backupText) · \(recentText)"
+        let statusPrefix = viewModel.hasAccessibilityPermission ? "已授权" : "未授权"
+        let backupText = viewModel.storageHealthSnapshot.map { "备份 \($0.backupCount)" } ?? "备份 --"
+        return "\(statusPrefix) · \(backupText)"
     }
+}
 
-    private var versionText: String {
-        "v" + Constants.appVersionDisplay
-    }
+private struct SettingsHealthIssueBanner: View {
+    let issue: SettingsHealthStrip.Issue
 
-    private var primaryIssue: (message: String, systemImage: String, color: Color, background: Color)? {
-        if viewModel.hasAccessibilityPermission == false {
-            return (
-                "辅助功能权限未开启，当前仍会退化为仅复制模式。",
-                "exclamationmark.triangle.fill",
-                Constants.VisualStyle.warn,
-                Constants.VisualStyle.warnDim
-            )
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: issue.systemImage)
+                .font(.icon(.base))
+                .foregroundStyle(issue.color)
+            Text(issue.message)
+                .font(.ui(.body, weight: .medium))
+                .foregroundStyle(Constants.VisualStyle.textSecondary)
+            Spacer(minLength: 0)
         }
-        if let snapshot = viewModel.storageHealthSnapshot, snapshot.backupCount == 0 {
-            return (
-                "当前没有可用备份，建议先执行一次手动备份。",
-                "externaldrive.badge.exclamationmark",
-                Constants.VisualStyle.warn,
-                Constants.VisualStyle.warnDim
-            )
-        }
-        if let summary = viewModel.executionHealthSummary, summary.failedCount > 0 {
-            return (
-                "近 7 天有 \(summary.failedCount) 次执行失败，建议优先查看最近执行记录。",
-                "exclamationmark.octagon.fill",
-                Constants.VisualStyle.danger,
-                Constants.VisualStyle.dangerDim
-            )
-        }
-        return nil
+        .padding(.horizontal, Design.Space.lg)
+        .padding(.vertical, Design.Space.sm)
+        .background(
+            RoundedRectangle(cornerRadius: Constants.Layout.sectionCornerRadius, style: .continuous)
+                .fill(issue.background)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Constants.Layout.sectionCornerRadius, style: .continuous)
+                .strokeBorder(issue.color.opacity(0.28), lineWidth: Constants.Layout.hairline)
+        )
     }
 }
 
@@ -335,9 +352,8 @@ struct SettingsSectionHeader: View {
     var body: some View {
         Text(title)
             .font(.ui(.caption, weight: .semibold))
-            .tracking(0.8)
-            .foregroundStyle(Constants.VisualStyle.textQuaternary)
-            .textCase(.uppercase)
+            .tracking(0.2)
+            .foregroundStyle(Constants.VisualStyle.textTertiary)
     }
 }
 
@@ -366,8 +382,8 @@ struct SettingsRow<Control: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: Design.Space.lg) {
-            VStack(alignment: .leading, spacing: 1) {
+        HStack(alignment: .center, spacing: Design.Space.lg) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(label)
                     .font(.ui(.title, weight: .medium))
                     .foregroundStyle(Constants.VisualStyle.text)
@@ -474,20 +490,34 @@ struct SettingsPillButton: View {
 
 // MARK: - Left column sections
 
-private struct AppearanceSection: View {
+private struct GeneralSettingsSection: View {
     @ObservedObject var viewModel: MainWindowViewModel
 
     var body: some View {
-        SettingsCard("外观") {
-            SettingsRow(
-                label: "主题",
-                hint: "跟随系统自动切换；也可固定为浅色或深色。",
-                showsDivider: false
-            ) {
+        SettingsCard("通用") {
+            SettingsRow(label: "主题") {
                 ThemeSegmentedPicker(selection: Binding(
                     get: { viewModel.appTheme },
                     set: { viewModel.setAppTheme($0) }
                 ))
+            }
+            SettingsRow(label: "默认排序") {
+                EntrySortSegmentedPicker(selection: Binding(
+                    get: { viewModel.entrySortMode },
+                    set: { viewModel.entrySortMode = $0 }
+                ))
+            }
+            SettingsRow(label: "呼出快捷键") {
+                HotkeyRecorderField(name: .togglePanel)
+            }
+            SettingsRow(label: "登录时启动", showsDivider: false) {
+                Toggle("", isOn: Binding(
+                    get: { viewModel.launchAtLoginEnabled },
+                    set: { viewModel.setLaunchAtLogin($0) }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
             }
         }
     }
@@ -505,7 +535,7 @@ private struct ThemeSegmentedPicker: View {
         .padding(2)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Constants.VisualStyle.tintSubtle)
+                .fill(Constants.VisualStyle.inputFill)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -529,30 +559,15 @@ private struct ThemeSegmentedPicker: View {
             .frame(height: 22)
             .background(
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(isActive ? Constants.VisualStyle.tintStrong : Color.clear)
+                    .fill(isActive ? Constants.VisualStyle.segmentActiveFill : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .strokeBorder(isActive ? Constants.VisualStyle.border : Color.clear, lineWidth: Constants.Layout.hairline)
             )
             .roundedHitTarget(cornerRadius: 5)
         }
         .buttonStyle(.plain)
-    }
-}
-
-private struct LibrarySection: View {
-    @ObservedObject var viewModel: MainWindowViewModel
-
-    var body: some View {
-        SettingsCard("词条排序") {
-            SettingsRow(
-                label: "默认排序",
-                hint: "按使用＝严格按次数；按等级＝同档色块成组（rookie→master）。",
-                showsDivider: false
-            ) {
-                EntrySortSegmentedPicker(selection: Binding(
-                    get: { viewModel.entrySortMode },
-                    set: { viewModel.entrySortMode = $0 }
-                ))
-            }
-        }
     }
 }
 
@@ -568,7 +583,7 @@ private struct EntrySortSegmentedPicker: View {
         .padding(2)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Constants.VisualStyle.tintSubtle)
+                .fill(Constants.VisualStyle.inputFill)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -588,7 +603,11 @@ private struct EntrySortSegmentedPicker: View {
                 .frame(height: 22)
                 .background(
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(isActive ? Constants.VisualStyle.tintStrong : Color.clear)
+                        .fill(isActive ? Constants.VisualStyle.segmentActiveFill : Color.clear)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .strokeBorder(isActive ? Constants.VisualStyle.border : Color.clear, lineWidth: Constants.Layout.hairline)
                 )
                 .roundedHitTarget(cornerRadius: 5)
         }
@@ -596,65 +615,39 @@ private struct EntrySortSegmentedPicker: View {
     }
 }
 
-private struct HotkeySection: View {
-    @ObservedObject var viewModel: MainWindowViewModel
-
-    var body: some View {
-        SettingsCard("快捷键") {
-            SettingsRow(
-                label: "呼出面板",
-                hint: "这是呼出快捷面板的唯一入口。点击后按下组合键即可修改；如果新快捷键按下去没反应，说明已被其他应用或系统占用，换一个组合。",
-                showsDivider: false
-            ) {
-                HotkeyRecorderField(name: .togglePanel)
-            }
-        }
-    }
-}
-
 private struct PanelBehaviorSection: View {
     @ObservedObject var viewModel: MainWindowViewModel
 
     var body: some View {
-        SettingsCard("面板行为") {
-            SettingsRow(
-                label: "固定面板",
-                hint: "关闭时失焦自动收起；开启后持续置顶，适合边看边选。"
-            ) {
+        SettingsCard("快捷面板") {
+            SettingsRow(label: "固定面板") {
                 Toggle("", isOn: Binding(
                     get: { viewModel.isPanelPinned },
                     set: { viewModel.setPanelPinned($0) }
                 ))
                 .labelsHidden()
                 .toggleStyle(.switch)
+                .controlSize(.small)
             }
-            SettingsRow(
-                label: "显示键位提示栏",
-                hint: "面板底部显示 Enter / Esc / ⌘C / ⌘1-9 等提示。"
-            ) {
+            SettingsRow(label: "显示底栏键位") {
                 Toggle("", isOn: Binding(
                     get: { viewModel.panelShowFooter },
                     set: { viewModel.setPanelShowFooter($0) }
                 ))
                 .labelsHidden()
                 .toggleStyle(.switch)
+                .controlSize(.small)
             }
-            SettingsRow(
-                label: "紧凑行高",
-                hint: "每屏显示更多词条，适合高频检索。"
-            ) {
+            SettingsRow(label: "紧凑行高") {
                 Toggle("", isOn: Binding(
                     get: { viewModel.panelCompactRows },
                     set: { viewModel.setPanelCompactRows($0) }
                 ))
                 .labelsHidden()
                 .toggleStyle(.switch)
+                .controlSize(.small)
             }
-            SettingsRow(
-                label: "面板尺寸",
-                hint: "可拖拽面板边缘，也可在这里精确设置宽高。",
-                showsDivider: false
-            ) {
+            SettingsRow(label: "面板尺寸", showsDivider: false) {
                 PanelSizeControls(viewModel: viewModel)
             }
         }
@@ -665,46 +658,69 @@ private struct PanelSizeControls: View {
     @ObservedObject var viewModel: MainWindowViewModel
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: Design.Space.sm) {
-            HStack(spacing: Design.Space.sm) {
-                dimensionStepper(
-                    label: "宽",
-                    value: Binding(
-                        get: { Int(viewModel.panelContentSize.width.rounded()) },
-                        set: { viewModel.setPanelContentWidth($0) }
-                    ),
-                    bounds: Int(Constants.panelMinContentSize.width)...Int(Constants.panelMaxContentSize.width)
-                )
-                dimensionStepper(
-                    label: "高",
-                    value: Binding(
-                        get: { Int(viewModel.panelContentSize.height.rounded()) },
-                        set: { viewModel.setPanelContentHeight($0) }
-                    ),
-                    bounds: Int(Constants.panelMinContentSize.height)...Int(Constants.panelMaxContentSize.height)
-                )
-            }
-
-            SettingsPillButton("恢复默认", systemImage: "arrow.counterclockwise") {
+        HStack(spacing: 6) {
+            dimensionStepper(
+                label: "宽",
+                value: Binding(
+                    get: { Int(viewModel.panelContentSize.width.rounded()) },
+                    set: { viewModel.setPanelContentWidth($0) }
+                ),
+                bounds: Int(Constants.panelMinContentSize.width)...Int(Constants.panelMaxContentSize.width)
+            )
+            dimensionStepper(
+                label: "高",
+                value: Binding(
+                    get: { Int(viewModel.panelContentSize.height.rounded()) },
+                    set: { viewModel.setPanelContentHeight($0) }
+                ),
+                bounds: Int(Constants.panelMinContentSize.height)...Int(Constants.panelMaxContentSize.height)
+            )
+            Button {
                 viewModel.resetPanelContentSize()
+            } label: {
+                Image(systemName: "arrow.counterclockwise")
+                    .font(.icon(.small))
+                    .foregroundStyle(Constants.VisualStyle.textSecondary)
+                    .frame(width: Constants.Layout.compactControlHeight, height: Constants.Layout.compactControlHeight)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Constants.VisualStyle.tintMedium)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
+                    )
             }
+            .buttonStyle(.plain)
+            .help("恢复默认面板尺寸 (560 × 700)")
         }
     }
 
     private func dimensionStepper(label: String, value: Binding<Int>, bounds: ClosedRange<Int>) -> some View {
-        Stepper(value: value, in: bounds, step: 20) {
-            HStack(spacing: 4) {
-                Text(label)
-                    .font(.ui(.body, weight: .medium))
-                    .foregroundStyle(Constants.VisualStyle.textTertiary)
-                Text("\(value.wrappedValue)")
-                    .font(.ui(.body, weight: .medium, mono: true))
-                    .foregroundStyle(Constants.VisualStyle.text)
-                    .frame(width: 38, alignment: .trailing)
-            }
+        HStack(spacing: 4) {
+            Text(label)
+                .font(.ui(.caption, weight: .medium))
+                .foregroundStyle(Constants.VisualStyle.textTertiary)
+            Text("\(value.wrappedValue)")
+                .font(.ui(.body, weight: .medium, mono: true))
+                .foregroundStyle(Constants.VisualStyle.text)
+                .frame(width: 34, alignment: .trailing)
+            Stepper("", value: value, in: bounds, step: 20)
+                .labelsHidden()
+                .controlSize(.small)
+                .fixedSize()
         }
-        .controlSize(.small)
-        .fixedSize()
+        .padding(.leading, 7)
+        .padding(.trailing, 3)
+        .frame(height: Constants.Layout.compactControlHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Constants.VisualStyle.inputFill)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
+        )
     }
 }
 
@@ -712,33 +728,16 @@ private struct PermissionSection: View {
     @ObservedObject var viewModel: MainWindowViewModel
 
     var body: some View {
-        SettingsCard("权限与启动") {
-            SettingsRow(
-                label: "辅助功能权限",
-                hint: "用于监听快捷键和自动粘贴；若系统里同时出现两项，请开启 PromptPanel.app。"
-            ) {
-                permissionPill
-            }
-            SettingsRow(
-                label: "登录时启动",
-                hint: "系统启动后自动在后台运行。"
-            ) {
-                Toggle("", isOn: Binding(
-                    get: { viewModel.launchAtLoginEnabled },
-                    set: { viewModel.setLaunchAtLogin($0) }
-                ))
-                .labelsHidden()
-                .toggleStyle(.switch)
-            }
+        SettingsCard("辅助功能权限") {
+            permissionPill
+        } content: {
+            if !viewModel.hasAccessibilityPermission {
+                Text("未授权时仅支持复制到剪贴板。若系统设置已勾选仍显示未授权，可先重置授权再重新开启 PromptPanel.app。")
+                    .font(.ui(.caption))
+                    .foregroundStyle(Constants.VisualStyle.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, Design.Space.sm)
 
-            // Full width rather than squeezed into a row's trailing control slot:
-            // three labelled pills plus their icons never fitted the ~380pt that a
-            // settings column leaves beside a label, so every one of them rendered
-            // as "请…" / "系统…" / "重新…".
-            VStack(alignment: .leading, spacing: Design.Space.sm) {
-                Text("授权操作")
-                    .font(.ui(.caption, weight: .medium))
-                    .foregroundStyle(Constants.VisualStyle.textTertiary)
                 LazyVGrid(
                     columns: Array(
                         repeating: GridItem(.flexible(), spacing: Design.Space.xs),
@@ -747,21 +746,32 @@ private struct PermissionSection: View {
                     alignment: .leading,
                     spacing: Design.Space.xs
                 ) {
-                    SettingsPillButton("请求授权", systemImage: "hand.raised", fillsAvailableWidth: true) {
+                    SettingsPillButton("请求授权", systemImage: "hand.raised", tone: .primary, fillsAvailableWidth: true) {
                         viewModel.requestAccessibilityPermission()
                     }
-                    SettingsPillButton("打开系统设置", systemImage: "arrow.up.forward", fillsAvailableWidth: true) {
+                    SettingsPillButton("系统设置", systemImage: "arrow.up.forward", fillsAvailableWidth: true) {
                         viewModel.openAccessibilitySettings()
                     }
                     SettingsPillButton("重新检测", systemImage: "arrow.clockwise", fillsAvailableWidth: true) {
                         viewModel.refreshPermissionState()
                     }
-                    SettingsPillButton("重置授权记录", systemImage: "arrow.counterclockwise", fillsAvailableWidth: true) {
+                    SettingsPillButton("重置授权", systemImage: "arrow.counterclockwise", fillsAvailableWidth: true) {
+                        viewModel.resetAccessibilityApproval()
+                    }
+                }
+            } else {
+                HStack(spacing: Design.Space.xs) {
+                    SettingsPillButton("系统设置", systemImage: "arrow.up.forward", fillsAvailableWidth: true) {
+                        viewModel.openAccessibilitySettings()
+                    }
+                    SettingsPillButton("重新检测", systemImage: "arrow.clockwise", fillsAvailableWidth: true) {
+                        viewModel.refreshPermissionState()
+                    }
+                    SettingsPillButton("重置授权", systemImage: "arrow.counterclockwise", fillsAvailableWidth: true) {
                         viewModel.resetAccessibilityApproval()
                     }
                 }
             }
-            .padding(.top, Design.Space.md)
         }
     }
 
@@ -785,7 +795,7 @@ private struct PermissionSection: View {
     }
 }
 
-// MARK: - Right column sections
+// MARK: - Right column & maintenance sections
 
 private struct OperationOverviewSection: View {
     @ObservedObject var viewModel: MainWindowViewModel
@@ -822,11 +832,8 @@ private struct OperationOverviewSection: View {
                 SettingsRow(label: "数据大小", dense: true) {
                     valueText(ByteCountFormatter.string(fromByteCount: snapshot.databaseSizeBytes, countStyle: .file))
                 }
-                SettingsRow(label: "备份文件", dense: true) {
-                    valueText("\(snapshot.backupCount)")
-                }
-                SettingsRow(label: "启动备份保留", dense: true) {
-                    valueText("最近 \(Constants.automaticBackupRetentionCount) 份")
+                SettingsRow(label: "本地备份", dense: true) {
+                    valueText("\(snapshot.backupCount) / \(Constants.automaticBackupRetentionCount) 份")
                 }
                 SettingsRow(label: "最近备份", dense: true) {
                     valueText(format(date: snapshot.latestBackupModifiedAt))
@@ -839,9 +846,9 @@ private struct OperationOverviewSection: View {
                         .font(.ui(.caption))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
                     HStack(spacing: 6) {
-                        summaryPill(title: "执行", value: "\(summary.totalCount)", tone: .neutral)
+                        summaryPill(title: "总计", value: "\(summary.totalCount)", tone: .neutral)
                         summaryPill(title: "成功", value: "\(summary.successCount)", tone: .success)
-                        summaryPill(title: "兜底", value: "\(summary.clipboardOnlyCount)", tone: .warn)
+                        summaryPill(title: "仅复制", value: "\(summary.clipboardOnlyCount)", tone: .warn)
                         summaryPill(title: "失败", value: "\(summary.failedCount)", tone: .danger)
                     }
                 }
@@ -853,14 +860,20 @@ private struct OperationOverviewSection: View {
                     alignment: .bottom
                 )
 
-                SettingsRow(label: "最近执行", dense: true) {
+                SettingsRow(
+                    label: "最近执行",
+                    dense: true,
+                    showsDivider: summary.latestFailureAt != nil
+                ) {
                     valueText(format(date: summary.latestExecutionAt))
                 }
-                SettingsRow(label: "最近异常", dense: true, showsDivider: false) {
-                    valueText(format(date: summary.latestFailureAt))
+                if let latestFailureAt = summary.latestFailureAt {
+                    SettingsRow(label: "最近异常", dense: true, showsDivider: false) {
+                        valueText(format(date: latestFailureAt))
+                    }
                 }
             } else {
-                Text("最近 7 天还没有执行记录。")
+                Text("暂无执行统计")
                     .font(.ui(.body))
                     .foregroundStyle(Constants.VisualStyle.textTertiary)
                     .padding(.vertical, Design.Space.md)
@@ -926,9 +939,6 @@ private struct MaintenanceSection: View {
 
     var body: some View {
         SettingsCard("维护操作") {
-            // Eleven identical pills in one 3-wide grid read as a wall: nothing said
-            // which of them touched user data, and the last row was always ragged.
-            // Three labelled groups, each a whole number of rows.
             actionGroup(title: "备份与数据", columns: 3) {
                 SettingsPillButton("立即备份", systemImage: "plus", tone: .primary, fillsAvailableWidth: true) {
                     viewModel.createBackupNow()
@@ -941,7 +951,7 @@ private struct MaintenanceSection: View {
                 }
             }
 
-            actionGroup(title: "词库导入导出", columns: 2) {
+            actionGroup(title: "导入与导出", columns: 2) {
                 SettingsPillButton("导出 JSON", systemImage: "square.and.arrow.up", fillsAvailableWidth: true) {
                     viewModel.exportLibraryAsJSON()
                 }
@@ -972,15 +982,15 @@ private struct MaintenanceSection: View {
                 .font(.ui(.caption))
                 .foregroundStyle(Constants.VisualStyle.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, Design.Space.sm)
+                .padding(.top, Design.Space.xs)
         }
     }
 
     private var footnote: String {
         if let task = viewModel.activeMaintenanceTask {
-            return "\(task)完成前，其余维护操作会暂时停用。"
+            return "正在\(task)…"
         }
-        return "导入词库前会自动创建本地数据库备份。启动备份保留最近 \(Constants.automaticBackupRetentionCount) 份、导入前备份保留最近 \(Constants.importBackupRetentionCount) 份；你手动点「立即备份」创建的副本不会被自动清理。"
+        return "导入前自动备份；手动备份不会自动清理"
     }
 
     @ViewBuilder
@@ -1004,61 +1014,9 @@ private struct MaintenanceSection: View {
                 content()
             }
         }
-        .padding(.vertical, Design.Space.sm)
-        // Every maintenance action now runs off the main thread; letting a second
-        // one start while the first is mid-flight would race the same SQLite file.
+        .padding(.vertical, Design.Space.xs)
         .disabled(isBusy)
         .opacity(isBusy ? 0.5 : 1)
-    }
-}
-
-/// The permission hints used to live only as one-line `hint:` strings scattered
-/// across four rows, which is where the actual recovery procedure got lost. This
-/// states it once, in order, next to the buttons that perform each step.
-private struct PermissionTroubleshootingSection: View {
-    @ObservedObject var viewModel: MainWindowViewModel
-
-    private var steps: [(index: Int, text: String)] {
-        [
-            (1, "点“请求授权”，在系统弹窗里选择允许。"),
-            (2, "若系统设置里已勾选但这里仍显示未授权，说明是重装或更新后留下的旧记录：点“重置授权”，再回系统设置重新开启。"),
-            (3, "系统列表里如果同时出现 PromptPanel 和 PromptPanel.app，以 PromptPanel.app 那一项为准。"),
-            (4, "开启后回到这里点“重新检测”确认状态。")
-        ]
-    }
-
-    var body: some View {
-        SettingsCard("授权排查") {
-            VStack(alignment: .leading, spacing: Design.Space.md) {
-                ForEach(steps, id: \.index) { step in
-                    HStack(alignment: .top, spacing: Design.Space.md) {
-                        Text("\(step.index)")
-                            .font(.ui(.micro, weight: .semibold, mono: true))
-                            .foregroundStyle(Constants.VisualStyle.accent)
-                            .frame(width: 16, height: 16)
-                            .background(
-                                Circle().fill(Constants.VisualStyle.accentDim)
-                            )
-                        Text(step.text)
-                            .font(.ui(.body))
-                            .foregroundStyle(Constants.VisualStyle.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 0)
-                    }
-                }
-            }
-            .padding(.vertical, Design.Space.xs)
-
-            Text(viewModel.hasAccessibilityPermission
-                 ? "当前已授权：选中词条会直接粘贴到你原来的输入位置。"
-                 : "当前未授权：选中词条只会复制到剪贴板，需要你手动按 ⌘V。")
-                .font(.ui(.caption))
-                .foregroundStyle(viewModel.hasAccessibilityPermission
-                                 ? Constants.VisualStyle.success
-                                 : Constants.VisualStyle.warn)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, Design.Space.sm)
-        }
     }
 }
 
@@ -1070,22 +1028,17 @@ private struct DataLocationSection: View {
     var body: some View {
         SettingsCard("数据位置") {
             if let snapshot = viewModel.storageHealthSnapshot {
-                Text("落盘路径、备份和恢复隔离目录。复制路径可直接粘贴到终端。")
-                    .font(.ui(.caption))
-                    .foregroundStyle(Constants.VisualStyle.textTertiary)
-                    .padding(.bottom, Design.Space.sm)
-
-                VStack(alignment: .leading, spacing: Design.Space.sm) {
+                VStack(alignment: .leading, spacing: Design.Space.xs) {
                     pathRow(title: "数据库", value: snapshot.databaseURL.path)
                     pathRow(title: "备份目录", value: snapshot.backupDirectoryURL.path)
                     pathRow(title: "恢复隔离", value: snapshot.recoveryDirectoryURL.path)
                     pathRow(title: "日志目录", value: snapshot.logsDirectoryURL.path)
                     if let url = snapshot.latestBackupURL {
-                        pathRow(title: "最近备份路径", value: url.path)
+                        pathRow(title: "最近备份", value: url.path)
                     }
                 }
             } else {
-                Text("尚未加载数据目录信息。")
+                Text("正在加载路径…")
                     .font(.ui(.body))
                     .foregroundStyle(Constants.VisualStyle.textTertiary)
             }
@@ -1093,36 +1046,34 @@ private struct DataLocationSection: View {
     }
 
     private func pathRow(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
+        HStack(spacing: Design.Space.sm) {
             Text(title)
-                .font(.ui(.caption))
-                .tracking(0.3)
-                .foregroundStyle(Constants.VisualStyle.textQuaternary)
-            HStack(spacing: Design.Space.sm) {
-                Text(value)
-                    .font(.ui(.caption, mono: true))
-                    .foregroundStyle(Constants.VisualStyle.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .padding(.horizontal, Design.Space.md)
-                    .padding(.vertical, 3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .fill(Constants.VisualStyle.tintSubtle)
-                    )
-                Button {
-                    copyPath(value)
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                        .font(.icon(.small))
-                        .foregroundStyle(Constants.VisualStyle.textTertiary)
-                        .frame(width: 24, height: 24)
-                        .roundedHitTarget(cornerRadius: 5)
-                }
-                .buttonStyle(.plain)
-                .help("复制路径")
+                .font(.ui(.caption, weight: .medium))
+                .foregroundStyle(Constants.VisualStyle.textSecondary)
+                .frame(width: 64, alignment: .leading)
+            Text(value)
+                .font(.ui(.caption, mono: true))
+                .foregroundStyle(Constants.VisualStyle.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, Design.Space.md)
+                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(Constants.VisualStyle.tintSubtle)
+                )
+            Button {
+                copyPath(value)
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(.icon(.small))
+                    .foregroundStyle(Constants.VisualStyle.textTertiary)
+                    .frame(width: 24, height: 24)
+                    .roundedHitTarget(cornerRadius: 5)
             }
+            .buttonStyle(.plain)
+            .help("复制路径")
         }
     }
 
@@ -1139,16 +1090,16 @@ private struct RecentExecutionsSection: View {
     var body: some View {
         SettingsCard("最近执行记录") {
             if viewModel.recentExecutionLogs.isEmpty {
-                HStack(spacing: Design.Space.md) {
+                HStack(spacing: Design.Space.sm) {
                     Image(systemName: "tray")
-                        .font(.icon(.large, weight: .light))
+                        .font(.icon(.base))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
-                    Text("当前还没有执行记录。按下全局快捷键选一条词条后，这里会立即出现。")
+                    Text("暂无执行记录")
                         .font(.ui(.body))
-                        .foregroundStyle(Constants.VisualStyle.textSecondary)
+                        .foregroundStyle(Constants.VisualStyle.textTertiary)
                     Spacer(minLength: 0)
                 }
-                .padding(.vertical, Design.Space.sm)
+                .padding(.vertical, Design.Space.xs)
             } else {
                 VStack(spacing: Design.Space.xs) {
                     ForEach(viewModel.recentExecutionLogs.prefix(6)) { log in
@@ -1206,9 +1157,9 @@ private struct ExecutionLogRow: View {
 
     private var resultTitle: String {
         switch log.result {
-        case Constants.ExecutionResult.success.rawValue: return "执行成功"
-        case Constants.ExecutionResult.clipboardOnly.rawValue: return "复制兜底"
-        default: return "执行失败"
+        case Constants.ExecutionResult.success.rawValue: return "成功"
+        case Constants.ExecutionResult.clipboardOnly.rawValue: return "仅复制"
+        default: return "失败"
         }
     }
 
@@ -1250,5 +1201,183 @@ private struct ExecutionLogRow: View {
         .padding(.horizontal, Design.Space.sm)
         .padding(.vertical, Design.Space.xxs)
         .background(Capsule().fill(Constants.VisualStyle.tintSubtle))
+    }
+}
+
+private struct CloudSyncSection: View {
+    @ObservedObject var viewModel: MainWindowViewModel
+
+    private var isBusy: Bool {
+        viewModel.activeMaintenanceTask != nil
+    }
+
+    private var isConfigured: Bool {
+        !viewModel.cloudSyncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        SettingsCard("云端同步") {
+            syncStatusPill
+        } content: {
+            SettingsRow(label: "自动同步") {
+                Toggle("", isOn: Binding(
+                    get: { viewModel.cloudSyncEnabled },
+                    set: {
+                        viewModel.cloudSyncEnabled = $0
+                        viewModel.saveCloudSyncSettings()
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+            }
+
+            VStack(alignment: .leading, spacing: Design.Space.sm) {
+                HStack(alignment: .center) {
+                    Text("同步地址")
+                        .font(.ui(.caption, weight: .medium))
+                        .foregroundStyle(Constants.VisualStyle.textSecondary)
+                    Spacer()
+                    Button {
+                        viewModel.chooseCloudSyncFileLocation()
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "folder")
+                                .font(.icon(.micro))
+                            Text("选择本地文件…")
+                                .font(.ui(.caption, weight: .medium))
+                        }
+                        .foregroundStyle(Constants.VisualStyle.accent)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                TextField("https://... 或本地文件路径", text: $viewModel.cloudSyncEndpoint)
+                    .textFieldStyle(.plain)
+                    .font(.ui(.caption, mono: true))
+                    .foregroundStyle(Constants.VisualStyle.text)
+                    .padding(.horizontal, Design.Space.md)
+                    .frame(height: 26)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Constants.VisualStyle.inputFill)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
+                    )
+
+                HStack(alignment: .center) {
+                    Text("访问令牌 (Token)")
+                        .font(.ui(.caption, weight: .medium))
+                        .foregroundStyle(Constants.VisualStyle.textSecondary)
+                    Spacer()
+                    Button {
+                        viewModel.generateNewCloudSyncToken()
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "key")
+                                .font(.icon(.micro))
+                            Text("生成 Token")
+                                .font(.ui(.caption, weight: .medium))
+                        }
+                        .foregroundStyle(Constants.VisualStyle.accent)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                SecureField("不少于 12 位字符（本地文件同步可留空）", text: $viewModel.cloudSyncApiKey)
+                    .textFieldStyle(.plain)
+                    .font(.ui(.caption, mono: true))
+                    .foregroundStyle(Constants.VisualStyle.text)
+                    .padding(.horizontal, Design.Space.md)
+                    .frame(height: 26)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Constants.VisualStyle.inputFill)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
+                    )
+
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: Design.Space.xs),
+                        GridItem(.flexible(), spacing: Design.Space.xs)
+                    ],
+                    alignment: .leading,
+                    spacing: Design.Space.xs
+                ) {
+                    SettingsPillButton("立即同步", systemImage: "arrow.triangle.2.circlepath", tone: .primary, fillsAvailableWidth: true) {
+                        viewModel.syncCloudNow()
+                    }
+                    SettingsPillButton("测试连接", systemImage: "bolt.horizontal.circle", fillsAvailableWidth: true) {
+                        viewModel.testCloudSyncConnection()
+                    }
+                    SettingsPillButton("复制手机配置", systemImage: "iphone.and.arrow.forward", fillsAvailableWidth: true) {
+                        viewModel.copyMobileSyncBundleToClipboard()
+                    }
+                    SettingsPillButton("复制部署命令", systemImage: "terminal", fillsAvailableWidth: true) {
+                        viewModel.copyOpenSourceDeployCommand()
+                    }
+                }
+                .padding(.top, 2)
+                .disabled(isBusy)
+
+                if isConfigured || viewModel.cloudSyncLastStatus != "尚未同步" {
+                    HStack(spacing: 6) {
+                        Text(viewModel.cloudSyncConnectionStatus)
+                            .font(.ui(.caption, weight: .medium))
+                            .foregroundStyle(Constants.VisualStyle.textSecondary)
+                            .lineLimit(1)
+                        Text("·")
+                            .font(.ui(.caption))
+                            .foregroundStyle(Constants.VisualStyle.textQuaternary)
+                        Text(viewModel.cloudSyncLastStatus)
+                            .font(.ui(.caption))
+                            .foregroundStyle(Constants.VisualStyle.textTertiary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .padding(.top, 2)
+                }
+            }
+            .padding(.top, Design.Space.sm)
+        }
+    }
+
+    private var syncStatusPill: some View {
+        let isHealthy = viewModel.cloudSyncConnectionHealthy == true
+        let color: Color = {
+            if !isConfigured { return Constants.VisualStyle.textTertiary }
+            if viewModel.cloudSyncConnectionHealthy == false { return Constants.VisualStyle.danger }
+            return isHealthy || viewModel.cloudSyncEnabled ? Constants.VisualStyle.success : Constants.VisualStyle.accent
+        }()
+        let dim: Color = {
+            if !isConfigured { return Constants.VisualStyle.tintSubtle }
+            if viewModel.cloudSyncConnectionHealthy == false { return Constants.VisualStyle.dangerDim }
+            return isHealthy || viewModel.cloudSyncEnabled ? Constants.VisualStyle.successDim : Constants.VisualStyle.accentDim
+        }()
+        let labelText: String = {
+            if !isConfigured { return "未配置" }
+            if viewModel.cloudSyncConnectionHealthy == false { return "连接异常" }
+            if isHealthy { return "已连通" }
+            return viewModel.cloudSyncEnabled ? "已启用" : "待启用"
+        }()
+
+        return HStack(spacing: 4) {
+            Image(systemName: isConfigured ? "cloud.fill" : "cloud")
+                .font(.icon(.micro, weight: .semibold))
+            Text(labelText)
+                .font(.ui(.body, weight: .medium))
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 2)
+        .background(
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(dim)
+        )
     }
 }
