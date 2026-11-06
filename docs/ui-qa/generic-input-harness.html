@@ -104,28 +104,24 @@
 <body>
   <main>
     <section>
-      <h1>PromptPanel 通用输入场景实测</h1>
-      <p class="hint">用于验证单行输入、多行编辑和代码样式编辑区的执行结果，不绑定具体工具。</p>
-      <div class="toolbar">
-        <button type="button" onclick="resetFields()">重置内容</button>
+      <div style="display: flex; align-items: center; justify-content: space-between;">
+        <h1>PromptPanel 输入实测</h1>
+        <button type="button" onclick="resetFields()">重置</button>
       </div>
     </section>
 
     <section>
-      <h2>标准单行输入框</h2>
-      <p class="hint">聚焦后执行词条，验证内容是否直接写入这一行。</p>
-      <input id="single-line" placeholder="等待 PromptPanel 自动粘贴或复制兜底" />
+      <h2>单行输入框</h2>
+      <input id="single-line" placeholder="聚焦后执行词条…" />
     </section>
 
     <section>
       <h2>多行编辑区</h2>
-      <p class="hint">聚焦后执行词条，验证换行和长文本是否稳定保留。</p>
-      <textarea id="multi-line" placeholder="等待 PromptPanel 自动粘贴或复制兜底"></textarea>
+      <textarea id="multi-line" placeholder="聚焦后执行词条…"></textarea>
     </section>
 
     <section>
-      <h2>代码样式编辑区</h2>
-      <p class="hint">这是一个 contenteditable 区域，用来模拟常见代码或富文本编辑区的粘贴目标。</p>
+      <h2>富文本 / 代码编辑区 (contenteditable)</h2>
       <div id="code-like" class="code-editor" contenteditable="true" spellcheck="false"></div>
     </section>
   </main>
