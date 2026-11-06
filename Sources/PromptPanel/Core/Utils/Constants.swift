@@ -30,78 +30,73 @@ enum Constants {
     //     `*Dim` fill gets slightly more opacity so a light fill is visible.
     enum VisualStyle {
         // Surfaces
-        static let bg              = dynamicColor(dark: 0x0e0f11, light: 0xf4f5f7)
-        static let surface         = dynamicColor(dark: 0x17181b, light: 0xffffff)
-        static let surfaceRaised   = dynamicColor(dark: 0x1e1f23, light: 0xf6f7f9)
-        static let surfaceHover    = dynamicColor(dark: 0x24262b, light: 0xeceff3)
-        static let surfaceActive   = dynamicColor(dark: 0x2b2e34, light: 0xe3e6ec)
-        static let sidebar         = dynamicColor(dark: 0x141518, light: 0xeef0f4)
+        static let bg              = dynamicColor(dark: 0x111215, light: 0xf3f4f7)
+        static let surface         = dynamicColor(dark: 0x17181c, light: 0xffffff)
+        static let surfaceRaised   = dynamicColor(dark: 0x1e2025, light: 0xffffff)
+        static let surfaceHover    = dynamicColor(dark: 0x24272e, light: 0xeff1f5)
+        static let surfaceActive   = dynamicColor(dark: 0x2b2e37, light: 0xe6e9f0)
+        static let sidebar         = dynamicColor(dark: 0x141518, light: 0xf3f4f7)
+        static let segmentActiveFill = dynamicColor(dark: 0x2c2f37, light: 0xffffff)
+        static let inputFill       = dynamicColor(dark: 0x141519, light: 0xf5f6f9)
 
         // Dividers & borders (sign-flipping hairlines)
-        static let border          = invertingTint(darkAlpha: 0.06, lightAlpha: 0.10)
-        static let borderStrong    = invertingTint(darkAlpha: 0.10, lightAlpha: 0.14)
-        static let divider         = invertingTint(darkAlpha: 0.04, lightAlpha: 0.07)
+        static let border          = invertingTint(darkAlpha: 0.08, lightAlpha: 0.09)
+        static let borderStrong    = invertingTint(darkAlpha: 0.13, lightAlpha: 0.14)
+        static let divider         = invertingTint(darkAlpha: 0.06, lightAlpha: 0.07)
 
         // Text hierarchy
-        static let text            = dynamicColor(dark: 0xe8e9ec, light: 0x1a1c20)
-        static let textSecondary   = dynamicColor(dark: 0xaeb3bc, light: 0x4e525b)
-        static let textTertiary    = dynamicColor(dark: 0x858b96, light: 0x7a7e87)
-        static let textQuaternary  = dynamicColor(dark: 0x666d78, light: 0xadb1b9)
+        static let text            = dynamicColor(dark: 0xeceef2, light: 0x16181d)
+        static let textSecondary   = dynamicColor(dark: 0xb2b8c4, light: 0x464b55)
+        static let textTertiary    = dynamicColor(dark: 0x8a919e, light: 0x646b78)
+        static let textQuaternary  = dynamicColor(dark: 0x6e7583, light: 0x828997)
 
-        // Accent (indigo 7c8cf8 — slightly deeper in light mode for contrast)
-        static let accent          = dynamicColor(dark: 0x7c8cf8, light: 0x5667e6)
-        static let accentDim       = semanticFill(dark: 0x7c8cf8, darkAlpha: 0.14, light: 0x5667e6, lightAlpha: 0.12)
-        static let accentBorder    = semanticFill(dark: 0x7c8cf8, darkAlpha: 0.35, light: 0x5667e6, lightAlpha: 0.32)
-        static let infoBannerFill  = dynamicColor(dark: 0x25283b, light: 0xe7ecff)
-        static let infoBannerBorder = dynamicColor(dark: 0x3d467c, light: 0xc4cffc)
+        // Accent (indigo — deeper in light mode for ≥4.5:1 contrast)
+        static let accent          = dynamicColor(dark: 0x7c8cf8, light: 0x4f5fe8)
+        static let accentDim       = semanticFill(dark: 0x7c8cf8, darkAlpha: 0.15, light: 0x4f5fe8, lightAlpha: 0.11)
+        static let accentBorder    = semanticFill(dark: 0x7c8cf8, darkAlpha: 0.36, light: 0x4f5fe8, lightAlpha: 0.30)
+        static let infoBannerFill  = dynamicColor(dark: 0x23273a, light: 0xecf0ff)
+        static let infoBannerBorder = dynamicColor(dark: 0x3b4478, light: 0xc7d2fe)
 
         // Semantic (success / warn / danger)
-        static let success         = dynamicColor(dark: 0x5fb37a, light: 0x2f8a4f)
-        static let successDim      = semanticFill(dark: 0x5fb37a, darkAlpha: 0.12, light: 0x2f8a4f, lightAlpha: 0.14)
-        static let warn            = dynamicColor(dark: 0xd4a35a, light: 0x9b6f1a)
-        static let warnDim         = semanticFill(dark: 0xd4a35a, darkAlpha: 0.12, light: 0x9b6f1a, lightAlpha: 0.14)
-        static let danger          = dynamicColor(dark: 0xd47070, light: 0xb63030)
-        static let dangerDim       = semanticFill(dark: 0xd47070, darkAlpha: 0.12, light: 0xb63030, lightAlpha: 0.12)
+        static let success         = dynamicColor(dark: 0x5fb37a, light: 0x227a43)
+        static let successDim      = semanticFill(dark: 0x5fb37a, darkAlpha: 0.14, light: 0x227a43, lightAlpha: 0.11)
+        static let warn            = dynamicColor(dark: 0xd4a35a, light: 0x9a6510)
+        static let warnDim         = semanticFill(dark: 0xd4a35a, darkAlpha: 0.14, light: 0x9a6510, lightAlpha: 0.11)
+        static let danger          = dynamicColor(dark: 0xd97373, light: 0xbf2c2c)
+        static let dangerDim       = semanticFill(dark: 0xd97373, darkAlpha: 0.14, light: 0xbf2c2c, lightAlpha: 0.11)
 
-        // Overlay tints — flip sign between themes. Use instead of
-        // raw `Color.white.opacity(x)` / `Color.black.opacity(x)`.
-        static let tintSubtle      = invertingTint(darkAlpha: 0.04, lightAlpha: 0.035)
-        static let tintMedium      = invertingTint(darkAlpha: 0.06, lightAlpha: 0.05)
-        static let tintStrong      = invertingTint(darkAlpha: 0.10, lightAlpha: 0.08)
+        // Overlay tints — flip sign between themes
+        static let tintSubtle      = invertingTint(darkAlpha: 0.045, lightAlpha: 0.04)
+        static let tintMedium      = invertingTint(darkAlpha: 0.07, lightAlpha: 0.055)
+        static let tintStrong      = invertingTint(darkAlpha: 0.11, lightAlpha: 0.085)
 
-        // Convenience: dark "scrim" used for panel footers — always darker
-        // than the surface (black-tinted even in light mode).
-        static let scrim           = semanticFill(dark: 0x000000, darkAlpha: 0.20, light: 0x000000, lightAlpha: 0.05)
+        // Panel footer subtle bar
+        static let scrim           = semanticFill(dark: 0x000000, darkAlpha: 0.22, light: 0x000000, lightAlpha: 0.035)
 
-        // Entry level palette — driven by useCount tiers (see `EntryLevel`).
-        // `master` flips to near-white in dark mode so the rare top tier
-        // still stands out against the dark surface.
+        // Entry level palette — driven by useCount tiers (see `EntryLevel`)
         static let levelBlue       = dynamicColor(dark: 0x6da8f7, light: 0x3066cc)
         static let levelBlueDim    = semanticFill(dark: 0x6da8f7, darkAlpha: 0.14, light: 0x3066cc, lightAlpha: 0.12)
-        static let levelGreen      = dynamicColor(dark: 0x5cb87a, light: 0x2f8a4f)
-        static let levelGreenDim   = semanticFill(dark: 0x5cb87a, darkAlpha: 0.14, light: 0x2f8a4f, lightAlpha: 0.13)
-        static let levelYellow     = dynamicColor(dark: 0xd9bb56, light: 0x9b6f1a)
-        static let levelYellowDim  = semanticFill(dark: 0xd9bb56, darkAlpha: 0.16, light: 0x9b6f1a, lightAlpha: 0.14)
-        static let levelPink       = dynamicColor(dark: 0xeb87b3, light: 0xc94785)
-        static let levelPinkDim    = semanticFill(dark: 0xeb87b3, darkAlpha: 0.14, light: 0xc94785, lightAlpha: 0.12)
+        static let levelGreen      = dynamicColor(dark: 0x5cb87a, light: 0x247a43)
+        static let levelGreenDim   = semanticFill(dark: 0x5cb87a, darkAlpha: 0.14, light: 0x247a43, lightAlpha: 0.12)
+        static let levelYellow     = dynamicColor(dark: 0xd9bb56, light: 0x9a6510)
+        static let levelYellowDim  = semanticFill(dark: 0xd9bb56, darkAlpha: 0.16, light: 0x9a6510, lightAlpha: 0.13)
+        static let levelPink       = dynamicColor(dark: 0xeb87b3, light: 0xc2417d)
+        static let levelPinkDim    = semanticFill(dark: 0xeb87b3, darkAlpha: 0.14, light: 0xc2417d, lightAlpha: 0.11)
         static let levelOrange     = dynamicColor(dark: 0xe89455, light: 0xb05418)
         static let levelOrangeDim  = semanticFill(dark: 0xe89455, darkAlpha: 0.14, light: 0xb05418, lightAlpha: 0.12)
-        static let levelPurple     = dynamicColor(dark: 0xb084ee, light: 0x7335bf)
-        static let levelPurpleDim  = semanticFill(dark: 0xb084ee, darkAlpha: 0.16, light: 0x7335bf, lightAlpha: 0.13)
-        static let levelMaster     = dynamicColor(dark: 0xe8e9ec, light: 0x111418)
-        static let levelMasterDim  = semanticFill(dark: 0xe8e9ec, darkAlpha: 0.18, light: 0x111418, lightAlpha: 0.10)
+        static let levelPurple     = dynamicColor(dark: 0xb084ee, light: 0x6d32b8)
+        static let levelPurpleDim  = semanticFill(dark: 0xb084ee, darkAlpha: 0.16, light: 0x6d32b8, lightAlpha: 0.12)
+        static let levelMaster     = dynamicColor(dark: 0xeceef2, light: 0x16181d)
+        static let levelMasterDim  = semanticFill(dark: 0xeceef2, darkAlpha: 0.18, light: 0x16181d, lightAlpha: 0.10)
 
         // MARK: - Dynamic color helpers
 
-        /// Resolves `dark` / `light` hex values based on the current appearance.
         private static func dynamicColor(dark: UInt32, light: UInt32) -> Color {
             Color(nsColor: NSColor(name: nil) { appearance in
                 nsColor(hex: appearance.isDark ? dark : light)
             })
         }
 
-        /// Hairline tint that flips sign: white overlay in dark mode, black in
-        /// light mode. Used for borders, dividers, and subtle fills.
         private static func invertingTint(darkAlpha: CGFloat, lightAlpha: CGFloat) -> Color {
             Color(nsColor: NSColor(name: nil) { appearance in
                 appearance.isDark
@@ -110,7 +105,6 @@ enum Constants {
             })
         }
 
-        /// Semantic fill with per-mode hue + alpha.
         private static func semanticFill(dark: UInt32, darkAlpha: CGFloat, light: UInt32, lightAlpha: CGFloat) -> Color {
             Color(nsColor: NSColor(name: nil) { appearance in
                 appearance.isDark
@@ -136,17 +130,17 @@ enum Constants {
     /// 0.5pt renders as one physical pixel on Retina.
     enum Layout {
         static let hairline: CGFloat = 0.5
-        static let sectionSpacing: CGFloat = 10
-        static let sectionInset: CGFloat = 10
-        static let sectionCornerRadius: CGFloat = 9
+        static let sectionSpacing: CGFloat = 12
+        static let sectionInset: CGFloat = 14
+        static let sectionCornerRadius: CGFloat = 10
         static let compactControlHeight: CGFloat = 24
-        static let regularControlHeight: CGFloat = 26
+        static let regularControlHeight: CGFloat = 28
         static let compactRowHeight: CGFloat = 24
         static let regularRowHeight: CGFloat = 28
-        static let headerHeight: CGFloat = 32
+        static let headerHeight: CGFloat = 36
         static let footerHeight: CGFloat = 24
         static let badgeCornerRadius: CGFloat = 4
-        static let chipCornerRadius: CGFloat = 5
+        static let chipCornerRadius: CGFloat = 6
     }
 
     // MARK: - Application Identity
@@ -234,9 +228,11 @@ enum Constants {
     static let secureDirectoryPermissions = 0o700
     static let secureFilePermissions = 0o600
 
-    // MARK: - Default Project
+    // MARK: - Default Project & Built-in Inbox
 
     static let defaultProjectName = "通用项目"
+    static let inboxProjectId = "builtin-inbox"
+    static let inboxProjectName = "速记与待办"
 
     // MARK: - Settings Keys
 
@@ -251,6 +247,9 @@ enum Constants {
         static let panelCompactRows = "panel_compact_rows"
         static let appTheme = "app_theme"
         static let entrySortMode = "entry_sort_mode"
+        static let cloudSyncEndpoint = "cloud_sync_endpoint"
+        static let cloudSyncApiKey = "cloud_sync_api_key"
+        static let cloudSyncEnabled = "cloud_sync_enabled"
     }
 
     // MARK: - Entry Types
@@ -258,33 +257,37 @@ enum Constants {
     enum EntryType: String, CaseIterable, Codable {
         case prompt
         case code
-        case reply
+        case todo
         case note
+        case reply
 
         var displayName: String {
             switch self {
-            case .prompt: return "Prompt"
+            case .prompt: return "提示词"
             case .code: return "代码"
+            case .todo: return "待办"
+            case .note: return "临时记录"
             case .reply: return "回复"
-            case .note: return "说明"
             }
         }
 
         var symbolName: String {
             switch self {
-            case .prompt: return "text.bubble.fill"
+            case .prompt: return "text.bubble"
             case .code: return "chevron.left.forwardslash.chevron.right"
-            case .reply: return "arrowshape.turn.up.left.fill"
+            case .todo: return "checklist"
             case .note: return "note.text"
+            case .reply: return "arrowshape.turn.up.left"
             }
         }
 
         var accentColor: Color {
             switch self {
-            case .prompt: return Color(red: 0.36, green: 0.62, blue: 0.95)
-            case .code: return Color(red: 0.36, green: 0.78, blue: 0.56)
-            case .reply: return Color(red: 0.96, green: 0.65, blue: 0.30)
-            case .note: return Color(red: 0.65, green: 0.55, blue: 0.86)
+            case .prompt: return VisualStyle.accent
+            case .code: return VisualStyle.levelGreen
+            case .todo: return VisualStyle.warn
+            case .note: return VisualStyle.levelBlue
+            case .reply: return VisualStyle.levelPurple
             }
         }
 
@@ -389,7 +392,7 @@ enum Constants {
         static let minContentSize = NSSize(width: 920, height: 620)
     }
 
-    static let panelContentInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+    static let panelContentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
     /// The quick panel is a single-column scanner: width only has to hold one
     /// row, height decides how many candidates are visible at a glance. So the
     /// default is portrait 4:5 rather than the old landscape 780×440 — the same

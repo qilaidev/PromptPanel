@@ -83,8 +83,7 @@ final class LibraryTransferService: @unchecked Sendable {
 
     func importJSON(from sourceURL: URL) throws -> LibraryTransferSummary {
         let data = try Data(contentsOf: sourceURL)
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let decoder = CloudSyncService.makeDecoder()
         let payload = try decoder.decode(PromptPanelLibraryExport.self, from: data)
         return try importPayload(payload)
     }
@@ -119,6 +118,7 @@ final class LibraryTransferService: @unchecked Sendable {
                 .order(Project.Columns.isDefault.desc, Project.Columns.name.asc)
                 .fetchAll(db)
             let localDefaultProject = localProjects.first(where: \.isDefault)
+            let localInboxProject = localProjects.first(where: { $0.groupKind == .inbox })
             var projectById = Dictionary(uniqueKeysWithValues: localProjects.map { ($0.id, $0) })
             var projectIdMap: [String: String] = [:]
 
@@ -128,10 +128,14 @@ final class LibraryTransferService: @unchecked Sendable {
                     projectIdMap[importedProject.id] = localDefaultProject.id
                     continue
                 }
+                if importedProject.groupKind == .inbox, let localInboxProject {
+                    projectIdMap[importedProject.id] = localInboxProject.id
+                    continue
+                }
 
                 if let existing = projectById[importedProject.id] {
                     projectIdMap[importedProject.id] = existing.id
-                    guard !existing.isDefault else {
+                    guard !existing.isSystemProtected else {
                         continue
                     }
                     var updated = importedProject
@@ -163,12 +167,42 @@ final class LibraryTransferService: @unchecked Sendable {
                 entry.title = normalizedName(entry.title, fallback: "Untitled Prompt")
                 entry.tags = Entry.normalizeTags(entry.tags)
 
-                if try Entry.fetchOne(db, key: entry.id) != nil {
+                if let existing = try Entry.fetchOne(db, key: entry.id) {
                     entry.updatedAt = Date()
                     try entry.update(db)
+                    if existing.content != entry.content || existing.title != entry.title {
+                        let maxVer = try Int.fetchOne(
+                            db,
+                            sql: "SELECT COALESCE(MAX(version_number), 0) FROM entry_versions WHERE entry_id = ?",
+                            arguments: [entry.id]
+                        ) ?? 0
+                        let version = EntryVersion(
+                            entryId: entry.id,
+                            versionNumber: maxVer + 1,
+                            title: entry.title,
+                            content: entry.content,
+                            changeNote: "导入更新",
+                            createdAt: entry.updatedAt
+                        )
+                        try version.insert(db)
+                    }
                     summary.entriesUpdated += 1
                 } else {
                     try entry.insert(db)
+                    let existingVerCount = try EntryVersion
+                        .filter(EntryVersion.Columns.entryId == entry.id)
+                        .fetchCount(db)
+                    if existingVerCount == 0 {
+                        let initialVersion = EntryVersion(
+                            entryId: entry.id,
+                            versionNumber: 1,
+                            title: entry.title,
+                            content: entry.content,
+                            changeNote: "导入创建",
+                            createdAt: entry.createdAt
+                        )
+                        try initialVersion.insert(db)
+                    }
                     summary.entriesCreated += 1
                 }
             }
@@ -192,6 +226,8 @@ final class LibraryTransferService: @unchecked Sendable {
             lines.append("## Project: \(project.name)")
             lines.append("Project ID: \(project.id)")
             lines.append("Default: \(project.isDefault ? "true" : "false")")
+            lines.append("Group Kind: \(project.groupKind.rawValue)")
+            lines.append("Archived: \(project.isArchived ? "true" : "false")")
             lines.append("")
 
             for entry in entriesByProject[project.id, default: []] {
@@ -200,6 +236,7 @@ final class LibraryTransferService: @unchecked Sendable {
                 lines.append("Type: \(entry.type)")
                 lines.append("Tags: \(entry.tags.joined(separator: ", "))")
                 lines.append("Pinned: \(entry.isPinned ? "true" : "false")")
+                lines.append("Completed: \(entry.isCompleted ? "true" : "false")")
                 lines.append("Sort Order: \(entry.sortOrder)")
                 lines.append("Use Count: \(entry.useCount)")
                 if let lastUsedAt = entry.lastUsedAt {
@@ -349,6 +386,20 @@ private struct MarkdownLibraryParser {
 
             if rawLine.hasPrefix("Default: ") {
                 currentProject.isDefault = line.hasSuffix("true")
+                if currentProject.isDefault {
+                    currentProject.groupKind = .category
+                }
+                continue
+            }
+
+            if rawLine.hasPrefix("Group Kind: ") {
+                let rawKind = String(rawLine.dropFirst("Group Kind: ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                currentProject.groupKind = Project.GroupKind.resolve(rawKind, isDefault: currentProject.isDefault)
+                continue
+            }
+
+            if rawLine.hasPrefix("Archived: ") {
+                currentProject.isArchived = line.hasSuffix("true")
                 continue
             }
 
@@ -375,6 +426,8 @@ private struct MarkdownLibraryParser {
                     .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             } else if rawLine.hasPrefix("Pinned: ") {
                 builder.isPinned = line.hasSuffix("true")
+            } else if rawLine.hasPrefix("Completed: ") {
+                builder.isCompleted = line.hasSuffix("true")
             } else if rawLine.hasPrefix("Sort Order: ") {
                 builder.sortOrder = Int(line.dropFirst("Sort Order: ".count)) ?? 0
             } else if rawLine.hasPrefix("Use Count: ") {
@@ -400,6 +453,7 @@ private struct MarkdownLibraryParser {
         var type: String = Constants.EntryType.prompt.rawValue
         var tags: [String] = []
         var isPinned: Bool = false
+        var isCompleted: Bool = false
         var sortOrder: Int = 0
         var useCount: Int = 0
         var lastUsedAt: Date?
@@ -412,6 +466,7 @@ private struct MarkdownLibraryParser {
                 content: content,
                 type: type.isEmpty ? Constants.EntryType.prompt.rawValue : type,
                 isPinned: isPinned,
+                isCompleted: isCompleted,
                 sortOrder: sortOrder,
                 useCount: useCount,
                 lastUsedAt: lastUsedAt,

@@ -12,6 +12,7 @@ enum Migrations {
         registerV4EntryTags(migrator: &migrator)
         registerV5DropUnusedEntryTagsIndex(migrator: &migrator)
         registerV6RetireEntrySortOrder(migrator: &migrator)
+        registerV7WorkspaceVersionsAndSync(migrator: &migrator)
     }
 
     // MARK: - V1: Initial Schema
@@ -99,19 +100,20 @@ enum Migrations {
             }
             try db.create(indexOn: "execution_logs", columns: ["created_at"])
 
-            // ----- Seed: Create the default project ("通用项目") -----
+            // ----- Seed: Create the default project ("通用项目") using V1 columns -----
             let now = Date()
-            let defaultProject = Project(
-                name: Constants.defaultProjectName,
-                isDefault: true,
-                createdAt: now,
-                updatedAt: now
+            let defaultProjectId = UUID().uuidString
+            try db.execute(
+                sql: """
+                    INSERT INTO projects (id, name, is_default, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                arguments: [defaultProjectId, Constants.defaultProjectName, true, now, now]
             )
-            try defaultProject.insert(db)
-            PPLogger.database.info("Default project created with ID: \(defaultProject.id)")
+            PPLogger.database.info("Default project created with ID: \(defaultProjectId)")
 
             // Persist the default project as current project
-            try AppSetting(key: Constants.SettingsKey.currentProjectId, value: defaultProject.id).insert(db)
+            try AppSetting(key: Constants.SettingsKey.currentProjectId, value: defaultProjectId).insert(db)
         }
     }
 
@@ -143,8 +145,6 @@ enum Migrations {
             PPLogger.database.info("Running migration: v4_entry_tags")
 
             try db.alter(table: "entries") { t in
-                // Tags are stored as a JSON array of strings, e.g. ["发布", "检查清单"].
-                // Empty string ("[]") is treated the same as NULL / no tags.
                 t.add(column: "tags", .text).notNull().defaults(to: "[]")
             }
         }
@@ -159,21 +159,96 @@ enum Migrations {
 
     // MARK: - V6: Retire entries.sort_order
 
-    /// `sort_order` used to outrank everything but pinning, and nothing in the app ever
-    /// wrote it — `updateSortOrder` was only reachable from tests. Entries that picked up a
-    /// value from an import were therefore stuck above the whole list no matter how rarely
-    /// they were used, with no way for the user to clear them. Ranking now uses frecency
-    /// (see `EntryRanking`) and ignores the column, so the stale values are zeroed here to
-    /// keep exports honest about a field that no longer means anything.
-    ///
-    /// The column itself stays: `LibraryTransferService` reads and writes a `Sort Order:`
-    /// line, and dropping it would break round-trips with archives exported by 1.x.
     private static func registerV6RetireEntrySortOrder(migrator: inout DatabaseMigrator) {
         migrator.registerMigration("v6_retire_entry_sort_order") { db in
             PPLogger.database.info("Running migration: v6_retire_entry_sort_order")
             let cleared = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM entries WHERE sort_order <> 0") ?? 0
             try db.execute(sql: "UPDATE entries SET sort_order = 0 WHERE sort_order <> 0")
             PPLogger.database.info("Cleared stale sort_order on \(cleared) entries")
+        }
+    }
+
+    // MARK: - V7: Workspace Group Kinds, Archive, Todo Completion, Entry Versions & Cloud Sync Support
+
+    private static func registerV7WorkspaceVersionsAndSync(migrator: inout DatabaseMigrator) {
+        migrator.registerMigration("v7_workspace_versions_and_sync") { db in
+            PPLogger.database.info("Running migration: v7_workspace_versions_and_sync")
+
+            try db.alter(table: "projects") { t in
+                t.add(column: "group_kind", .text).notNull().defaults(to: "project")
+                t.add(column: "is_archived", .boolean).notNull().defaults(to: false)
+                t.add(column: "icon_name", .text)
+                t.add(column: "deleted_at", .datetime)
+            }
+
+            // Default project ("通用项目") acts as the primary built-in reusable category
+            try db.execute(sql: "UPDATE projects SET group_kind = 'category' WHERE is_default = 1")
+
+            // Seed the built-in Inbox ("速记与待办") if not already present
+            let existingInboxCount = try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM projects WHERE group_kind = 'inbox' OR id = ?",
+                arguments: [Constants.inboxProjectId]
+            ) ?? 0
+            if existingInboxCount == 0 {
+                let now = Date()
+                let inboxProject = Project(
+                    id: Constants.inboxProjectId,
+                    name: Constants.inboxProjectName,
+                    isDefault: false,
+                    groupKind: .inbox,
+                    isArchived: false,
+                    iconName: "tray.fill",
+                    createdAt: now,
+                    updatedAt: now
+                )
+                try inboxProject.insert(db)
+            }
+
+            try db.alter(table: "entries") { t in
+                t.add(column: "is_completed", .boolean).notNull().defaults(to: false)
+                t.add(column: "source_entry_id", .text)
+                t.add(column: "deleted_at", .datetime)
+            }
+
+            try db.create(table: "entry_versions") { t in
+                t.column("id", .text).notNull().primaryKey()
+                t.column("entry_id", .text).notNull()
+                    .references("entries", onDelete: .cascade)
+                t.column("version_number", .integer).notNull()
+                t.column("title", .text).notNull()
+                t.column("content", .text).notNull()
+                t.column("change_note", .text)
+                t.column("created_at", .datetime).notNull()
+            }
+            try db.create(indexOn: "entry_versions", columns: ["entry_id", "version_number"])
+
+            // Backfill initial v1 version snapshots for existing entries
+            let existingRows = try Row.fetchAll(
+                db,
+                sql: "SELECT id, title, content, updated_at FROM entries"
+            )
+            for row in existingRows {
+                let entryId: String = row["id"]
+                let title: String = row["title"]
+                let content: String = row["content"]
+                let updatedAt: Date = row["updated_at"]
+                let version = EntryVersion(
+                    entryId: entryId,
+                    versionNumber: 1,
+                    title: title,
+                    content: content,
+                    changeNote: "初始版本",
+                    createdAt: updatedAt
+                )
+                try version.insert(db)
+            }
+
+            try db.create(table: "sync_metadata") { t in
+                t.column("key", .text).notNull().primaryKey()
+                t.column("value", .text)
+                t.column("updated_at", .datetime).notNull()
+            }
         }
     }
 }

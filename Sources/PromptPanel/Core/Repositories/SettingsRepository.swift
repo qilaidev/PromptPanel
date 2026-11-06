@@ -155,4 +155,30 @@ final class SettingsRepository: @unchecked Sendable {
         try set(Constants.SettingsKey.entrySortMode, value: rawValue)
         PPLogger.entry.debug("Entry sort mode set to: \(rawValue)")
     }
+
+    // MARK: - Cloud Sync
+
+    func isCloudSyncEnabled() throws -> Bool {
+        try getBool(Constants.SettingsKey.cloudSyncEnabled, default: false)
+    }
+
+    func setCloudSyncEnabled(_ enabled: Bool) throws {
+        try setBool(Constants.SettingsKey.cloudSyncEnabled, value: enabled)
+    }
+
+    func getCloudSyncEndpoint() throws -> String {
+        try get(Constants.SettingsKey.cloudSyncEndpoint) ?? ""
+    }
+
+    func setCloudSyncEndpoint(_ endpoint: String) throws {
+        try set(Constants.SettingsKey.cloudSyncEndpoint, value: endpoint.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    func getCloudSyncApiKey() throws -> String {
+        try get(Constants.SettingsKey.cloudSyncApiKey) ?? ""
+    }
+
+    func setCloudSyncApiKey(_ apiKey: String) throws {
+        try set(Constants.SettingsKey.cloudSyncApiKey, value: apiKey.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
 }

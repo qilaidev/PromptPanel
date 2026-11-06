@@ -117,6 +117,10 @@ final class PanelService {
         targetApplication?.bundleIdentifier
     }
 
+    func activePanelWindow() -> NSWindow? {
+        panel
+    }
+
     func setPinned(_ isPinned: Bool) {
         appState.isPanelPinned = isPinned
 
@@ -269,14 +273,10 @@ final class PanelService {
         panel.standardWindowButton(.closeButton)?.isHidden = true
     }
 
-    private func makePanelBackgroundView(contentView: NSView) -> NSVisualEffectView {
-        let backgroundView = NSVisualEffectView()
-        backgroundView.material = .underWindowBackground
-        backgroundView.blendingMode = .behindWindow
-        backgroundView.state = .followsWindowActiveState
+    private func makePanelBackgroundView(contentView: NSView) -> NSView {
+        let backgroundView = NSView()
         backgroundView.wantsLayer = true
-        backgroundView.layer?.cornerRadius = 14
-        backgroundView.layer?.masksToBounds = true
+        backgroundView.layer?.backgroundColor = NSColor.clear.cgColor
 
         contentView.translatesAutoresizingMaskIntoConstraints = false
         contentView.wantsLayer = true

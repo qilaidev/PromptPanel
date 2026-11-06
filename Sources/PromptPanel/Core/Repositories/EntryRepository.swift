@@ -1,7 +1,7 @@
 import Foundation
 import GRDB
 
-/// Data access layer for entries.
+/// Data access layer for entries and their historical version snapshots.
 final class EntryRepository: @unchecked Sendable {
 
     private let dbQueue: DatabaseQueue
@@ -29,7 +29,8 @@ final class EntryRepository: @unchecked Sendable {
             let sql = """
                 SELECT entries.*
                 FROM entries
-                WHERE entries.project_id IN (\(placeholders))
+                WHERE entries.deleted_at IS NULL
+                  AND entries.project_id IN (\(placeholders))
                 \(EntryRanking.sqlOrderByClause(includeProjectPriority: false))
                 """
             var arguments = StatementArguments(ids)
@@ -38,12 +39,13 @@ final class EntryRepository: @unchecked Sendable {
         }
     }
 
-    /// Fetch all entries for management views.
+    /// Fetch all non-deleted entries for management views.
     func fetchAll() throws -> [Entry] {
         try dbQueue.read { db in
             let sql = """
                 SELECT entries.*
                 FROM entries
+                WHERE entries.deleted_at IS NULL
                 \(EntryRanking.sqlOrderByClause(includeProjectPriority: false))
                 """
             return try Entry.fetchAll(db, sql: sql, arguments: [Date()])
@@ -54,12 +56,12 @@ final class EntryRepository: @unchecked Sendable {
     /// Current project entries rank above default project entries when all other sort keys are equal.
     func fetchMixed(currentProjectId: String, defaultProjectId: String) throws -> [Entry] {
         try dbQueue.read { db in
-            // Fetch both sets
             let sql = """
                 SELECT entries.*,
                        CASE WHEN entries.project_id = ? THEN 0 ELSE 1 END AS project_priority
                 FROM entries
-                WHERE entries.project_id IN (?, ?)
+                WHERE entries.deleted_at IS NULL
+                  AND entries.project_id IN (?, ?)
                 \(EntryRanking.sqlOrderByClause(includeProjectPriority: true))
                 """
             let rows = try Row.fetchAll(
@@ -107,7 +109,8 @@ final class EntryRepository: @unchecked Sendable {
             let sql = """
                 SELECT entries.*
                 FROM entries
-                WHERE (
+                WHERE entries.deleted_at IS NULL
+                  AND (
                     entries.rowid IN (
                         SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?
                     )
@@ -161,7 +164,8 @@ final class EntryRepository: @unchecked Sendable {
                            ELSE 1
                        END AS project_priority
                 FROM entries
-                WHERE entries.project_id IN (\(placeholders))
+                WHERE entries.deleted_at IS NULL
+                  AND entries.project_id IN (\(placeholders))
                   AND (
                       entries.rowid IN (
                           SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?
@@ -190,7 +194,9 @@ final class EntryRepository: @unchecked Sendable {
         guard let tag, !tag.isEmpty else {
             return entries
         }
-        return entries.filter { $0.tags.contains(tag) }
+        return entries.filter { entry in
+            entry.tags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame }
+        }
     }
 
     private static func searchTokens(from rawQuery: String) -> [String] {
@@ -207,17 +213,12 @@ final class EntryRepository: @unchecked Sendable {
     private static func makeFTS5PrefixQuery(fromTokens tokens: [String]) -> String {
         tokens
             .map { token in
-                // FTS5 uses double quotes for phrase literals; escape embedded quotes so
-                // searches like foo"bar do not fail the whole query.
                 let escapedToken = token.replacingOccurrences(of: "\"", with: "\"\"")
                 return "\"\(escapedToken)\"*"
             }
             .joined(separator: " ")
     }
 
-    /// Builds a conjunction of case-insensitive substring checks across `title`, `content`,
-    /// and `tags` so mid-token CJK substrings (which FTS5 `unicode61` prefix matching cannot
-    /// split) and tag keywords are always recalled.
     private static func makeSubstringWhereClause(tokenCount: Int) -> String {
         guard tokenCount > 0 else {
             return "0"
@@ -231,16 +232,18 @@ final class EntryRepository: @unchecked Sendable {
     /// Fetch a single entry by ID.
     func fetchById(_ id: String) throws -> Entry? {
         try dbQueue.read { db in
-            try Entry.fetchOne(db, key: id)
+            try Entry
+                .filter(Entry.Columns.id == id && Entry.Columns.deletedAt == nil)
+                .fetchOne(db)
         }
     }
 
-    /// Total entry count per project. Projects with zero entries are included as 0.
+    /// Total active entry count per project.
     func entryCountByProject() throws -> [String: Int] {
         try dbQueue.read { db in
             let rows = try Row.fetchAll(
                 db,
-                sql: "SELECT project_id, COUNT(*) AS count FROM entries GROUP BY project_id"
+                sql: "SELECT project_id, COUNT(*) AS count FROM entries WHERE deleted_at IS NULL GROUP BY project_id"
             )
             var result: [String: Int] = [:]
             for row in rows {
@@ -252,24 +255,177 @@ final class EntryRepository: @unchecked Sendable {
         }
     }
 
+    // MARK: - Version History Read & Restore
+
+    /// Fetch all historical versions of an entry, ordered from newest (`version_number DESC`) to oldest.
+    func fetchVersions(forEntryId entryId: String) throws -> [EntryVersion] {
+        try dbQueue.read { db in
+            try EntryVersion
+                .filter(EntryVersion.Columns.entryId == entryId)
+                .order(EntryVersion.Columns.versionNumber.desc)
+                .fetchAll(db)
+        }
+    }
+
+    /// Restore an entry's title and content to a historical version snapshot, recording a new version entry.
+    @discardableResult
+    func restoreVersion(versionId: String) throws -> Entry {
+        try dbQueue.write { db in
+            guard let targetVersion = try EntryVersion.fetchOne(db, key: versionId) else {
+                throw RepositoryError.notFound("EntryVersion \(versionId)")
+            }
+            guard var entry = try Entry.fetchOne(db, key: targetVersion.entryId), entry.deletedAt == nil else {
+                throw RepositoryError.notFound("Entry \(targetVersion.entryId)")
+            }
+
+            let now = Date()
+            entry.title = targetVersion.title
+            entry.content = targetVersion.content
+            entry.updatedAt = now
+            try entry.update(db)
+
+            let currentMaxVersion = try Int.fetchOne(
+                db,
+                sql: "SELECT MAX(version_number) FROM entry_versions WHERE entry_id = ?",
+                arguments: [entry.id]
+            ) ?? 1
+            let restoredSnapshot = EntryVersion(
+                entryId: entry.id,
+                versionNumber: currentMaxVersion + 1,
+                title: entry.title,
+                content: entry.content,
+                changeNote: "恢复自 v\(targetVersion.versionNumber)",
+                createdAt: now
+            )
+            try restoredSnapshot.insert(db)
+            return entry
+        }
+    }
+
     // MARK: - Write
 
-    /// Create a new entry.
-    func create(_ entry: Entry) throws {
+    /// Create a new entry and record its initial v1 version snapshot.
+    func create(_ entry: Entry, changeNote: String = "初始版本") throws {
         try dbQueue.write { db in
             try entry.insert(db)
+            let initialVersion = EntryVersion(
+                entryId: entry.id,
+                versionNumber: 1,
+                title: entry.title,
+                content: entry.content,
+                changeNote: changeNote,
+                createdAt: entry.createdAt
+            )
+            try initialVersion.insert(db)
         }
         PPLogger.entry.debug("Entry created: \(entry.id)")
     }
 
-    /// Update an existing entry.
-    func update(_ entry: Entry) throws {
+    /// Update an existing entry. Automatically records a new `EntryVersion` if title or content changed.
+    func update(_ entry: Entry, changeNote: String? = nil) throws {
         var updated = entry
-        updated.updatedAt = Date()
+        let now = Date()
+        updated.updatedAt = now
         try dbQueue.write { db in
+            let previous = try Entry.fetchOne(db, key: entry.id)
             try updated.update(db)
+
+            let contentChanged = previous.map { $0.title != updated.title || $0.content != updated.content } ?? true
+            if contentChanged {
+                let existingMaxVersion = try Int.fetchOne(
+                    db,
+                    sql: "SELECT MAX(version_number) FROM entry_versions WHERE entry_id = ?",
+                    arguments: [updated.id]
+                )
+                if existingMaxVersion == nil, let previous {
+                    // Backfill v1 for an entry that pre-dated version tracking
+                    let baseline = EntryVersion(
+                        entryId: previous.id,
+                        versionNumber: 1,
+                        title: previous.title,
+                        content: previous.content,
+                        changeNote: "初始版本",
+                        createdAt: previous.createdAt
+                    )
+                    try baseline.insert(db)
+                }
+                let nextVersionNumber = ((existingMaxVersion ?? (previous != nil ? 1 : 0)) + 1)
+                let snapshot = EntryVersion(
+                    entryId: updated.id,
+                    versionNumber: nextVersionNumber,
+                    title: updated.title,
+                    content: updated.content,
+                    changeNote: changeNote ?? "编辑保存",
+                    createdAt: now
+                )
+                try snapshot.insert(db)
+            }
         }
         PPLogger.entry.debug("Entry updated: \(entry.id)")
+    }
+
+    /// Clone an existing entry (e.g. from a reusable Category) into a target Project as an independent copy.
+    @discardableResult
+    func cloneEntry(
+        id: String,
+        toProjectId targetProjectId: String,
+        titleOverride: String? = nil
+    ) throws -> Entry {
+        try dbQueue.write { db in
+            guard let source = try Entry.fetchOne(db, key: id), source.deletedAt == nil else {
+                throw RepositoryError.notFound("Entry \(id)")
+            }
+            guard let targetProject = try Project.fetchOne(db, key: targetProjectId), targetProject.deletedAt == nil else {
+                throw RepositoryError.notFound("Project \(targetProjectId)")
+            }
+
+            let now = Date()
+            let cloned = Entry(
+                projectId: targetProject.id,
+                title: titleOverride ?? source.title,
+                content: source.content,
+                type: source.type,
+                isPinned: false,
+                isCompleted: false,
+                sortOrder: 0,
+                useCount: 0,
+                lastUsedAt: nil,
+                createdAt: now,
+                updatedAt: now,
+                sourceEntryId: source.id,
+                tags: source.tags
+            )
+            try cloned.insert(db)
+
+            let initialVersion = EntryVersion(
+                entryId: cloned.id,
+                versionNumber: 1,
+                title: cloned.title,
+                content: cloned.content,
+                changeNote: "克隆自「\(source.title)」",
+                createdAt: now
+            )
+            try initialVersion.insert(db)
+            return cloned
+        }
+    }
+
+    /// Toggle or set completion state for a Todo / Scratchpad entry.
+    func setCompleted(id: String, isCompleted: Bool) throws {
+        try dbQueue.write { db in
+            let now = Date()
+            try db.execute(
+                sql: """
+                    UPDATE entries
+                    SET is_completed = ?,
+                        updated_at = ?
+                    WHERE id = ? AND deleted_at IS NULL
+                    """,
+                arguments: [isCompleted, now, id]
+            )
+            try Self.requireChangedRow(in: db, entity: "Entry \(id)")
+        }
+        PPLogger.entry.debug("Completion state updated for entry: \(id) completed=\(isCompleted)")
     }
 
     /// Delete an entry by ID.
@@ -286,15 +442,16 @@ final class EntryRepository: @unchecked Sendable {
     /// Record an execution: increment use_count and set last_used_at.
     func recordExecution(id: String) throws {
         try dbQueue.write { db in
+            let now = Date()
             try db.execute(
                 sql: """
                     UPDATE entries
                     SET use_count = use_count + 1,
                         last_used_at = ?,
                         updated_at = ?
-                    WHERE id = ?
+                    WHERE id = ? AND deleted_at IS NULL
                     """,
-                arguments: [Date(), Date(), id]
+                arguments: [now, now, id]
             )
             try Self.requireChangedRow(in: db, entity: "Entry \(id)")
         }
