@@ -1,0 +1,24 @@
+services:
+  promptpanel-sync:
+    build: .
+    container_name: promptpanel-sync
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    ports:
+      - "${PP_SYNC_PORT:-18787}:18787"
+    environment:
+      PP_SYNC_HOST: "0.0.0.0"
+      PP_SYNC_PORT: "18787"
+      PP_SYNC_DATA_DIR: "/var/lib/promptpanel-sync"
+      PP_SYNC_ALLOWED_TOKENS: "${PP_SYNC_ALLOWED_TOKENS:-}"
+    volumes:
+      - ./data:/var/lib/promptpanel-sync
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 128M
+    security_opt:
+      - no-new-privileges:true
