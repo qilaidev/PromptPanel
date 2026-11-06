@@ -167,7 +167,7 @@ class MobileSyncClient {
   }
 
   void _mergeRemoteEnvelope(CloudSyncEnvelope remote) {
-    for remoteProject in remote.projects {
+    for (final remoteProject in remote.projects) {
       final idx = projects.indexWhere((p) => p.id == remoteProject.id);
       if (idx >= 0) {
         if (remoteProject.updatedAt.isAfter(projects[idx].updatedAt)) {
@@ -178,7 +178,7 @@ class MobileSyncClient {
       }
     }
 
-    for remoteEntry in remote.entries {
+    for (final remoteEntry in remote.entries) {
       final idx = entries.indexWhere((e) => e.id == remoteEntry.id);
       if (idx >= 0) {
         final local = entries[idx];
@@ -206,7 +206,7 @@ class MobileSyncClient {
       }
     }
 
-    for remoteVersion in remote.versions {
+    for (final remoteVersion in remote.versions) {
       final exists = versions.any(
         (v) =>
             v.id == remoteVersion.id ||

@@ -13,3 +13,13 @@
 4. **冲突零丢失的云端双向同步**
    - 与 macOS 端 `CloudSyncService` 使用完全一致的 JSON 同步信封格式（包含 `projects`、`entries`、`versions`）。
    - 当手机端与 macOS 端并发修改同一条内容时，旧版本会自动转存进 `versions` 历史记录中，绝不丢失任何文字。
+
+## 构建 Android 签名发行包（APK）
+
+在已安装 Android SDK（`platforms/android-34`、`build-tools/34.0.0`）与 JDK 的机器上，可直接运行：
+
+```bash
+./mobile/build-android.sh
+```
+
+构建脚本会编译 `mobile/android/` 原生宿主与离线前端资产，执行 4 字节对齐（`zipalign`），并使用 RSA-2048 发行密钥同时完成 **V1 (JAR) + V2 + V3** 全签名与 `apksigner verify` 校验，产物输出至 `dist/release/PromptPanel-1.6.0+10-android.apk`。

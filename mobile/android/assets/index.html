@@ -1,0 +1,1249 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<title>项目快贴 PromptPanel Mobile</title>
+<style>
+  :root {
+    --bg: #F6F7F9;
+    --surface: #FFFFFF;
+    --surface-2: #EEF1F6;
+    --border: rgba(15, 23, 42, 0.08);
+    --text: #0F172A;
+    --text-sub: #475569;
+    --text-muted: #94A3B8;
+    --accent: #2563EB;
+    --accent-soft: rgba(37, 99, 235, 0.10);
+    --success: #16A34A;
+    --danger: #DC2626;
+    --radius: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0F1115;
+      --surface: #181B22;
+      --surface-2: #222731;
+      --border: rgba(255, 255, 255, 0.08);
+      --text: #F1F5F9;
+      --text-sub: #94A3B8;
+      --text-muted: #64748B;
+      --accent: #3B82F6;
+      --accent-soft: rgba(59, 130, 246, 0.16);
+      --success: #22C55E;
+      --danger: #EF4444;
+    }
+  }
+  * {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+    font-size: 15px;
+    line-height: 1.45;
+    user-select: none;
+    overflow: hidden;
+  }
+  .app-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px 10px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .topbar-title {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .topbar-title h1 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.2px;
+  }
+  .topbar-badge {
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .topbar-actions {
+    display: flex;
+    gap: 6px;
+  }
+  .icon-btn {
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 7px 11px;
+    font-size: 13px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+  }
+  .icon-btn:active {
+    opacity: 0.75;
+  }
+  .search-bar {
+    padding: 10px 16px 8px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .search-input {
+    width: 100%;
+    padding: 9px 12px;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+  }
+  .search-input:focus {
+    border-color: var(--accent);
+  }
+  .chip-strip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    scrollbar-width: none;
+  }
+  .chip-strip::-webkit-scrollbar {
+    display: none;
+  }
+  .chip {
+    flex-shrink: 0;
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text-sub);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .chip.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #FFFFFF;
+    font-weight: 600;
+  }
+  .content-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px 88px;
+  }
+  .entry-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: flex-start;
+    gap: 11px;
+  }
+  .entry-check {
+    width: 20px;
+    height: 20px;
+    margin-top: 2px;
+    accent-color: var(--accent);
+    flex-shrink: 0;
+  }
+  .entry-main {
+    flex: 1;
+    min-width: 0;
+  }
+  .entry-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+  .entry-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .entry-title.done {
+    text-decoration: line-through;
+    color: var(--text-muted);
+  }
+  .pin-tag {
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+  .entry-body {
+    font-size: 13.5px;
+    color: var(--text-sub);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+    margin-bottom: 6px;
+    user-select: text;
+  }
+  .entry-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    color: var(--text-muted);
+  }
+  .tag-pill {
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--surface-2);
+    color: var(--text-sub);
+  }
+  .copy-btn {
+    flex-shrink: 0;
+    border: 1px solid var(--border);
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-radius: 8px;
+    padding: 7px 11px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .copy-btn:active {
+    opacity: 0.7;
+  }
+  .empty-state {
+    text-align: center;
+    padding: 56px 20px;
+    color: var(--text-muted);
+    font-size: 14px;
+  }
+  .fab {
+    position: fixed;
+    right: 18px;
+    bottom: 76px;
+    background: var(--accent);
+    color: #FFFFFF;
+    border: none;
+    border-radius: 999px;
+    padding: 12px 18px;
+    font-size: 14px;
+    font-weight: 600;
+    box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
+    cursor: pointer;
+    z-index: 10;
+  }
+  .bottom-nav {
+    display: flex;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+  }
+  .nav-item {
+    flex: 1;
+    text-align: center;
+    padding: 6px 4px;
+    border-radius: 8px;
+    color: var(--text-sub);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .nav-item.active {
+    color: var(--accent);
+    background: var(--accent-soft);
+    font-weight: 600;
+  }
+  .nav-icon {
+    display: block;
+    font-size: 16px;
+    margin-bottom: 2px;
+  }
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.48);
+    display: none;
+    align-items: flex-end;
+    justify-content: center;
+    z-index: 50;
+  }
+  .modal-backdrop.open {
+    display: flex;
+  }
+  .sheet {
+    width: 100%;
+    max-width: 600px;
+    max-height: 88vh;
+    background: var(--surface);
+    border-radius: 18px 18px 0 0;
+    padding: 18px 16px 24px;
+    overflow-y: auto;
+  }
+  .sheet-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .sheet-title {
+    font-size: 16px;
+    font-weight: 700;
+  }
+  .form-group {
+    margin-bottom: 12px;
+  }
+  .form-label {
+    display: block;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-sub);
+    margin-bottom: 5px;
+  }
+  .form-input, .form-textarea, .form-select {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+  }
+  .form-textarea {
+    min-height: 110px;
+    resize: vertical;
+  }
+  .btn-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .btn-primary {
+    flex: 1;
+    background: var(--accent);
+    color: #FFFFFF;
+    border: none;
+    border-radius: 9px;
+    padding: 11px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn-secondary {
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 11px 14px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn-danger {
+    background: rgba(220, 38, 38, 0.12);
+    color: var(--danger);
+    border: 1px solid rgba(220, 38, 38, 0.25);
+    border-radius: 9px;
+    padding: 11px 14px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .version-box {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .version-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--surface-2);
+    margin-top: 6px;
+    font-size: 12.5px;
+  }
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 84px;
+    transform: translateX(-50%);
+    background: rgba(15, 23, 42, 0.92);
+    color: #FFFFFF;
+    padding: 9px 16px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 500;
+    display: none;
+    z-index: 100;
+  }
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <header class="topbar">
+    <div class="topbar-title">
+      <h1 id="topTitle">速记与待办</h1>
+      <span class="topbar-badge">v1.6.0</span>
+    </div>
+    <div class="topbar-actions">
+      <button class="icon-btn" onclick="triggerCloudSync()">↻ 同步</button>
+      <button class="icon-btn" onclick="openSettingsSheet()">⚙ 设置</button>
+    </div>
+  </header>
+
+  <div class="search-bar">
+    <input id="searchInput" class="search-input" type="search" placeholder="搜索标题、正文或 #标签..." oninput="render()" />
+  </div>
+
+  <div id="chipStrip" class="chip-strip" style="display:none;"></div>
+
+  <main id="entryList" class="content-list"></main>
+
+  <button id="fabBtn" class="fab" onclick="openEditorSheet(null)">+ 新建待办</button>
+
+  <nav class="bottom-nav">
+    <div class="nav-item active" id="nav-0" onclick="switchTab(0)">
+      <span class="nav-icon">☑</span>速记与待办
+    </div>
+    <div class="nav-item" id="nav-1" onclick="switchTab(1)">
+      <span class="nav-icon">❖</span>常用类型
+    </div>
+    <div class="nav-item" id="nav-2" onclick="switchTab(2)">
+      <span class="nav-icon">▤</span>项目管理
+    </div>
+  </nav>
+</div>
+
+<!-- 新建/编辑词条弹窗 -->
+<div id="editorModal" class="modal-backdrop" onclick="if(event.target===this)closeModals()">
+  <div class="sheet">
+    <div class="sheet-header">
+      <span id="editorTitle" class="sheet-title">新建词条</span>
+      <button class="icon-btn" onclick="closeModals()">关闭</button>
+    </div>
+    <div class="form-group">
+      <label class="form-label">所属分组 / 项目</label>
+      <select id="fieldProject" class="form-select"></select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">词条类型</label>
+      <select id="fieldType" class="form-select">
+        <option value="todo">待办事项 (todo)</option>
+        <option value="note">随手记 (note)</option>
+        <option value="prompt">提示词 (prompt)</option>
+        <option value="code">代码片段 (code)</option>
+        <option value="reply">常用回复 (reply)</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">标题（可选，留空自动提取首行）</label>
+      <input id="fieldTitle" class="form-input" type="text" placeholder="输入简短标题" />
+    </div>
+    <div class="form-group">
+      <label class="form-label">正文内容</label>
+      <textarea id="fieldContent" class="form-textarea" placeholder="输入提示词、待办或文本内容..."></textarea>
+    </div>
+    <div class="form-group">
+      <label class="form-label">标签（空格或逗号分隔，不含 #）</label>
+      <input id="fieldTags" class="form-input" type="text" placeholder="例如：开发 常用 提示词" />
+    </div>
+    <div class="btn-row">
+      <button id="deleteBtn" class="btn-danger" style="display:none;" onclick="deleteCurrentEntry()">删除</button>
+      <button id="pinBtn" class="btn-secondary" style="display:none;" onclick="togglePinCurrentEntry()">置顶</button>
+      <button class="btn-primary" onclick="saveCurrentEntry()">保存</button>
+    </div>
+    <div id="versionBox" class="version-box" style="display:none;">
+      <div class="form-label">历史版本（点击一键无损回滚）</div>
+      <div id="versionList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 同步与分组管理设置弹窗 -->
+<div id="settingsModal" class="modal-backdrop" onclick="if(event.target===this)closeModals()">
+  <div class="sheet">
+    <div class="sheet-header">
+      <span class="sheet-title">云端同步与工作区设置</span>
+      <button class="icon-btn" onclick="closeModals()">关闭</button>
+    </div>
+    <div class="form-group">
+      <label class="form-label">自托管云同步地址 (HTTP / HTTPS)</label>
+      <input id="syncEndpoint" class="form-input" type="url" placeholder="https://your-server.example.com/sync" />
+    </div>
+    <div class="form-group">
+      <label class="form-label">访问令牌 (Bearer Token)</label>
+      <input id="syncToken" class="form-input" type="password" placeholder="与 macOS 端一致的访问令牌" />
+    </div>
+    <div class="btn-row">
+      <button class="btn-primary" onclick="saveSyncSettings()">保存同步配置</button>
+      <button class="btn-secondary" onclick="triggerCloudSync()">立即同步</button>
+    </div>
+    <div class="version-box">
+      <div class="form-label">新建常用类型或具体项目</div>
+      <div class="btn-row">
+        <input id="newGroupName" class="form-input" type="text" placeholder="输入新分类或项目名称" style="flex:1;" />
+        <select id="newGroupKind" class="form-select" style="width:120px;">
+          <option value="project">具体项目</option>
+          <option value="category">常用类型</option>
+        </select>
+        <button class="btn-secondary" onclick="createNewGroup()">添加</button>
+      </div>
+    </div>
+    <div class="version-box">
+      <div class="form-label">当前状态</div>
+      <div id="syncStatusText" style="font-size:12.5px;color:var(--text-sub);">就绪 · 本地存储已启用（CloudSyncEnvelope v2 协议）</div>
+    </div>
+  </div>
+</div>
+
+<div id="toastEl" class="toast"></div>
+
+<script>
+const BUILTIN_INBOX_ID = 'builtin-inbox';
+let currentTab = 0; // 0: inbox, 1: category, 2: project
+let selectedGroupId = null;
+let showArchived = false;
+let editingEntryId = null;
+
+let store = {
+  schemaVersion: 2,
+  deviceId: 'android-mobile',
+  exportedAt: new Date().toISOString(),
+  projects: [],
+  entries: [],
+  versions: []
+};
+
+function defaultSeedStore() {
+  const now = new Date().toISOString();
+  return {
+    schemaVersion: 2,
+    deviceId: 'android-mobile-' + Math.random().toString(36).slice(2, 8),
+    exportedAt: now,
+    projects: [
+      {
+        id: BUILTIN_INBOX_ID,
+        name: '速记与待办',
+        isDefault: false,
+        groupKindRaw: 'inbox',
+        isArchived: false,
+        iconName: 'checklist',
+        sortOrder: -10,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null
+      },
+      {
+        id: 'default-general',
+        name: '通用项目',
+        isDefault: true,
+        groupKindRaw: 'category',
+        isArchived: false,
+        iconName: 'square.grid.2x2',
+        sortOrder: 0,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null
+      },
+      {
+        id: 'cat-dev',
+        name: '开发类',
+        isDefault: false,
+        groupKindRaw: 'category',
+        isArchived: false,
+        iconName: 'hammer',
+        sortOrder: 1,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null
+      },
+      {
+        id: 'proj-sample',
+        name: 'PromptPanel 桌面协同',
+        isDefault: false,
+        groupKindRaw: 'project',
+        isArchived: false,
+        iconName: 'folder',
+        sortOrder: 10,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null
+      }
+    ],
+    entries: [
+      {
+        id: 'seed-todo-1',
+        projectId: BUILTIN_INBOX_ID,
+        title: '配置手机端与 macOS 云端同步',
+        content: '在右上角「设置」中填入自托管同步服务地址与 Token，点击「同步」即可与 macOS 端双向同步词条与版本历史。',
+        type: 'todo',
+        isPinned: true,
+        isCompleted: false,
+        sortOrder: 0,
+        useCount: 1,
+        lastUsedAt: now,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+        sourceEntryId: null,
+        tags: ['同步', '入门']
+      },
+      {
+        id: 'seed-prompt-1',
+        projectId: 'default-general',
+        title: '代码审查与边界条件排查 Prompt',
+        content: '请审查以下代码改动，重点检查：\n1. 并发安全与主线程阻塞风险\n2. 异常路径与数据回滚完整性\n3. 边界条件与空值处理',
+        type: 'prompt',
+        isPinned: true,
+        isCompleted: false,
+        sortOrder: 0,
+        useCount: 5,
+        lastUsedAt: now,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+        sourceEntryId: null,
+        tags: ['代码审查', '开发']
+      }
+    ],
+    versions: [
+      {
+        id: 'seed-todo-1-v1',
+        entryId: 'seed-todo-1',
+        versionNumber: 1,
+        title: '配置手机端与 macOS 云端同步',
+        content: '在右上角「设置」中填入自托管同步服务地址与 Token，点击「同步」即可与 macOS 端双向同步词条与版本历史。',
+        changeNote: '初始版本',
+        createdAt: now
+      },
+      {
+        id: 'seed-prompt-1-v1',
+        entryId: 'seed-prompt-1',
+        versionNumber: 1,
+        title: '代码审查与边界条件排查 Prompt',
+        content: '请审查以下代码改动，重点检查：\n1. 并发安全与主线程阻塞风险\n2. 异常路径与数据回滚完整性\n3. 边界条件与空值处理',
+        changeNote: '初始版本',
+        createdAt: now
+      }
+    ]
+  };
+}
+
+function loadStore() {
+  try {
+    let raw = '';
+    if (window.AndroidBridge && AndroidBridge.loadStore) {
+      raw = AndroidBridge.loadStore();
+    } else {
+      raw = localStorage.getItem('promptpanel_mobile_store_v2') || '';
+    }
+    if (raw && raw.trim().length > 0) {
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.projects)) {
+        store = parsed;
+        store.entries = store.entries || [];
+        store.versions = store.versions || [];
+        return;
+      }
+    }
+  } catch (e) {}
+  store = defaultSeedStore();
+  persistStore();
+}
+
+function persistStore() {
+  store.exportedAt = new Date().toISOString();
+  const raw = JSON.stringify(store);
+  try {
+    if (window.AndroidBridge && AndroidBridge.saveStore) {
+      AndroidBridge.saveStore(raw);
+    }
+    localStorage.setItem('promptpanel_mobile_store_v2', raw);
+  } catch (e) {}
+}
+
+function showToast(msg) {
+  if (window.AndroidBridge && AndroidBridge.showToast) {
+    AndroidBridge.showToast(msg);
+    return;
+  }
+  const el = document.getElementById('toastEl');
+  el.textContent = msg;
+  el.style.display = 'block';
+  clearTimeout(window.__toastTimer);
+  window.__toastTimer = setTimeout(() => { el.style.display = 'none'; }, 2000);
+}
+
+function versionsForEntry(entryId) {
+  return (store.versions || [])
+    .filter(v => (v.entryId || v.entry_id) === entryId)
+    .sort((a, b) => (b.versionNumber || b.version_number || 1) - (a.versionNumber || a.version_number || 1));
+}
+
+function frecencyScore(entry) {
+  const count = entry.useCount || 0;
+  if (count <= 0) return 0;
+  const last = entry.lastUsedAt ? new Date(entry.lastUsedAt).getTime() : new Date(entry.updatedAt).getTime();
+  const idleDays = Math.max(0, (Date.now() - last) / 86400000);
+  return count * Math.pow(2, -idleDays / 90);
+}
+
+function switchTab(idx) {
+  currentTab = idx;
+  selectedGroupId = null;
+  for (let i = 0; i < 3; i++) {
+    document.getElementById('nav-' + i).classList.toggle('active', i === idx);
+  }
+  const titles = ['速记与待办', '常用类型', '项目管理'];
+  document.getElementById('topTitle').textContent = titles[idx];
+  document.getElementById('fabBtn').textContent = idx === 0 ? '+ 新建待办' : '+ 新建词条';
+  render();
+}
+
+function render() {
+  const queryRaw = (document.getElementById('searchInput').value || '').trim();
+  let tagFilter = null;
+  let textFilter = queryRaw.toLowerCase();
+  if (queryRaw.startsWith('#')) {
+    const parts = queryRaw.split(/\s+/);
+    tagFilter = parts[0].slice(1).toLowerCase();
+    textFilter = parts.slice(1).join(' ').toLowerCase();
+  }
+
+  const chipStrip = document.getElementById('chipStrip');
+  const activeProjects = (store.projects || []).filter(p => !p.deletedAt && !p.deleted_at);
+
+  let items = (store.entries || []).filter(e => !e.deletedAt && !e.deleted_at);
+
+  if (currentTab === 0) {
+    chipStrip.style.display = 'none';
+    items = items.filter(e =>
+      (e.projectId || e.project_id) === BUILTIN_INBOX_ID ||
+      e.type === 'todo' ||
+      e.type === 'note'
+    );
+  } else {
+    chipStrip.style.display = 'flex';
+    const targetKind = currentTab === 1 ? 'category' : 'project';
+    const groups = activeProjects.filter(p => {
+      const kind = p.groupKindRaw || p.group_kind || (p.isDefault ? 'category' : 'project');
+      const archived = p.isArchived || p.is_archived || false;
+      return kind === targetKind && (showArchived || !archived);
+    });
+    if (!selectedGroupId || !groups.some(g => g.id === selectedGroupId)) {
+      selectedGroupId = groups.length > 0 ? groups[0].id : null;
+    }
+
+    let chipHtml = '';
+    for (const g of groups) {
+      const archived = g.isArchived || g.is_archived || false;
+      const activeCls = g.id === selectedGroupId ? 'chip active' : 'chip';
+      chipHtml += `<div class="${activeCls}" onclick="selectGroup('${g.id}')">${escapeHtml(g.name)}${archived ? ' (已归档)' : ''}</div>`;
+    }
+    if (currentTab === 2) {
+      chipHtml += `<div class="chip ${showArchived ? 'active' : ''}" onclick="toggleShowArchived()">显示已归档</div>`;
+      if (selectedGroupId) {
+        chipHtml += `<div class="chip" onclick="toggleArchiveSelectedProject()">归档/恢复当前项目</div>`;
+      }
+    }
+    chipStrip.innerHTML = chipHtml;
+
+    items = selectedGroupId
+      ? items.filter(e => (e.projectId || e.project_id) === selectedGroupId)
+      : [];
+  }
+
+  if (tagFilter) {
+    items = items.filter(e => (e.tags || []).some(t => String(t).toLowerCase().includes(tagFilter)));
+  }
+  if (textFilter) {
+    items = items.filter(e =>
+      (e.title || '').toLowerCase().includes(textFilter) ||
+      (e.content || '').toLowerCase().includes(textFilter) ||
+      (e.tags || []).some(t => String(t).toLowerCase().includes(textFilter))
+    );
+  }
+
+  items.sort((a, b) => {
+    const pinA = a.isPinned || a.is_pinned ? 1 : 0;
+    const pinB = b.isPinned || b.is_pinned ? 1 : 0;
+    if (pinA !== pinB) return pinB - pinA;
+    const scoreDiff = frecencyScore(b) - frecencyScore(a);
+    if (Math.abs(scoreDiff) > 0.001) return scoreDiff;
+    return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+  });
+
+  const listEl = document.getElementById('entryList');
+  if (items.length === 0) {
+    listEl.innerHTML = `<div class="empty-state">暂无匹配词条 · 点击右下角按钮新建</div>`;
+    return;
+  }
+
+  let html = '';
+  for (const item of items) {
+    const vers = versionsForEntry(item.id);
+    const vNum = vers.length > 0 ? (vers[0].versionNumber || vers[0].version_number || 1) : 1;
+    const isTodo = currentTab === 0 || item.type === 'todo';
+    const done = !!(item.isCompleted || item.is_completed);
+    const pinned = !!(item.isPinned || item.is_pinned);
+    const createdStr = String(item.createdAt || item.created_at || '').replace('T', ' ').slice(0, 16);
+    const tagsHtml = (item.tags || []).map(t => `<span class="tag-pill">#${escapeHtml(t)}</span>`).join('');
+
+    html += `
+      <div class="entry-card" onclick="openEditorSheet('${item.id}')">
+        ${isTodo ? `<input type="checkbox" class="entry-check" ${done ? 'checked' : ''} onclick="event.stopPropagation(); toggleTodoDone('${item.id}')" />` : ''}
+        <div class="entry-main">
+          <div class="entry-header">
+            ${pinned ? `<span class="pin-tag">置顶</span>` : ''}
+            <div class="entry-title ${done ? 'done' : ''}">${escapeHtml(item.title)}</div>
+          </div>
+          <div class="entry-body">${escapeHtml(item.content)}</div>
+          <div class="entry-meta">
+            <span>v${vNum}</span>
+            <span>· 用 ${item.useCount || 0} 次</span>
+            <span>· ${createdStr}</span>
+            ${tagsHtml}
+          </div>
+        </div>
+        <button class="copy-btn" onclick="event.stopPropagation(); copyEntry('${item.id}')">复制</button>
+      </div>
+    `;
+  }
+  listEl.innerHTML = html;
+}
+
+function selectGroup(id) {
+  selectedGroupId = id;
+  render();
+}
+
+function toggleShowArchived() {
+  showArchived = !showArchived;
+  render();
+}
+
+function toggleArchiveSelectedProject() {
+  const proj = (store.projects || []).find(p => p.id === selectedGroupId);
+  if (!proj) return;
+  proj.isArchived = !(proj.isArchived || proj.is_archived);
+  proj.updatedAt = new Date().toISOString();
+  persistStore();
+  showToast(proj.isArchived ? '已归档项目：' + proj.name : '已恢复项目：' + proj.name);
+  render();
+}
+
+function toggleTodoDone(entryId) {
+  const item = (store.entries || []).find(e => e.id === entryId);
+  if (!item) return;
+  item.isCompleted = !(item.isCompleted || item.is_completed);
+  item.updatedAt = new Date().toISOString();
+  persistStore();
+  render();
+}
+
+function copyEntry(entryId) {
+  const item = (store.entries || []).find(e => e.id === entryId);
+  if (!item) return;
+  item.useCount = (item.useCount || 0) + 1;
+  item.lastUsedAt = new Date().toISOString();
+  persistStore();
+
+  if (window.AndroidBridge && AndroidBridge.copyText) {
+    AndroidBridge.copyText(item.title, item.content);
+  } else if (navigator.clipboard) {
+    navigator.clipboard.writeText(item.content);
+  }
+  showToast('已复制：' + item.title);
+  render();
+}
+
+function openEditorSheet(entryId) {
+  editingEntryId = entryId;
+  const projSelect = document.getElementById('fieldProject');
+  const activeProjects = (store.projects || []).filter(p => !p.deletedAt && !p.deleted_at);
+  projSelect.innerHTML = activeProjects.map(p =>
+    `<option value="${p.id}">${escapeHtml(p.name)}</option>`
+  ).join('');
+
+  const item = entryId ? (store.entries || []).find(e => e.id === entryId) : null;
+  document.getElementById('editorTitle').textContent = item ? '编辑词条与历史版本' : '新建词条';
+  document.getElementById('deleteBtn').style.display = item ? 'inline-block' : 'none';
+  document.getElementById('pinBtn').style.display = item ? 'inline-block' : 'none';
+
+  if (item) {
+    projSelect.value = item.projectId || item.project_id || BUILTIN_INBOX_ID;
+    document.getElementById('fieldType').value = item.type || 'prompt';
+    document.getElementById('fieldTitle').value = item.title || '';
+    document.getElementById('fieldContent').value = item.content || '';
+    document.getElementById('fieldTags').value = (item.tags || []).join(' ');
+    document.getElementById('pinBtn').textContent = (item.isPinned || item.is_pinned) ? '取消置顶' : '置顶';
+    renderVersionHistory(item.id);
+  } else {
+    projSelect.value = currentTab === 0 ? BUILTIN_INBOX_ID : (selectedGroupId || 'default-general');
+    document.getElementById('fieldType').value = currentTab === 0 ? 'todo' : 'prompt';
+    document.getElementById('fieldTitle').value = '';
+    document.getElementById('fieldContent').value = '';
+    document.getElementById('fieldTags').value = '';
+    document.getElementById('versionBox').style.display = 'none';
+  }
+  document.getElementById('editorModal').classList.add('open');
+}
+
+function renderVersionHistory(entryId) {
+  const vers = versionsForEntry(entryId);
+  const box = document.getElementById('versionBox');
+  const list = document.getElementById('versionList');
+  if (vers.length === 0) {
+    box.style.display = 'none';
+    return;
+  }
+  box.style.display = 'block';
+  list.innerHTML = vers.map(v => {
+    const vNum = v.versionNumber || v.version_number || 1;
+    const note = v.changeNote || v.change_note || '历史快照';
+    const time = String(v.createdAt || v.created_at || '').replace('T', ' ').slice(0, 16);
+    return `
+      <div class="version-item">
+        <div><strong>v${vNum}</strong> · ${escapeHtml(note)} <span style="color:var(--text-muted)">(${time})</span></div>
+        <button class="copy-btn" onclick="rollbackToVersion('${entryId}', '${v.id}')">回滚到此版</button>
+      </div>
+    `;
+  }).join('');
+}
+
+function rollbackToVersion(entryId, versionId) {
+  const item = (store.entries || []).find(e => e.id === entryId);
+  const targetVer = (store.versions || []).find(v => v.id === versionId);
+  if (!item || !targetVer) return;
+
+  const vers = versionsForEntry(entryId);
+  const nextVer = (vers.length > 0 ? (vers[0].versionNumber || 1) : 0) + 1;
+  const now = new Date().toISOString();
+
+  item.title = targetVer.title;
+  item.content = targetVer.content;
+  item.updatedAt = now;
+
+  store.versions.push({
+    id: entryId + '-v' + nextVer,
+    entryId: entryId,
+    versionNumber: nextVer,
+    title: item.title,
+    content: item.content,
+    changeNote: '回滚至 v' + (targetVer.versionNumber || 1),
+    createdAt: now
+  });
+
+  persistStore();
+  openEditorSheet(entryId);
+  render();
+  showToast('已回滚至 v' + (targetVer.versionNumber || 1));
+}
+
+function saveCurrentEntry() {
+  const content = (document.getElementById('fieldContent').value || '').trim();
+  if (!content) {
+    showToast('请输入正文内容');
+    return;
+  }
+  const rawTitle = (document.getElementById('fieldTitle').value || '').trim();
+  const title = rawTitle || content.split('\n')[0].slice(0, 28);
+  const projectId = document.getElementById('fieldProject').value || BUILTIN_INBOX_ID;
+  const type = document.getElementById('fieldType').value || 'prompt';
+  const tagsRaw = (document.getElementById('fieldTags').value || '').trim();
+  const tags = tagsRaw ? tagsRaw.split(/[\s,，]+/).map(t => t.replace(/^#/, '')).filter(Boolean) : [];
+  const now = new Date().toISOString();
+
+  if (editingEntryId) {
+    const item = (store.entries || []).find(e => e.id === editingEntryId);
+    if (item) {
+      const changed = item.title !== title || item.content !== content;
+      item.projectId = projectId;
+      item.type = type;
+      item.title = title;
+      item.content = content;
+      item.tags = tags;
+      item.updatedAt = now;
+      if (changed) {
+        const vers = versionsForEntry(item.id);
+        const nextVer = (vers.length > 0 ? (vers[0].versionNumber || 1) : 0) + 1;
+        store.versions.push({
+          id: item.id + '-v' + nextVer,
+          entryId: item.id,
+          versionNumber: nextVer,
+          title: title,
+          content: content,
+          changeNote: '手机端编辑保存',
+          createdAt: now
+        });
+      }
+    }
+  } else {
+    const newId = 'mob-' + Date.now();
+    store.entries.unshift({
+      id: newId,
+      projectId: projectId,
+      title: title,
+      content: content,
+      type: type,
+      isPinned: false,
+      isCompleted: false,
+      sortOrder: 0,
+      useCount: 0,
+      lastUsedAt: null,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+      sourceEntryId: null,
+      tags: tags
+    });
+    store.versions.push({
+      id: newId + '-v1',
+      entryId: newId,
+      versionNumber: 1,
+      title: title,
+      content: content,
+      changeNote: '手机端创建',
+      createdAt: now
+    });
+  }
+
+  persistStore();
+  closeModals();
+  render();
+  showToast('已保存');
+}
+
+function togglePinCurrentEntry() {
+  if (!editingEntryId) return;
+  const item = (store.entries || []).find(e => e.id === editingEntryId);
+  if (!item) return;
+  item.isPinned = !(item.isPinned || item.is_pinned);
+  item.updatedAt = new Date().toISOString();
+  persistStore();
+  closeModals();
+  render();
+  showToast(item.isPinned ? '已置顶' : '已取消置顶');
+}
+
+function deleteCurrentEntry() {
+  if (!editingEntryId) return;
+  const item = (store.entries || []).find(e => e.id === editingEntryId);
+  if (!item) return;
+  item.deletedAt = new Date().toISOString();
+  item.updatedAt = item.deletedAt;
+  persistStore();
+  closeModals();
+  render();
+  showToast('已删除词条');
+}
+
+function openSettingsSheet() {
+  let ep = '';
+  let tk = '';
+  if (window.AndroidBridge && AndroidBridge.getEndpoint) {
+    ep = AndroidBridge.getEndpoint() || '';
+    tk = AndroidBridge.getApiKey() || '';
+  } else {
+    ep = localStorage.getItem('promptpanel_cloud_endpoint') || '';
+    tk = localStorage.getItem('promptpanel_cloud_api_key') || '';
+  }
+  document.getElementById('syncEndpoint').value = ep;
+  document.getElementById('syncToken').value = tk;
+  document.getElementById('settingsModal').classList.add('open');
+}
+
+function saveSyncSettings() {
+  const ep = (document.getElementById('syncEndpoint').value || '').trim();
+  const tk = (document.getElementById('syncToken').value || '').trim();
+  if (window.AndroidBridge && AndroidBridge.saveSettings) {
+    AndroidBridge.saveSettings(ep, tk);
+  }
+  localStorage.setItem('promptpanel_cloud_endpoint', ep);
+  localStorage.setItem('promptpanel_cloud_api_key', tk);
+  showToast('同步配置已保存');
+}
+
+function createNewGroup() {
+  const name = (document.getElementById('newGroupName').value || '').trim();
+  const kind = document.getElementById('newGroupKind').value || 'project';
+  if (!name) {
+    showToast('请输入名称');
+    return;
+  }
+  const now = new Date().toISOString();
+  const newProj = {
+    id: 'grp-' + Date.now(),
+    name: name,
+    isDefault: false,
+    groupKindRaw: kind,
+    isArchived: false,
+    iconName: kind === 'category' ? 'square.grid.2x2' : 'folder',
+    sortOrder: store.projects.length,
+    createdAt: now,
+    updatedAt: now,
+    deletedAt: null
+  };
+  store.projects.push(newProj);
+  persistStore();
+  document.getElementById('newGroupName').value = '';
+  selectedGroupId = newProj.id;
+  switchTab(kind === 'category' ? 1 : 2);
+  closeModals();
+  showToast('已创建：' + name);
+}
+
+function mergeRemoteEnvelope(remote) {
+  if (!remote || typeof remote !== 'object') return;
+  for (const rp of (remote.projects || [])) {
+    const idx = store.projects.findIndex(p => p.id === rp.id);
+    if (idx >= 0) {
+      if (new Date(rp.updatedAt || rp.updated_at) > new Date(store.projects[idx].updatedAt || store.projects[idx].updated_at)) {
+        store.projects[idx] = rp;
+      }
+    } else {
+      store.projects.push(rp);
+    }
+  }
+  for (const re of (remote.entries || [])) {
+    const idx = store.entries.findIndex(e => e.id === re.id);
+    if (idx >= 0) {
+      const local = store.entries[idx];
+      if (new Date(re.updatedAt || re.updated_at) > new Date(local.updatedAt || local.updated_at)) {
+        if (local.content !== re.content || local.title !== re.title) {
+          const vers = versionsForEntry(local.id);
+          const maxVer = vers.length > 0 ? (vers[0].versionNumber || 1) : 0;
+          store.versions.push({
+            id: local.id + '-conflict-' + Date.now(),
+            entryId: local.id,
+            versionNumber: maxVer + 1,
+            title: local.title,
+            content: local.content,
+            changeNote: '云端同步冲突自动留存手机本地版本',
+            createdAt: local.updatedAt || new Date().toISOString()
+          });
+        }
+        store.entries[idx] = re;
+      }
+    } else {
+      store.entries.push(re);
+    }
+  }
+  for (const rv of (remote.versions || [])) {
+    const rvEntryId = rv.entryId || rv.entry_id;
+    const rvNum = rv.versionNumber || rv.version_number;
+    const exists = store.versions.some(v =>
+      v.id === rv.id || ((v.entryId || v.entry_id) === rvEntryId && (v.versionNumber || v.version_number) === rvNum)
+    );
+    if (!exists) store.versions.push(rv);
+  }
+}
+
+function triggerCloudSync() {
+  let ep = '';
+  let tk = '';
+  if (window.AndroidBridge && AndroidBridge.getEndpoint) {
+    ep = AndroidBridge.getEndpoint() || '';
+    tk = AndroidBridge.getApiKey() || '';
+  } else {
+    ep = localStorage.getItem('promptpanel_cloud_endpoint') || '';
+    tk = localStorage.getItem('promptpanel_cloud_api_key') || '';
+  }
+  if (!ep) {
+    openSettingsSheet();
+    showToast('请先填写云端同步地址');
+    return;
+  }
+  showToast('正在同步...');
+  setTimeout(() => {
+    try {
+      if (window.AndroidBridge && AndroidBridge.httpRequest) {
+        const getRes = AndroidBridge.httpRequest('GET', ep, tk, '');
+        const nl = getRes.indexOf('\n');
+        const getCode = parseInt(getRes.slice(0, nl), 10);
+        const getBody = getRes.slice(nl + 1).trim();
+        if (getCode >= 200 && getCode < 300 && getBody) {
+          mergeRemoteEnvelope(JSON.parse(getBody));
+        }
+        persistStore();
+        const postRes = AndroidBridge.httpRequest('POST', ep, tk, JSON.stringify(store));
+        const pnl = postRes.indexOf('\n');
+        const postCode = parseInt(postRes.slice(0, pnl), 10);
+        if (postCode >= 200 && postCode < 300) {
+          const msg = '同步成功 · ' + new Date().toLocaleTimeString();
+          document.getElementById('syncStatusText').textContent = msg;
+          showToast(msg);
+          render();
+        } else {
+          showToast('同步失败 (HTTP ' + postCode + ')');
+        }
+      } else {
+        showToast('请在 Android 客户端内执行同步');
+      }
+    } catch (e) {
+      showToast('同步异常: ' + e.message);
+    }
+  }, 50);
+}
+
+function closeModals() {
+  document.getElementById('editorModal').classList.remove('open');
+  document.getElementById('settingsModal').classList.remove('open');
+}
+
+window.__handleBackPress = function() {
+  if (document.getElementById('editorModal').classList.contains('open') ||
+      document.getElementById('settingsModal').classList.contains('open')) {
+    closeModals();
+    return true;
+  }
+  return false;
+};
+
+function escapeHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+loadStore();
+render();
+</script>
+</body>
+</html>
