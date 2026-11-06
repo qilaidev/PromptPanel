@@ -5,6 +5,8 @@ import GRDB
 
 #if canImport(XCTest)
 import XCTest
+#elseif canImport(Testing)
+import Testing
 #endif
 
 private struct TestAssertionError: LocalizedError {
@@ -75,9 +77,21 @@ private final class StubPermissionService: AccessibilityPermissionProviding {
     func refresh() {}
 }
 
+@_cdecl("run_promptpanel_core_tests")
 @MainActor
-private enum CoreTestSuite {
-    static func runAll() throws {
+public func runPromptPanelCoreTestsFromC() -> Int32 {
+    do {
+        try CoreTestSuite.runAll()
+        return 0
+    } catch {
+        fputs("Test failure: \(error.localizedDescription)\n", stderr)
+        return 1
+    }
+}
+
+@MainActor
+public enum CoreTestSuite {
+    public static func runAll() throws {
         try verifyDatabaseAndMigrations()
         try verifyProjectAndEntryRepositories()
         try verifySearchAndRanking()
@@ -88,6 +102,8 @@ private enum CoreTestSuite {
         try verifyTransferAndStorageMaintenance()
         try verifyLibraryJSONImportRollback()
         try verifyManualBackupRetention()
+        try verifyWorkspaceKindsArchiveVersionsAndCloning()
+        try verifyReferenceWindowAndCloudSyncConflictPreservation()
     }
 
     private static func makeTempDatabaseURL() -> URL {
@@ -247,6 +263,9 @@ private enum CoreTestSuite {
 
             let tagOnlySearchResults = try entryRepo.searchAll(query: "", tag: "ops")
             try check(tagOnlySearchResults.map(\.id) == [globalPinned.id])
+
+            let caseInsensitiveTagResults = try entryRepo.searchAll(query: "", tag: "OPS")
+            try check(caseInsensitiveTagResults.map(\.id) == [globalPinned.id])
 
             let parsed = QuickPanelViewModel.extractTagFilter(from: "#deploy   hotfix  ")
             try check(parsed.cleanedQuery == "hotfix")
@@ -598,6 +617,223 @@ private enum CoreTestSuite {
             try check(snapshot.latestBackupURL != nil)
         }
     }
+
+    static func verifyWorkspaceKindsArchiveVersionsAndCloning() throws {
+        try withTempDatabase { manager, _ in
+            let projectRepo = ProjectRepository(dbQueue: manager.dbQueue)
+            let entryRepo = EntryRepository(dbQueue: manager.dbQueue)
+
+            let defaultProject = try unwrap(projectRepo.fetchDefault())
+            try check(defaultProject.groupKind == .category)
+            try check(defaultProject.isSystemProtected)
+
+            let inboxProject = try unwrap(projectRepo.fetchInbox())
+            try check(inboxProject.groupKind == .inbox)
+            try check(inboxProject.name == Constants.inboxProjectName)
+            try check(inboxProject.isSystemProtected)
+
+            // Create a reusable category and an active project
+            let videoCategory = Project(name: "视频制作", groupKind: .category)
+            let clientProject = Project(name: "客户端重构项目", groupKind: .project)
+            try projectRepo.create(videoCategory)
+            try projectRepo.create(clientProject)
+
+            // Archive and unarchive project
+            try projectRepo.setArchived(id: clientProject.id, isArchived: true)
+            let activeOnly = try projectRepo.fetchAll(includeArchived: false)
+            try check(!activeOnly.contains(where: { $0.id == clientProject.id }))
+            let allWithArchived = try projectRepo.fetchAll(includeArchived: true)
+            try check(allWithArchived.first(where: { $0.id == clientProject.id })?.isArchived == true)
+
+            try projectRepo.setArchived(id: clientProject.id, isArchived: false)
+            try check(try projectRepo.fetchById(clientProject.id)?.isArchived == false)
+
+            // Version history lifecycle: v1 -> v2 -> restore v1 (creates v3)
+            var prompt = Entry(
+                projectId: videoCategory.id,
+                title: "分镜生成提示词 v1",
+                content: "请生成 5 个镜头的分镜脚本",
+                type: Constants.EntryType.prompt.rawValue
+            )
+            try entryRepo.create(prompt)
+
+            var versions = try entryRepo.fetchVersions(forEntryId: prompt.id)
+            try check(versions.count == 1)
+            try check(versions.first?.versionNumber == 1)
+
+            prompt.title = "分镜生成提示词 v2"
+            prompt.content = "请生成 8 个镜头的电影感分镜脚本，包含运镜说明"
+            try entryRepo.update(prompt, changeNote: "扩充镜头要求")
+
+            versions = try entryRepo.fetchVersions(forEntryId: prompt.id)
+            try check(versions.count == 2)
+            try check(versions.first?.versionNumber == 2)
+            try check(versions.first?.changeNote == "扩充镜头要求")
+
+            let v1 = try unwrap(versions.last)
+            let restored = try entryRepo.restoreVersion(versionId: v1.id)
+            try check(restored.title == "分镜生成提示词 v1")
+            try check(restored.content == "请生成 5 个镜头的分镜脚本")
+
+            versions = try entryRepo.fetchVersions(forEntryId: prompt.id)
+            try check(versions.count == 3)
+            try check(versions.first?.versionNumber == 3)
+
+            // Clone from reusable category into a specific project
+            let cloned = try entryRepo.cloneEntry(id: prompt.id, toProjectId: clientProject.id)
+            try check(cloned.projectId == clientProject.id)
+            try check(cloned.sourceEntryId == prompt.id)
+            try check(cloned.content == restored.content)
+            let clonedVersions = try entryRepo.fetchVersions(forEntryId: cloned.id)
+            try check(clonedVersions.count == 1)
+
+            // Todo completion state in Inbox without polluting version history
+            let todoEntry = Entry(
+                projectId: inboxProject.id,
+                title: "整理手机端云同步字段",
+                content: "待办：确认软删除与版本冲突合并策略",
+                type: Constants.EntryType.todo.rawValue
+            )
+            try entryRepo.create(todoEntry)
+            try entryRepo.setCompleted(id: todoEntry.id, isCompleted: true)
+            let updatedTodo = try unwrap(entryRepo.fetchById(todoEntry.id))
+            try check(updatedTodo.isCompleted)
+            try check(try entryRepo.fetchVersions(forEntryId: todoEntry.id).count == 1)
+        }
+    }
+
+    static func verifyReferenceWindowAndCloudSyncConflictPreservation() throws {
+        // 1. Verify Cmd+Shift+N resolves to .openReferenceWindow
+        let cmdShiftN = MainWindowViewModel.mainWindowKeyCommand(
+            modifierFlags: [.command, .shift],
+            charactersIgnoringModifiers: "N"
+        )
+        try check(cmdShiftN == .openReferenceWindow)
+
+        // 2. Verify CloudSyncService bidirectional sync & Conflict-to-Version-History preservation
+        try withTempDatabase { macManager, macDBURL in
+            try withTempDatabase { mobileSimManager, _ in
+                let macProjectRepo = ProjectRepository(dbQueue: macManager.dbQueue)
+                let macEntryRepo = EntryRepository(dbQueue: macManager.dbQueue)
+                let macSyncService = CloudSyncService(dbQueue: macManager.dbQueue)
+
+                let mobileEntryRepo = EntryRepository(dbQueue: mobileSimManager.dbQueue)
+                let mobileSyncService = CloudSyncService(dbQueue: mobileSimManager.dbQueue)
+
+                let devCategory = Project(id: "cat-dev", name: "开发类", groupKind: .category)
+                try macProjectRepo.create(devCategory)
+
+                let sharedEntryId = "shared-entry-1"
+                let baseDate = Date(timeIntervalSince1970: 1_710_000_000)
+                let macInitialEntry = Entry(
+                    id: sharedEntryId,
+                    projectId: devCategory.id,
+                    title: "Swift 并发检查清单",
+                    content: "Mac 初始版本内容：检查 Sendable 与 MainActor",
+                    type: Constants.EntryType.prompt.rawValue,
+                    useCount: 3,
+                    lastUsedAt: baseDate,
+                    createdAt: baseDate,
+                    updatedAt: baseDate
+                )
+                try macEntryRepo.create(macInitialEntry, changeNote: "Mac 初始创建")
+
+                let sharedSyncFileURL = macDBURL
+                    .deletingLastPathComponent()
+                    .appendingPathComponent("PromptPanel-SharedSync.json")
+
+                // Step A: Mac syncs to shared file
+                let initialMacSync = try macSyncService.syncNow(
+                    endpoint: sharedSyncFileURL.path,
+                    apiKey: ""
+                )
+                try check(FileManager.default.fileExists(atPath: sharedSyncFileURL.path))
+                try check(initialMacSync.conflictsPreservedInVersions == 0)
+
+                // Step B: Mobile pulls from shared file, then edits the same entry with a newer timestamp,
+                // while Mac ALSO edits the same entry locally before syncing!
+                _ = try mobileSyncService.syncNow(endpoint: sharedSyncFileURL.path, apiKey: "")
+                var mobileEdited = try unwrap(mobileEntryRepo.fetchById(sharedEntryId))
+                mobileEdited.content = "手机端修改后的新内容：增加 CloudSync 冲突自动留存测试"
+                mobileEdited.useCount = 5
+                mobileEdited.updatedAt = baseDate.addingTimeInterval(300)
+                try mobileEntryRepo.update(mobileEdited, changeNote: "手机端修改")
+
+                // Mobile pushes its newer edit to shared file
+                _ = try mobileSyncService.syncNow(endpoint: sharedSyncFileURL.path, apiKey: "")
+
+                // Meanwhile on Mac, the user had made an offline local edit at +100s (older than mobile's +300s)
+                var macOfflineEdited = try unwrap(macEntryRepo.fetchById(sharedEntryId))
+                macOfflineEdited.content = "Mac 离线期间修改的本地内容（不应丢失）"
+                macOfflineEdited.updatedAt = baseDate.addingTimeInterval(100)
+                try macManager.dbQueue.write { db in
+                    // Simulate un-snapshotted or local divergent state before sync
+                    try macOfflineEdited.update(db)
+                }
+
+                // Step C: Mac syncs with shared file -> Mobile's +300s wins as current Entry,
+                // AND Mac's +100s content is automatically preserved in entry_versions!
+                let conflictSyncSummary = try macSyncService.syncNow(
+                    endpoint: sharedSyncFileURL.path,
+                    apiKey: ""
+                )
+                try check(conflictSyncSummary.entriesUpdated == 1)
+                try check(conflictSyncSummary.conflictsPreservedInVersions == 1)
+
+                let finalMacEntry = try unwrap(macEntryRepo.fetchById(sharedEntryId))
+                try check(finalMacEntry.content == "手机端修改后的新内容：增加 CloudSync 冲突自动留存测试")
+                try check(finalMacEntry.useCount == 5)
+
+                let allMacVersions = try macEntryRepo.fetchVersions(forEntryId: sharedEntryId)
+                try check(allMacVersions.contains(where: { $0.content == "Mac 离线期间修改的本地内容（不应丢失）" }))
+                try check(allMacVersions.contains(where: { $0.content == "手机端修改后的新内容：增加 CloudSync 冲突自动留存测试" }))
+
+                // Step D: Verify camelCase + fractional-seconds payload from Mobile/Python server decodes & preserves older incoming conflict
+                let mobileCamelJSON = """
+                {
+                  "schemaVersion": 2,
+                  "deviceId": "mobile-flutter-test",
+                  "exportedAt": "2024-03-09T16:10:00.123456Z",
+                  "projects": [
+                    {
+                      "id": "cat-dev",
+                      "name": "开发类",
+                      "isDefault": false,
+                      "groupKindRaw": "category",
+                      "isArchived": false,
+                      "createdAt": "2024-03-09T16:00:00.000Z",
+                      "updatedAt": "2024-03-09T16:00:00.000Z"
+                    }
+                  ],
+                  "entries": [
+                    {
+                      "id": "shared-entry-1",
+                      "projectId": "cat-dev",
+                      "title": "Swift 并发检查清单",
+                      "content": "另一台手机在稍早时间点的离线修改版本（同样不应丢失）",
+                      "type": "prompt",
+                      "isPinned": false,
+                      "isCompleted": true,
+                      "sortOrder": 0,
+                      "useCount": 9,
+                      "lastUsedAt": "2024-03-09T16:03:00.500Z",
+                      "createdAt": "2024-03-09T16:00:00.000Z",
+                      "updatedAt": "2024-03-09T16:02:00.250Z",
+                      "tags": ["swift", "concurrency"]
+                    }
+                  ],
+                  "versions": []
+                }
+                """.data(using: .utf8)!
+                let decodedMobileEnvelope = try CloudSyncService.makeDecoder().decode(CloudSyncEnvelope.self, from: mobileCamelJSON)
+                let camelMergeSummary = try macSyncService.mergeRemoteEnvelope(decodedMobileEnvelope)
+                try check(camelMergeSummary.conflictsPreservedInVersions == 1)
+                let versionsAfterCamelMerge = try macEntryRepo.fetchVersions(forEntryId: sharedEntryId)
+                try check(versionsAfterCamelMerge.contains(where: { $0.content == "另一台手机在稍早时间点的离线修改版本（同样不应丢失）" }))
+                try check(try unwrap(macEntryRepo.fetchById(sharedEntryId)).useCount == 9)
+            }
+        }
+    }
 }
 
 #if canImport(XCTest)
@@ -641,6 +877,14 @@ final class PromptPanelTests: XCTestCase {
 
     func testStorageMaintenanceKeepsManualBackupsBeyondAutomaticRetention() throws {
         try CoreTestSuite.verifyManualBackupRetention()
+    }
+
+    func testWorkspaceKindsArchiveVersionsAndCloning() throws {
+        try CoreTestSuite.verifyWorkspaceKindsArchiveVersionsAndCloning()
+    }
+
+    func testReferenceWindowAndCloudSyncConflictPreservation() throws {
+        try CoreTestSuite.verifyReferenceWindowAndCloudSyncConflictPreservation()
     }
 }
 #else
