@@ -13,19 +13,16 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: zsh {0}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Ensure sqlite3 is available
+      - name: Install zsh and sqlite3
+        if: runner.os == 'Linux'
         run: |
-          if ! command -v sqlite3 >/dev/null 2>&1; then
-            sudo apt-get update && sudo apt-get install -y sqlite3
-          fi
+          sudo apt-get update
+          sudo apt-get install -y zsh sqlite3
 
       - name: Validate shell scripts
         run: |
@@ -37,7 +34,7 @@ jobs:
           zsh -n mobile/build-android.sh
 
       - name: Validate documentation consistency
-        run: scripts/check-docs.sh
+        run: zsh scripts/check-docs.sh
 
       - name: Restore script validates safe targets and rejects invalid backups
         run: |
@@ -59,9 +56,9 @@ jobs:
           '
           sqlite3 "$bad_backup" 'CREATE TABLE unrelated (id INTEGER PRIMARY KEY);'
 
-          scripts/restore-backup.sh --dry-run --target-dir "$restore_target" "$valid_backup"
+          zsh scripts/restore-backup.sh --dry-run --target-dir "$restore_target" "$valid_backup"
 
-          if scripts/restore-backup.sh --dry-run --target-dir "$restore_target" "$bad_backup"; then
+          if zsh scripts/restore-backup.sh --dry-run --target-dir "$restore_target" "$bad_backup"; then
             echo "restore-backup.sh unexpectedly accepted an invalid backup" >&2
             exit 1
           fi
@@ -72,4 +69,4 @@ jobs:
 
       - name: Run formal release-readiness gate on macOS runner
         if: runner.os == 'macOS'
-        run: scripts/release-readiness.sh --output-dir "$RUNNER_TEMP/promptpanel-release"
+        run: zsh scripts/release-readiness.sh --output-dir "$RUNNER_TEMP/promptpanel-release"
