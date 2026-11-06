@@ -657,7 +657,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 backing: .buffered,
                 defer: false
             )
-            window.title = "\(Constants.appName) · 双窗参考与剪贴板装配台"
+            window.title = "\(Constants.appName) · 参考词库"
             window.contentMinSize = NSSize(width: 500, height: 520)
             if let mainFrame = mainWindow?.frame {
                 let targetOrigin = NSPoint(x: mainFrame.maxX + 16, y: mainFrame.minY + 40)

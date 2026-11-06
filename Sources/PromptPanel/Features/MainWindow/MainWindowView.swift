@@ -102,45 +102,49 @@ struct MainWindowView: View {
             segmentedControl
 
             HStack(alignment: .center, spacing: 8) {
-                Menu {
-                    ForEach(viewModel.activeProjects) { project in
-                        Button {
-                            viewModel.setCurrentProject(project.id)
-                        } label: {
-                            if project.id == viewModel.currentProjectId {
-                                Label(project.name, systemImage: "checkmark")
-                            } else {
-                                Text(project.name)
-                            }
-                        }
-                    }
-                } label: {
-                    Label("当前面板：\(viewModel.projectName(for: viewModel.currentProjectId))", systemImage: "scope")
+                HStack(spacing: 5) {
+                    Image(systemName: "scope")
+                        .font(.icon(.micro, weight: .semibold))
+                        .foregroundStyle(Constants.VisualStyle.accent)
+                    Text("当前面板：\(viewModel.projectName(for: viewModel.currentProjectId))")
                         .font(.ui(.caption, weight: .medium))
+                        .foregroundStyle(Constants.VisualStyle.textSecondary)
                         .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.icon(.micro, weight: .semibold))
+                        .foregroundStyle(Constants.VisualStyle.textTertiary)
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .tint(Constants.VisualStyle.textSecondary)
-                .fixedSize()
-                .padding(.leading, 7)
-                .padding(.trailing, 18)
+                .padding(.horizontal, 8)
                 .frame(height: 24)
                 .background(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(Constants.VisualStyle.tintSubtle)
                 )
-                .overlay(alignment: .trailing) {
-                    Image(systemName: "chevron.down")
-                        .font(.icon(.micro, weight: .semibold))
-                        .foregroundStyle(Constants.VisualStyle.textTertiary)
-                        .padding(.trailing, 6)
-                        .allowsHitTesting(false)
-                }
                 .overlay(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
                 )
+                .overlay {
+                    Menu {
+                        ForEach(viewModel.activeProjects) { project in
+                            Button {
+                                viewModel.setCurrentProject(project.id)
+                            } label: {
+                                if project.id == viewModel.currentProjectId {
+                                    Label(project.name, systemImage: "checkmark")
+                                } else {
+                                    Text(project.name)
+                                }
+                            }
+                        }
+                    } label: {
+                        Color.clear
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .opacity(0.02)
+                }
+                .clipped()
                 .help("切换快捷面板默认绑定的项目")
 
                 Spacer(minLength: 0)

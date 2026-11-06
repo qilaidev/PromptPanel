@@ -1209,7 +1209,7 @@ final class MainWindowViewModel: ObservableObject {
         saveCloudSyncSettings()
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(token, forType: .string)
-        bannerMessage = "已生成专属隔离 Token 并复制到剪贴板。"
+        bannerMessage = "已生成 Token 并复制到剪贴板。"
     }
 
     func copyMobileSyncBundleToClipboard() {
@@ -1226,7 +1226,7 @@ final class MainWindowViewModel: ObservableObject {
            let text = String(data: data, encoding: .utf8) {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
-            bannerMessage = "已复制手机端同步配置（Endpoint + Token），可直接发送至手机端。"
+            bannerMessage = "已复制手机端同步配置。"
         }
     }
 
@@ -1234,7 +1234,7 @@ final class MainWindowViewModel: ObservableObject {
         let command = "cd server && sudo PP_SYNC_PORT=18787 ./deploy-systemd.sh"
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(command, forType: .string)
-        bannerMessage = "已复制开源服务端一键部署命令：\(command)"
+        bannerMessage = "已复制部署命令：\(command)"
     }
 
     func testCloudSyncConnection() {

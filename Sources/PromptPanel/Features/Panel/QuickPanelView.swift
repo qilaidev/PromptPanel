@@ -307,29 +307,18 @@ struct QuickPanelView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: Design.Space.xs) {
-            Text(emptyStateTitle)
-                .font(.ui(.title))
-                .foregroundStyle(Constants.VisualStyle.textTertiary)
-            Text(emptyStateSubtitle)
-                .font(.ui(.caption))
-                .foregroundStyle(Constants.VisualStyle.textQuaternary)
-        }
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity, minHeight: 60)
-        .padding(.vertical, Design.Space.xl)
+        Text(emptyStateTitle)
+            .font(.ui(.title))
+            .foregroundStyle(Constants.VisualStyle.textTertiary)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity, minHeight: 60)
+            .padding(.vertical, Design.Space.xl)
     }
 
     private var emptyStateTitle: String {
         viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "当前没有可执行词条"
-            : "没有匹配的词条"
-    }
-
-    private var emptyStateSubtitle: String {
-        viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "去主界面补充词条后，这里会立刻可搜可用。"
-            : "换个关键词，或在主界面补充更容易命中的标题和内容。"
+            ? "当前分组暂无词条"
+            : "无匹配词条"
     }
 
     private func shouldShowDefaultBadge(for entry: Entry) -> Bool {

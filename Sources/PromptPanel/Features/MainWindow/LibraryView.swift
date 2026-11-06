@@ -8,13 +8,13 @@ struct LibraryView: View {
     var body: some View {
         HStack(spacing: 0) {
             projectsColumn
-                .frame(width: 210)
+                .frame(width: 196)
                 .background(Constants.VisualStyle.sidebar)
 
             verticalDivider
 
             entriesColumn
-                .frame(width: 326)
+                .frame(width: 312)
                 .background(Constants.VisualStyle.surface)
 
             verticalDivider
@@ -347,20 +347,16 @@ struct LibraryView: View {
 
             Spacer(minLength: 0)
 
-            Menu {
-                ForEach(MainWindowViewModel.EntrySortMode.allCases) { mode in
-                    Button(mode.title) {
-                        viewModel.entrySortMode = mode
-                    }
-                }
-            } label: {
-                Label(viewModel.entrySortMode.title, systemImage: "arrow.up.arrow.down")
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.icon(.micro, weight: .medium))
+                Text(viewModel.entrySortMode.title)
                     .font(.ui(.caption, weight: .medium))
+                Image(systemName: "chevron.down")
+                    .font(.icon(.micro))
+                    .foregroundStyle(Constants.VisualStyle.textTertiary)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .tint(Constants.VisualStyle.textSecondary)
-            .fixedSize()
+            .foregroundStyle(Constants.VisualStyle.textSecondary)
             .padding(.horizontal, 7)
             .frame(height: 22)
             .background(
@@ -371,6 +367,21 @@ struct LibraryView: View {
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
                     .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
             )
+            .overlay {
+                Menu {
+                    ForEach(MainWindowViewModel.EntrySortMode.allCases) { mode in
+                        Button(mode.title) {
+                            viewModel.entrySortMode = mode
+                        }
+                    }
+                } label: {
+                    Color.clear
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .opacity(0.02)
+            }
+            .clipped()
 
             HStack(spacing: 4) {
                 Button {
@@ -397,54 +408,58 @@ struct LibraryView: View {
                 .buttonStyle(.plain)
                 .help("新建词条 (⌘N)")
 
-                Menu {
-                    Button {
-                        viewModel.startCreateEntry()
-                    } label: {
-                        Label("新建词条 (⌘N)", systemImage: "square.and.pencil")
-                    }
+                Image(systemName: "doc.on.clipboard")
+                    .font(.icon(.micro, weight: .medium))
+                    .foregroundStyle(Constants.VisualStyle.textSecondary)
+                    .frame(width: 24, height: 22)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(Constants.VisualStyle.tintSubtle)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
+                    )
+                    .overlay {
+                        Menu {
+                            Button {
+                                viewModel.startCreateEntry()
+                            } label: {
+                                Label("新建词条 (⌘N)", systemImage: "square.and.pencil")
+                            }
 
-                    let targetId = viewModel.selectedProjectId == MainWindowViewModel.allProjectsSelection
-                        ? viewModel.currentProjectId
-                        : viewModel.selectedProjectId
+                            let targetId = viewModel.selectedProjectId == MainWindowViewModel.allProjectsSelection
+                                ? viewModel.currentProjectId
+                                : viewModel.selectedProjectId
 
-                    Button {
-                        viewModel.createQuickEntryFromClipboard(intoProjectId: targetId, type: .prompt)
-                    } label: {
-                        Label("从剪贴板直接存为提示词", systemImage: "doc.on.clipboard")
-                    }
+                            Button {
+                                viewModel.createQuickEntryFromClipboard(intoProjectId: targetId, type: .prompt)
+                            } label: {
+                                Label("从剪贴板直接存为提示词", systemImage: "doc.on.clipboard")
+                            }
 
-                    if let inbox = viewModel.inboxProject {
-                        Divider()
-                        Button {
-                            viewModel.createQuickEntryFromClipboard(intoProjectId: inbox.id, type: .todo)
+                            if let inbox = viewModel.inboxProject {
+                                Divider()
+                                Button {
+                                    viewModel.createQuickEntryFromClipboard(intoProjectId: inbox.id, type: .todo)
+                                } label: {
+                                    Label("从剪贴板存为待办事项", systemImage: "checklist")
+                                }
+                                Button {
+                                    viewModel.createQuickEntryFromClipboard(intoProjectId: inbox.id, type: .note)
+                                } label: {
+                                    Label("从剪贴板存为临时记录", systemImage: "note.text")
+                                }
+                            }
                         } label: {
-                            Label("从剪贴板存为待办事项", systemImage: "checklist")
+                            Color.clear
                         }
-                        Button {
-                            viewModel.createQuickEntryFromClipboard(intoProjectId: inbox.id, type: .note)
-                        } label: {
-                            Label("从剪贴板存为临时记录", systemImage: "note.text")
-                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .opacity(0.02)
                     }
-                } label: {
-                    Image(systemName: "doc.on.clipboard")
-                        .font(.icon(.micro, weight: .medium))
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .tint(Constants.VisualStyle.textSecondary)
-                .fixedSize()
-                .frame(width: 24, height: 22)
-                .background(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(Constants.VisualStyle.tintSubtle)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
-                )
-                .help("从系统剪贴板快速新建词条或待办")
+                    .clipped()
+                    .help("从系统剪贴板快速新建词条或待办")
             }
         }
         .padding(.horizontal, 10)
@@ -842,79 +857,90 @@ private struct PreviewPane: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 5) {
                     // Group / Category Pill Menu
-                    Menu {
-                        ForEach(viewModel.projects) { project in
-                            Button {
-                                viewModel.inlineDraftProjectId = project.id
-                            } label: {
-                                Label(project.name, systemImage: project.effectiveIconName)
-                            }
-                        }
-                    } label: {
-                        Label(viewModel.projectName(for: viewModel.inlineDraftProjectId), systemImage: "folder")
+                    HStack(spacing: 4) {
+                        Image(systemName: "folder")
+                            .font(.icon(.micro, weight: .semibold))
+                            .foregroundStyle(Constants.VisualStyle.accent)
+                        Text(viewModel.projectName(for: viewModel.inlineDraftProjectId))
                             .font(.ui(.caption, weight: .medium))
+                            .foregroundStyle(Constants.VisualStyle.text)
                             .lineLimit(1)
+                            .truncationMode(.tail)
+                        Image(systemName: "chevron.down")
+                            .font(.icon(.micro))
+                            .foregroundStyle(Constants.VisualStyle.textTertiary)
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .tint(Constants.VisualStyle.text)
-                    .fixedSize()
-                    .padding(.leading, 7)
-                    .padding(.trailing, 18)
+                    .padding(.horizontal, 8)
                     .frame(height: 24)
+                    .fixedSize()
                     .background(
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .fill(Constants.VisualStyle.surfaceRaised)
                     )
-                    .overlay(alignment: .trailing) {
-                        Image(systemName: "chevron.down")
-                            .font(.icon(.micro))
-                            .foregroundStyle(Constants.VisualStyle.textTertiary)
-                            .padding(.trailing, 6)
-                            .allowsHitTesting(false)
-                    }
                     .overlay(
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
                     )
+                    .overlay {
+                        Menu {
+                            ForEach(viewModel.projects) { project in
+                                Button {
+                                    viewModel.inlineDraftProjectId = project.id
+                                } label: {
+                                    Label(project.name, systemImage: project.effectiveIconName)
+                                }
+                            }
+                        } label: {
+                            Color.clear
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .opacity(0.02)
+                    }
+                    .clipped()
                     .help("归属分组")
 
                     // Entry Type Pill Menu
-                    Menu {
-                        ForEach(Constants.EntryType.allCases, id: \.rawValue) { kind in
-                            Button {
-                                viewModel.inlineDraftType = kind.rawValue
-                            } label: {
-                                Label(kind.displayName, systemImage: kind.symbolName)
-                            }
-                        }
-                    } label: {
-                        Label(currentKind.displayName, systemImage: currentKind.symbolName)
+                    HStack(spacing: 4) {
+                        Image(systemName: currentKind.symbolName)
+                            .font(.icon(.micro, weight: .semibold))
+                            .foregroundStyle(currentKind.accentColor)
+                        Text(currentKind.displayName)
                             .font(.ui(.caption, weight: .medium))
+                            .foregroundStyle(Constants.VisualStyle.text)
                             .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.icon(.micro))
+                            .foregroundStyle(Constants.VisualStyle.textTertiary)
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .tint(Constants.VisualStyle.text)
-                    .fixedSize()
-                    .padding(.leading, 7)
-                    .padding(.trailing, 18)
+                    .padding(.horizontal, 8)
                     .frame(height: 24)
+                    .fixedSize()
                     .background(
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .fill(Constants.VisualStyle.surfaceRaised)
                     )
-                    .overlay(alignment: .trailing) {
-                        Image(systemName: "chevron.down")
-                            .font(.icon(.micro))
-                            .foregroundStyle(Constants.VisualStyle.textTertiary)
-                            .padding(.trailing, 6)
-                            .allowsHitTesting(false)
-                    }
                     .overlay(
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
                     )
+                    .overlay {
+                        Menu {
+                            ForEach(Constants.EntryType.allCases, id: \.rawValue) { kind in
+                                Button {
+                                    viewModel.inlineDraftType = kind.rawValue
+                                } label: {
+                                    Label(kind.displayName, systemImage: kind.symbolName)
+                                }
+                            }
+                        } label: {
+                            Color.clear
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .opacity(0.02)
+                    }
+                    .clipped()
                     .help("词条类型")
 
                     // Completed Pill Toggle
@@ -1002,31 +1028,17 @@ private struct PreviewPane: View {
                     }
 
                     // Clone to another project menu
-                    Menu {
-                        Section("项目") {
-                            ForEach(viewModel.activeProjects.filter { $0.id != entry.projectId }) { target in
-                                Button(target.name) {
-                                    viewModel.cloneEntry(entry, toProjectId: target.id)
-                                }
-                            }
-                        }
-                        Section("常用类型") {
-                            ForEach(viewModel.categoryProjects.filter { $0.id != entry.projectId }) { target in
-                                Button(target.name) {
-                                    viewModel.cloneEntry(entry, toProjectId: target.id)
-                                }
-                            }
-                        }
-                    } label: {
-                        Label("克隆", systemImage: "plus.square.on.square")
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus.square.on.square")
+                            .font(.icon(.micro, weight: .semibold))
+                            .foregroundStyle(Constants.VisualStyle.textSecondary)
+                        Text("克隆")
                             .font(.ui(.caption, weight: .medium))
+                            .foregroundStyle(Constants.VisualStyle.text)
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .tint(Constants.VisualStyle.text)
-                    .fixedSize()
                     .padding(.horizontal, 8)
                     .frame(height: 24)
+                    .fixedSize()
                     .background(
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .fill(Constants.VisualStyle.surfaceRaised)
@@ -1035,6 +1047,30 @@ private struct PreviewPane: View {
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
                     )
+                    .overlay {
+                        Menu {
+                            Section("项目") {
+                                ForEach(viewModel.activeProjects.filter { $0.id != entry.projectId }) { target in
+                                    Button(target.name) {
+                                        viewModel.cloneEntry(entry, toProjectId: target.id)
+                                    }
+                                }
+                            }
+                            Section("常用类型") {
+                                ForEach(viewModel.categoryProjects.filter { $0.id != entry.projectId }) { target in
+                                    Button(target.name) {
+                                        viewModel.cloneEntry(entry, toProjectId: target.id)
+                                    }
+                                }
+                            }
+                        } label: {
+                            Color.clear
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .opacity(0.02)
+                    }
+                    .clipped()
                     .help("克隆到其他分组")
 
                     Button {

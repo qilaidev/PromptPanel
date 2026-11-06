@@ -1325,7 +1325,7 @@ private struct CloudSyncSection: View {
                 .padding(.top, 2)
                 .disabled(isBusy)
 
-                if isConfigured || viewModel.cloudSyncLastStatus != "尚未同步" {
+                if isConfigured || viewModel.cloudSyncLastStatus != "尚未执行云端同步" {
                     HStack(spacing: 6) {
                         Text(viewModel.cloudSyncConnectionStatus)
                             .font(.ui(.caption, weight: .medium))

@@ -425,7 +425,7 @@ final class QuickPanelViewModel: ObservableObject {
             return
         }
 
-        statusMessage = "当前为仅复制模式，请在系统设置中开启 PromptPanel.app 的辅助功能权限。"
+        statusMessage = "未授权辅助功能，当前仅复制到剪贴板"
         statusTone = .warning
     }
 
