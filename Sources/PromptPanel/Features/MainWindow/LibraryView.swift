@@ -494,6 +494,10 @@ struct LibraryView: View {
                                     viewModel.selectedEntryId = entry.id
                                     viewModel.copyEntryContent(entry)
                                 }
+                                Button("编辑词条 (⌘E)") {
+                                    viewModel.selectedEntryId = entry.id
+                                    viewModel.startEditEntry(entry)
+                                }
                                 Button(entry.isCompleted ? "标记为未完成" : "标记为已完成") {
                                     viewModel.toggleEntryCompleted(entry)
                                 }
@@ -945,7 +949,7 @@ private struct PreviewPane: View {
 
                     // Completed Pill Toggle
                     Button {
-                        viewModel.inlineDraftIsCompleted.toggle()
+                        viewModel.toggleEntryCompleted(entry)
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: viewModel.inlineDraftIsCompleted ? "checkmark.circle.fill" : "circle")
@@ -975,7 +979,7 @@ private struct PreviewPane: View {
 
                     // Pin Pill Toggle
                     Button {
-                        viewModel.inlineDraftIsPinned.toggle()
+                        viewModel.togglePin(entry)
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: viewModel.inlineDraftIsPinned ? "pin.fill" : "pin")

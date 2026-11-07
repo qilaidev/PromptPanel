@@ -126,14 +126,45 @@ struct MainWindowView: View {
                 )
                 .overlay {
                     Menu {
-                        ForEach(viewModel.activeProjects) { project in
+                        if let inbox = viewModel.inboxProject {
                             Button {
-                                viewModel.setCurrentProject(project.id)
+                                viewModel.setCurrentProject(inbox.id)
                             } label: {
-                                if project.id == viewModel.currentProjectId {
-                                    Label(project.name, systemImage: "checkmark")
+                                if inbox.id == viewModel.currentProjectId {
+                                    Label(inbox.name, systemImage: "checkmark")
                                 } else {
-                                    Text(project.name)
+                                    Text(inbox.name)
+                                }
+                            }
+                            Divider()
+                        }
+                        if !viewModel.categoryProjects.isEmpty {
+                            Section("常用类型") {
+                                ForEach(viewModel.categoryProjects) { project in
+                                    Button {
+                                        viewModel.setCurrentProject(project.id)
+                                    } label: {
+                                        if project.id == viewModel.currentProjectId {
+                                            Label(project.name, systemImage: "checkmark")
+                                        } else {
+                                            Text(project.name)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if !viewModel.activeProjects.isEmpty {
+                            Section("具体项目") {
+                                ForEach(viewModel.activeProjects) { project in
+                                    Button {
+                                        viewModel.setCurrentProject(project.id)
+                                    } label: {
+                                        if project.id == viewModel.currentProjectId {
+                                            Label(project.name, systemImage: "checkmark")
+                                        } else {
+                                            Text(project.name)
+                                        }
+                                    }
                                 }
                             }
                         }

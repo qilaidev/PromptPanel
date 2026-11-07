@@ -227,6 +227,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        mainWindowViewModel?.commitPendingInlineChangesIfNeeded()
         hotkeyService?.stop()
         flushPendingPanelGeometryPersistence()
         storageMaintenanceService?.prepareForTermination()
@@ -667,10 +668,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             window.contentView = NSHostingView(rootView: contentView)
             window.isReleasedWhenClosed = false
+            window.delegate = self
             referenceWindow = window
         }
         mainWindowViewModel.refreshClipboardPreview()
         mainWindowViewModel.refreshReferenceEntries()
+        appState.isMainWindowVisible = true
+        updateAppActivationPolicy()
         referenceWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -797,10 +801,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow, window == mainWindow else {
+        guard let window = notification.object as? NSWindow,
+              window == mainWindow || window == referenceWindow else {
             return
         }
-        appState.isMainWindowVisible = false
+        if window == mainWindow {
+            mainWindowViewModel?.commitPendingInlineChangesIfNeeded()
+        }
+        let mainStillVisible = (window != mainWindow) && (mainWindow?.isVisible == true)
+        let refStillVisible = (window != referenceWindow) && (referenceWindow?.isVisible == true)
+        appState.isMainWindowVisible = mainStillVisible || refStillVisible
         // Deferred by one runloop turn: dropping to `.accessory` from inside
         // `windowWillClose` tears the app out of the foreground while AppKit is
         // still finishing the close, which shows up as a stutter and a stray

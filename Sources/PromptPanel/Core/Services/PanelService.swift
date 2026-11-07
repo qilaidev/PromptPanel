@@ -385,7 +385,8 @@ final class PanelService {
     }
 
     private func reactivateTargetApplication() {
-        guard let targetApplication else {
+        guard let targetApplication, !targetApplication.isTerminated else {
+            self.targetApplication = nil
             return
         }
         let currentFrontmostBundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
@@ -396,7 +397,6 @@ final class PanelService {
                 "Skipped target app reactivation because frontmost app already changed to \(currentFrontmostBundleId ?? "unknown")"
             )
         }
-        self.targetApplication = nil
     }
 
     private func observeWorkspaceActivation() {

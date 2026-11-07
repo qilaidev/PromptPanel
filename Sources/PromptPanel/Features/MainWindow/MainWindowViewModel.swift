@@ -129,6 +129,9 @@ final class MainWindowViewModel: ObservableObject {
     @Published var selectedEntryId: String? {
         didSet {
             if selectedEntryId != oldValue {
+                if let oldId = oldValue {
+                    commitPendingInlineChangesIfNeeded(forEntryId: oldId)
+                }
                 refreshSelectedEntryVersions()
                 if let entry = selectedEntry {
                     syncInlineDraft(with: entry, force: true)
@@ -248,6 +251,7 @@ final class MainWindowViewModel: ObservableObject {
     private let statusQueue = DispatchQueue(label: "PromptPanel.main-window.status", qos: .utility)
     private var pendingEntriesRefreshWorkItem: DispatchWorkItem?
     private var entriesRefreshGeneration: Int = 0
+    private var referenceRefreshGeneration: Int = 0
     private var isBatchingEntryFilterUpdate = false
     private var operationalStatusGeneration: Int = 0
     private var hasCompletedInitialLoad = false
@@ -406,7 +410,8 @@ final class MainWindowViewModel: ObservableObject {
             if let kind = entryKindFilter, entry.type != kind {
                 return false
             }
-            if let tag = entryTagFilter, entry.tags.contains(tag) == false {
+            if let tag = entryTagFilter,
+               !entry.tags.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) {
                 return false
             }
             return true
@@ -509,7 +514,27 @@ final class MainWindowViewModel: ObservableObject {
         )
     }
 
+    /// Commits valid unsaved inline draft changes for the specified (or currently active) entry
+    /// so switching selection or closing the window never silently discards user edits.
+    func commitPendingInlineChangesIfNeeded(forEntryId targetId: String? = nil) {
+        let entryId = targetId ?? inlineDraftEntryId
+        guard !entryId.isEmpty,
+              inlineDraftEntryId == entryId,
+              let entry = entries.first(where: { $0.id == entryId }),
+              hasUnsavedInlineChanges(for: entry) else {
+            return
+        }
+        let trimmedTitle = inlineDraftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedContent = inlineDraftContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty, !trimmedContent.isEmpty else {
+            return
+        }
+        _ = commitInlineChanges(for: entry)
+    }
+
     func refreshReferenceEntries() {
+        referenceRefreshGeneration += 1
+        let generation = referenceRefreshGeneration
         let sourceId = referenceSourceProjectId
         let query = referenceSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let entryRepository = self.entryRepository
@@ -521,20 +546,20 @@ final class MainWindowViewModel: ObservableObject {
             } else {
                 allEntries = (try? entryRepository.fetchByProject(sourceId)) ?? []
             }
-            let filtered = allEntries.filter { entry in
-                if sourceId == Self.allProjectsSelection && !categoryIds.isEmpty {
-                    // Show category templates first or all entries when searching
-                    if query.isEmpty {
-                        return true
-                    }
-                }
+            var filtered = allEntries.filter { entry in
                 guard !query.isEmpty else { return true }
                 return entry.title.localizedCaseInsensitiveContains(query)
                     || entry.content.localizedCaseInsensitiveContains(query)
                     || entry.tags.contains(where: { $0.localizedCaseInsensitiveContains(query) })
             }
+            if sourceId == Self.allProjectsSelection && query.isEmpty && !categoryIds.isEmpty {
+                let categoryMatches = filtered.filter { categoryIds.contains($0.projectId) }
+                let otherMatches = filtered.filter { !categoryIds.contains($0.projectId) }
+                filtered = categoryMatches + otherMatches
+            }
             DispatchQueue.main.async { [weak self] in
-                self?.referenceEntries = filtered
+                guard let self, self.referenceRefreshGeneration == generation else { return }
+                self.referenceEntries = filtered
             }
         }
     }
@@ -1286,6 +1311,10 @@ final class MainWindowViewModel: ObservableObject {
         }
         guard !isCloudSyncInFlight else {
             bannerMessage = "云端同步正在进行中，请稍候。"
+            return
+        }
+        guard activeMaintenanceTask == nil else {
+            bannerMessage = "请等待“\(activeMaintenanceTask ?? "当前操作")”结束后再试。"
             return
         }
         saveCloudSyncSettings()
