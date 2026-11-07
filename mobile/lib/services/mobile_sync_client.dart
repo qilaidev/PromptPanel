@@ -161,24 +161,40 @@ class MobileSyncClient {
     if (postResp.statusCode < 200 || postResp.statusCode >= 300) {
       throw Exception('推送失败: HTTP ${postResp.statusCode}');
     }
+    if (postResp.body.isNotEmpty) {
+      final serverMerged = CloudSyncEnvelope.fromJson(
+        jsonDecode(postResp.body) as Map<String, dynamic>,
+      );
+      _mergeRemoteEnvelope(serverMerged);
+    }
     await persistLocal();
     lastSyncMessage = '同步成功 (${DateTime.now().toIso8601String().substring(0, 19)})';
     return lastSyncMessage;
   }
 
   void _mergeRemoteEnvelope(CloudSyncEnvelope remote) {
+    final remappedProjectIds = <String, String>{};
+    final localDefaultIdx = projects.indexWhere((p) => p.isDefault);
+    final localDefaultId = localDefaultIdx >= 0 ? projects[localDefaultIdx].id : null;
+
     for (final remoteProject in remote.projects) {
       final idx = projects.indexWhere((p) => p.id == remoteProject.id);
       if (idx >= 0) {
         if (remoteProject.updatedAt.isAfter(projects[idx].updatedAt)) {
           projects[idx] = remoteProject;
         }
+      } else if (remoteProject.isDefault && localDefaultId != null) {
+        remappedProjectIds[remoteProject.id] = localDefaultId;
       } else {
         projects.add(remoteProject);
       }
     }
 
-    for (final remoteEntry in remote.entries) {
+    for (var remoteEntry in remote.entries) {
+      final mappedProjectId = remappedProjectIds[remoteEntry.projectId];
+      if (mappedProjectId != null) {
+        remoteEntry = remoteEntry.copyWith(projectId: mappedProjectId);
+      }
       final idx = entries.indexWhere((e) => e.id == remoteEntry.id);
       if (idx >= 0) {
         final local = entries[idx];

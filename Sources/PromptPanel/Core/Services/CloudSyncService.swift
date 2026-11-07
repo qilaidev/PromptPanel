@@ -175,6 +175,11 @@ final class CloudSyncService: @unchecked Sendable {
         var conflictsPreserved = 0
 
         try dbQueue.write { db in
+            var remappedProjectIds: [String: String] = [:]
+            let localDefaultProject = try Project
+                .filter(Project.Columns.isDefault == true)
+                .fetchOne(db)
+
             // 1. Merge Projects
             for remoteProject in envelope.projects {
                 if let localProject = try Project.fetchOne(db, key: remoteProject.id) {
@@ -189,37 +194,45 @@ final class CloudSyncService: @unchecked Sendable {
                         try merged.update(db)
                         projectsUpdated += 1
                     }
+                } else if remoteProject.isDefault, let localDefault = localDefaultProject {
+                    remappedProjectIds[remoteProject.id] = localDefault.id
                 } else {
                     try remoteProject.insert(db)
-                    projectsCreated += 1
+                    if remoteProject.deletedAt == nil {
+                        projectsCreated += 1
+                    }
                 }
             }
 
-            // Ensure every remote entry's project exists (fallback to default project if missing)
-            let knownProjectIds = Set(try String.fetchAll(db, sql: "SELECT id FROM projects"))
-            let fallbackProjectId = try Project
-                .filter(Project.Columns.isDefault == true)
-                .fetchOne(db)?.id ?? Constants.inboxProjectId
+            // Ensure every remote entry's project exists (active entries fall back to default project if target was deleted)
+            let allProjectIds = Set(try String.fetchAll(db, sql: "SELECT id FROM projects"))
+            let activeProjectIds = Set(try String.fetchAll(db, sql: "SELECT id FROM projects WHERE deleted_at IS NULL"))
+            let fallbackProjectId = localDefaultProject?.id ?? Constants.inboxProjectId
 
             // 2. Merge Entries with Conflict-to-Version-History protection
             for var remoteEntry in envelope.entries {
-                if !knownProjectIds.contains(remoteEntry.projectId) {
+                if let mappedId = remappedProjectIds[remoteEntry.projectId] {
+                    remoteEntry.projectId = mappedId
+                } else if remoteEntry.deletedAt == nil && !activeProjectIds.contains(remoteEntry.projectId) {
+                    remoteEntry.projectId = fallbackProjectId
+                } else if !allProjectIds.contains(remoteEntry.projectId) {
                     remoteEntry.projectId = fallbackProjectId
                 }
 
                 if let localEntry = try Entry.fetchOne(db, key: remoteEntry.id) {
                     if remoteEntry.updatedAt > localEntry.updatedAt {
+                        let isRemoteDeletion = localEntry.deletedAt == nil && remoteEntry.deletedAt != nil
                         let hasContentConflict = localEntry.content != remoteEntry.content
                             || localEntry.title != remoteEntry.title
 
-                        if hasContentConflict {
+                        if hasContentConflict || isRemoteDeletion {
                             let maxVer = try Int.fetchOne(
                                 db,
                                 sql: "SELECT COALESCE(MAX(version_number), 0) FROM entry_versions WHERE entry_id = ?",
                                 arguments: [localEntry.id]
                             ) ?? 0
 
-                            // Ensure local state is snapshotted before applying remote overwrite
+                            // Ensure local state is snapshotted before applying remote overwrite or deletion
                             let latestLocalSnapshot = try EntryVersion
                                 .filter(EntryVersion.Columns.entryId == localEntry.id)
                                 .order(EntryVersion.Columns.versionNumber.desc)
@@ -233,23 +246,25 @@ final class CloudSyncService: @unchecked Sendable {
                                     versionNumber: nextVersion,
                                     title: localEntry.title,
                                     content: localEntry.content,
-                                    changeNote: "云端同步前本地版本自动留存",
+                                    changeNote: isRemoteDeletion ? "云端同步删除前本地版本自动留存" : "云端同步前本地版本自动留存",
                                     createdAt: localEntry.updatedAt
                                 )
                                 try localBackup.insert(db)
                                 conflictsPreserved += 1
                             }
 
-                            nextVersion += 1
-                            let remoteSnapshot = EntryVersion(
-                                entryId: remoteEntry.id,
-                                versionNumber: nextVersion,
-                                title: remoteEntry.title,
-                                content: remoteEntry.content,
-                                changeNote: "云端同步更新 (\(envelope.deviceId))",
-                                createdAt: remoteEntry.updatedAt
-                            )
-                            try remoteSnapshot.insert(db)
+                            if hasContentConflict && remoteEntry.deletedAt == nil {
+                                nextVersion += 1
+                                let remoteSnapshot = EntryVersion(
+                                    entryId: remoteEntry.id,
+                                    versionNumber: nextVersion,
+                                    title: remoteEntry.title,
+                                    content: remoteEntry.content,
+                                    changeNote: "云端同步更新 (\(envelope.deviceId))",
+                                    createdAt: remoteEntry.updatedAt
+                                )
+                                try remoteSnapshot.insert(db)
+                            }
                         }
 
                         // Keep the higher usage count and more recent lastUsedAt across devices
@@ -311,21 +326,23 @@ final class CloudSyncService: @unchecked Sendable {
                     }
                 } else {
                     try remoteEntry.insert(db)
-                    entriesCreated += 1
+                    if remoteEntry.deletedAt == nil {
+                        entriesCreated += 1
 
-                    let existingVerCount = try EntryVersion
-                        .filter(EntryVersion.Columns.entryId == remoteEntry.id)
-                        .fetchCount(db)
-                    if existingVerCount == 0 {
-                        let initialSnapshot = EntryVersion(
-                            entryId: remoteEntry.id,
-                            versionNumber: 1,
-                            title: remoteEntry.title,
-                            content: remoteEntry.content,
-                            changeNote: "从云端同步拉取 (\(envelope.deviceId))",
-                            createdAt: remoteEntry.createdAt
-                        )
-                        try initialSnapshot.insert(db)
+                        let existingVerCount = try EntryVersion
+                            .filter(EntryVersion.Columns.entryId == remoteEntry.id)
+                            .fetchCount(db)
+                        if existingVerCount == 0 {
+                            let initialSnapshot = EntryVersion(
+                                entryId: remoteEntry.id,
+                                versionNumber: 1,
+                                title: remoteEntry.title,
+                                content: remoteEntry.content,
+                                changeNote: "从云端同步拉取 (\(envelope.deviceId))",
+                                createdAt: remoteEntry.createdAt
+                            )
+                            try initialSnapshot.insert(db)
+                        }
                     }
                 }
             }
@@ -374,6 +391,27 @@ final class CloudSyncService: @unchecked Sendable {
 
     // MARK: - Sync Execution (File / Cloud Drive or HTTPS Endpoint)
 
+    /// Resolves the health check path while preserving any reverse-proxy subpath prefix.
+    static func resolvedHealthPath(from rawPath: String) -> String {
+        var path = rawPath
+        while path.count > 1 && path.hasSuffix("/") {
+            path.removeLast()
+        }
+        if path.isEmpty || path == "/" {
+            return "/v1/health"
+        }
+        if path.hasSuffix("/v1/health") || path.hasSuffix("/health") {
+            return path
+        }
+        for syncSuffix in ["/v1/sync", "/v1/promptpanel", "/sync"] {
+            if path.hasSuffix(syncSuffix) {
+                let prefix = String(path.dropLast(syncSuffix.count))
+                return prefix + "/v1/health"
+            }
+        }
+        return path + "/v1/health"
+    }
+
     func testConnection(endpoint: String, apiKey: String) throws -> CloudSyncHealthReport {
         let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -385,7 +423,7 @@ final class CloudSyncService: @unchecked Sendable {
             guard var components = URLComponents(string: trimmed) else {
                 throw CloudSyncError.invalidEndpoint(trimmed)
             }
-            components.path = "/v1/health"
+            components.path = Self.resolvedHealthPath(from: components.path)
             components.query = nil
             guard let healthURL = components.url else {
                 throw CloudSyncError.invalidEndpoint(trimmed)
@@ -567,6 +605,13 @@ final class CloudSyncService: @unchecked Sendable {
                     conflictsPreservedInVersions: summary.conflictsPreservedInVersions + secondPass.conflictsPreservedInVersions,
                     syncedAt: secondPass.syncedAt
                 )
+                try dbQueue.write { db in
+                    let summaryText = "上次同步：\(Self.summaryFormatter.string(from: summary.syncedAt))（项目 +\(summary.projectsCreated)/更\(summary.projectsUpdated)，词条 +\(summary.entriesCreated)/更\(summary.entriesUpdated)，冲突版本保护 \(summary.conflictsPreservedInVersions)）"
+                    try db.execute(
+                        sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('last_sync_summary', ?, ?)",
+                        arguments: [summaryText, summary.syncedAt]
+                    )
+                }
             } catch {
                 throw CloudSyncError.invalidPayload(error.localizedDescription)
             }
@@ -602,7 +647,10 @@ final class CloudSyncService: @unchecked Sendable {
     static func makeEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(Self.iso8601WithFractionalSeconds.string(from: date))
+        }
         return encoder
     }
 

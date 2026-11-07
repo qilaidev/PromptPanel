@@ -5,8 +5,6 @@ import GRDB
 
 #if canImport(XCTest)
 import XCTest
-#elseif canImport(Testing)
-import Testing
 #endif
 
 private struct TestAssertionError: LocalizedError {
@@ -171,7 +169,7 @@ public enum CoreTestSuite {
                 content: "请重点检查：\n1. 边界条件\n2. 并发安全",
                 type: Constants.EntryType.prompt.rawValue,
                 isPinned: true,
-                tags: ["review", "并发", "review"]
+                tags: ["review", "并发", "Review"]
             )
             try check(entry.tags == ["review", "并发"])
             try check(entry.previewLine == "请重点检查： 1. 边界条件 2. 并发安全")
@@ -515,7 +513,7 @@ public enum CoreTestSuite {
                     id: "md-entry-1",
                     projectId: defaultProject.id,
                     title: "导出测试词条",
-                    content: "  Indented First Line\nSecond Line",
+                    content: "  Indented First Line\n  ```\n  nested code\n  ```\nSecond Line",
                     tags: ["export", "code review"]
                 )
             )
@@ -528,11 +526,11 @@ public enum CoreTestSuite {
             _ = try transfer.exportMarkdown(to: mdURL)
             try check(FileManager.default.fileExists(atPath: mdURL.path))
 
-            // Verify Markdown round-trip preserves leading indentation and multi-word tags
+            // Verify Markdown round-trip preserves leading indentation, indented fences, and multi-word tags
             try entryRepo.delete(id: "md-entry-1")
             _ = try transfer.importMarkdown(from: mdURL)
             let roundTripped = try unwrap(entryRepo.fetchById("md-entry-1"))
-            try check(roundTripped.content == "  Indented First Line\nSecond Line")
+            try check(roundTripped.content == "  Indented First Line\n  ```\n  nested code\n  ```\nSecond Line")
             try check(roundTripped.tags == ["export", "code review"])
 
             // Pre-import safety backup should not block subsequent automatic launch backup
@@ -828,9 +826,24 @@ public enum CoreTestSuite {
                 let decodedMobileEnvelope = try CloudSyncService.makeDecoder().decode(CloudSyncEnvelope.self, from: mobileCamelJSON)
                 let camelMergeSummary = try macSyncService.mergeRemoteEnvelope(decodedMobileEnvelope)
                 try check(camelMergeSummary.conflictsPreservedInVersions == 1)
-                let versionsAfterCamelMerge = try macEntryRepo.fetchVersions(forEntryId: sharedEntryId)
-                try check(versionsAfterCamelMerge.contains(where: { $0.content == "另一台手机在稍早时间点的离线修改版本（同样不应丢失）" }))
+                let macVersionsAfterCamelMerge = try macEntryRepo.fetchVersions(forEntryId: sharedEntryId)
+                try check(macVersionsAfterCamelMerge.contains(where: { $0.content == "另一台手机在稍早时间点的离线修改版本（同样不应丢失）" }))
                 try check(try unwrap(macEntryRepo.fetchById(sharedEntryId)).useCount == 9)
+                let macDefaultProjects = try macProjectRepo.fetchAll(includeArchived: true).filter(\.isDefault)
+                try check(macDefaultProjects.count == 1, "CloudSync must not duplicate default projects across devices")
+
+                // Step E: Verify soft-delete tombstones prevent resurrection across CloudSync
+                try macEntryRepo.delete(id: sharedEntryId)
+                try check(try macEntryRepo.fetchById(sharedEntryId) == nil)
+                _ = try macSyncService.syncNow(endpoint: sharedSyncFileURL.path, apiKey: "")
+                try check(try macEntryRepo.fetchById(sharedEntryId) == nil, "Soft-deleted entry must not resurrect on sync")
+                _ = try mobileSyncService.syncNow(endpoint: sharedSyncFileURL.path, apiKey: "")
+                try check(try mobileEntryRepo.fetchById(sharedEntryId) == nil, "Soft-delete tombstone must propagate to peer device")
+
+                // Step F: Verify subpath health check URL resolution
+                try check(CloudSyncService.resolvedHealthPath(from: "") == "/v1/health")
+                try check(CloudSyncService.resolvedHealthPath(from: "/v1/sync") == "/v1/health")
+                try check(CloudSyncService.resolvedHealthPath(from: "/promptpanel/v1/sync") == "/promptpanel/v1/health")
             }
         }
     }

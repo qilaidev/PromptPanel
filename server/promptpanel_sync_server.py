@@ -178,22 +178,37 @@ def merge_envelope_into_db(conn: sqlite3.Connection, incoming: dict[str, Any]) -
     remote_device = str(_get_field(incoming, "deviceId", "device_id") or "remote-client")
 
     with conn:
+        remapped_project_ids: dict[str, str] = {}
+        existing_default_id: str | None = None
+        for p_row in conn.execute("SELECT id, payload_json FROM kv_records WHERE kind = 'project'"):
+            p_obj = json.loads(p_row["payload_json"])
+            if bool(_get_field(p_obj, "isDefault", "is_default", False)):
+                existing_default_id = str(p_row["id"])
+                break
+
         # 1. Merge Projects
         for proj in incoming.get("projects", []):
             if not isinstance(proj, dict) or not proj.get("id"):
                 continue
             pid = str(proj["id"])
+            is_default_proj = bool(_get_field(proj, "isDefault", "is_default", False))
             inc_updated = str(_get_field(proj, "updatedAt", "updated_at") or "")
             row = conn.execute(
                 "SELECT updated_at, payload_json FROM kv_records WHERE kind = 'project' AND id = ?",
                 (pid,),
             ).fetchone()
             if row is None:
+                if is_default_proj and existing_default_id and existing_default_id != pid:
+                    remapped_project_ids[pid] = existing_default_id
+                    continue
+                if is_default_proj and existing_default_id is None:
+                    existing_default_id = pid
                 conn.execute(
                     "INSERT INTO kv_records (kind, id, updated_at, payload_json) VALUES ('project', ?, ?, ?)",
                     (pid, inc_updated, json.dumps(proj, ensure_ascii=False)),
                 )
-                stats["projectsCreated"] += 1
+                if _get_field(proj, "deletedAt", "deleted_at") is None:
+                    stats["projectsCreated"] += 1
             elif inc_updated > str(row["updated_at"]):
                 conn.execute(
                     "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'project' AND id = ?",
@@ -234,6 +249,14 @@ def merge_envelope_into_db(conn: sqlite3.Connection, incoming: dict[str, Any]) -
         for entry in incoming.get("entries", []):
             if not isinstance(entry, dict) or not entry.get("id"):
                 continue
+            entry = dict(entry)
+            raw_pid = str(_get_field(entry, "projectId", "project_id") or "")
+            if raw_pid in remapped_project_ids:
+                mapped_pid = remapped_project_ids[raw_pid]
+                if "project_id" in entry or "projectId" not in entry:
+                    entry["project_id"] = mapped_pid
+                if "projectId" in entry:
+                    entry["projectId"] = mapped_pid
             eid = str(entry["id"])
             inc_updated = str(_get_field(entry, "updatedAt", "updated_at") or "")
             inc_created = str(_get_field(entry, "createdAt", "created_at") or inc_updated or utc_now_iso())
