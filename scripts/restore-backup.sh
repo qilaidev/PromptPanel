@@ -87,6 +87,17 @@ for table_name in "${REQUIRED_TABLES[@]}"; do
     fi
 done
 
+HAS_V7_MIGRATION="$(sqlite3 "$BACKUP_SOURCE" "SELECT COUNT(*) FROM grdb_migrations WHERE identifier = 'v7_workspace_groups_versions_and_sync';" 2>/dev/null || true)"
+if [[ "$HAS_V7_MIGRATION" == "1" ]]; then
+    for v7_table in entry_versions sync_metadata; do
+        V7_TABLE_EXISTS="$(sqlite3 "$BACKUP_SOURCE" "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('table', 'view') AND name = '$v7_table';" 2>/dev/null || true)"
+        if [[ "$V7_TABLE_EXISTS" != "1" ]]; then
+            echo "Backup schema validation failed: V7 migration present but missing required table '$v7_table'." >&2
+            exit 1
+        fi
+    done
+fi
+
 DEFAULT_PROJECT_COUNT="$(sqlite3 "$BACKUP_SOURCE" "SELECT COUNT(*) FROM projects WHERE is_default = 1;" 2>/dev/null || true)"
 if [[ -z "$DEFAULT_PROJECT_COUNT" || "$DEFAULT_PROJECT_COUNT" -lt 1 ]]; then
     echo "Backup schema validation failed: no default project found." >&2

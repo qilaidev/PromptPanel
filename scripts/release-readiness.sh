@@ -229,8 +229,22 @@ if [[ $TEST_RUNNER_AVAILABLE -eq 1 ]]; then
     log_info "Running swift test"
     swift test --package-path "$PACKAGE_ROOT"
 else
-    log_info "Running swift test in build-only validation mode"
+    log_info "Running swift test in build-only validation mode + C entrypoint execution"
     swift build --package-path "$PACKAGE_ROOT" --build-tests
+    TEST_BINARY_CANDIDATE="$(find "${PACKAGE_ROOT}/.build" -type f -name 'PromptPanelTests' -path '*/Contents/MacOS/PromptPanelTests' | head -n 1 || true)"
+    TESTING_INTEROP_LIB_DIR="$(dirname "$(find /Library/Developer/CommandLineTools -name 'lib_TestingInterop.dylib' 2>/dev/null | head -n 1 || true)" 2>/dev/null || true)"
+    if [[ -n "$TEST_BINARY_CANDIDATE" && -f "$TEST_BINARY_CANDIDATE" ]] && command -v python3 >/dev/null 2>&1; then
+        log_info "Executing CoreTestSuite via run_promptpanel_core_tests ($TEST_BINARY_CANDIDATE)"
+        DYLD_FRAMEWORK_PATH="/Library/Developer/CommandLineTools/Library/Developer/Frameworks" \
+        DYLD_LIBRARY_PATH="${TESTING_INTEROP_LIB_DIR}" \
+        TEST_BIN="$TEST_BINARY_CANDIDATE" \
+        python3 - <<'PY' || fail "CoreTestSuite execution failed"
+import ctypes, os, sys
+lib = ctypes.CDLL(os.environ["TEST_BIN"])
+lib.run_promptpanel_core_tests.restype = ctypes.c_int32
+sys.exit(0 if lib.run_promptpanel_core_tests() == 0 else 1)
+PY
+    fi
 fi
 
 if [[ $PUBLIC_DISTRIBUTION -eq 1 && $TEST_RUNNER_AVAILABLE -eq 0 ]]; then
