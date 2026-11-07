@@ -228,6 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         mainWindowViewModel?.commitPendingInlineChangesIfNeeded()
+        mainWindowViewModel?.cancelPendingBackgroundTasks()
         hotkeyService?.stop()
         flushPendingPanelGeometryPersistence()
         storageMaintenanceService?.prepareForTermination()
@@ -453,8 +454,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         trayManager = TrayManager(
+            onToggleQuickPanel: { [weak self] in
+                self?.panelService.toggle()
+            },
             onOpenMainWindow: { [weak self] in
-                self?.openMainWindow()
+                self?.openMainWindow(targetTab: .library)
+            },
+            onOpenReferenceWindow: { [weak self] in
+                self?.openReferenceWindow()
+            },
+            onOpenSettings: { [weak self] in
+                self?.openMainWindow(targetTab: .settings)
             },
             onQuit: {
                 NSApp.terminate(nil)

@@ -255,13 +255,16 @@ struct QuickPanelView: View {
                         } else if viewModel.entries.isEmpty {
                             emptyState
                         } else {
+                            if viewModel.isShowingGlobalFallback {
+                                globalFallbackHeader
+                            }
                             ForEach(Array(viewModel.entries.enumerated()), id: \.element.id) { index, entry in
                                 PanelRow(
                                     entry: entry,
                                     index: index,
                                     isSelected: index == viewModel.selectedIndex,
                                     showNumber: showsShortcutNumbers,
-                                    showDefaultBadge: shouldShowDefaultBadge(for: entry),
+                                    scopeBadgeText: scopeBadgeText(for: entry),
                                     isCompact: appState.panelCompactRows,
                                     availableWidth: rowWidth,
                                     onTap: {
@@ -269,6 +272,12 @@ struct QuickPanelView: View {
                                     },
                                     onCopy: {
                                         viewModel.copyEntry(at: index)
+                                    },
+                                    onToggleComplete: {
+                                        viewModel.toggleEntryCompleted(entry)
+                                    },
+                                    onTogglePin: {
+                                        viewModel.toggleEntryPinned(entry)
                                     }
                                 )
                                 .id(entry.id)
@@ -306,23 +315,116 @@ struct QuickPanelView: View {
         .padding(.vertical, Design.Space.md)
     }
 
+    private var globalFallbackHeader: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "sparkle.magnifyingglass")
+                .font(.icon(.micro, weight: .semibold))
+                .foregroundStyle(Constants.VisualStyle.accent)
+            Text("当前分组无匹配，已自动扩展至全词库搜索")
+                .font(.ui(.caption, weight: .medium))
+                .foregroundStyle(Constants.VisualStyle.textSecondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Design.Space.md)
+        .padding(.vertical, Design.Space.xs)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Constants.VisualStyle.accentDim)
+        )
+        .padding(.horizontal, Design.Space.xs)
+        .padding(.bottom, Design.Space.xs)
+    }
+
     private var emptyState: some View {
-        Text(emptyStateTitle)
-            .font(.ui(.title))
-            .foregroundStyle(Constants.VisualStyle.textTertiary)
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: .infinity, minHeight: 60)
-            .padding(.vertical, Design.Space.xl)
+        VStack(spacing: Design.Space.md) {
+            Text(emptyStateTitle)
+                .font(.ui(.title))
+                .foregroundStyle(Constants.VisualStyle.textTertiary)
+                .multilineTextAlignment(.center)
+
+            HStack(spacing: Design.Space.sm) {
+                if !viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button {
+                        viewModel.quickCreateEntryFromPanel(type: .prompt)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.icon(.small))
+                            Text("以搜索词直接新建 (⌘N)")
+                                .font(.ui(.caption, weight: .medium))
+                        }
+                        .foregroundStyle(Constants.VisualStyle.accent)
+                        .padding(.horizontal, 10)
+                        .frame(height: 24)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Constants.VisualStyle.accentDim)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Button {
+                        viewModel.quickCreateEntryFromPanel(type: .prompt)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "doc.on.clipboard")
+                                .font(.icon(.small))
+                            Text("从剪贴板新建 (⌘N)")
+                                .font(.ui(.caption, weight: .medium))
+                        }
+                        .foregroundStyle(Constants.VisualStyle.accent)
+                        .padding(.horizontal, 10)
+                        .frame(height: 24)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Constants.VisualStyle.accentDim)
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        viewModel.openSettings()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "square.and.pencil")
+                                .font(.icon(.small))
+                            Text("打开内容库")
+                                .font(.ui(.caption, weight: .medium))
+                        }
+                        .foregroundStyle(Constants.VisualStyle.textSecondary)
+                        .padding(.horizontal, 10)
+                        .frame(height: 24)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Constants.VisualStyle.tintSubtle)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 84)
+        .padding(.vertical, Design.Space.xl)
     }
 
     private var emptyStateTitle: String {
         viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "当前分组暂无词条"
-            : "无匹配词条"
+            : "全词库无匹配词条"
     }
 
-    private func shouldShowDefaultBadge(for entry: Entry) -> Bool {
-        entry.projectId == appState.defaultProjectId && entry.projectId != viewModel.currentProjectId
+    private func scopeBadgeText(for entry: Entry) -> String? {
+        guard entry.projectId != viewModel.currentProjectId else {
+            return nil
+        }
+        if entry.projectId == appState.defaultProjectId {
+            return "通用"
+        }
+        return viewModel.projectName(for: entry.projectId)
     }
 
     // MARK: - Status banner
@@ -403,12 +505,12 @@ struct QuickPanelView: View {
     // MARK: - Footer
 
     private var footerHints: some View {
-        HStack(spacing: Design.Space.lg) {
+        HStack(spacing: Design.Space.md) {
             hint(keys: "↑↓", label: "选择")
             hint(keys: "Enter", label: "执行")
-            hint(keys: "Esc", label: "关闭")
             hint(keys: "⌘C", label: "复制")
             hint(keys: "⌘1-9", label: "直达")
+            hint(keys: "⌘N", label: "快建")
             hint(keys: "⌘P", label: appState.isPanelPinned ? "取消固定" : "固定")
             Spacer(minLength: 0)
             Text("\(viewModel.entries.count) 条")
@@ -444,103 +546,131 @@ private struct PanelRow: View {
     let index: Int
     let isSelected: Bool
     let showNumber: Bool
-    let showDefaultBadge: Bool
+    let scopeBadgeText: String?
     let isCompact: Bool
     /// Supplied by the list rather than measured per row; see `resultsList`.
     let availableWidth: CGFloat
     let onTap: () -> Void
     let onCopy: () -> Void
+    let onToggleComplete: () -> Void
+    let onTogglePin: () -> Void
+
+    private var isInteractiveTodo: Bool {
+        entry.type == Constants.EntryType.todo.rawValue || entry.type == Constants.EntryType.note.rawValue
+    }
 
     var body: some View {
         let type = Constants.EntryType.resolve(entry.type)
         let level = Constants.EntryLevel.resolve(useCount: entry.useCount)
         let metrics = RowMetrics(totalWidth: availableWidth)
-        Button(action: onTap) {
-            HStack(spacing: Design.Space.md) {
-                if showNumber {
-                    Text("\(index + 1)")
-                        .font(.ui(.micro, weight: .medium, mono: true))
-                        .foregroundStyle(isSelected ? Constants.VisualStyle.accent : Constants.VisualStyle.textQuaternary)
-                        .frame(width: 18, alignment: .center)
+        HStack(spacing: 0) {
+            if isInteractiveTodo {
+                Button(action: onToggleComplete) {
+                    Image(systemName: entry.isCompleted ? "checkmark.circle.fill" : "circle")
+                        .font(.icon(.base))
+                        .foregroundStyle(entry.isCompleted ? Constants.VisualStyle.success : Constants.VisualStyle.textTertiary)
+                        .frame(width: 22, height: isCompact ? Constants.Layout.compactRowHeight : Constants.Layout.regularRowHeight)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .padding(.leading, Design.Space.sm)
+                .help(entry.isCompleted ? "标记为未完成" : "完成并划掉")
+            }
 
-                Image(systemName: entry.isCompleted ? "checkmark.circle.fill" : type.symbolName)
-                    .font(.icon(.base))
-                    .foregroundStyle(entry.isCompleted ? Constants.VisualStyle.success : level.color)
-                    .frame(width: 16, height: 16)
-
-                HStack(alignment: .firstTextBaseline, spacing: Design.Space.lg) {
-                    if let titleWidth = metrics.titleWidth {
-                        titleLabel
-                            .frame(width: titleWidth, alignment: .leading)
-                    } else {
-                        titleLabel
-                            .frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: onTap) {
+                HStack(spacing: Design.Space.md) {
+                    if showNumber {
+                        Text("\(index + 1)")
+                            .font(.ui(.micro, weight: .medium, mono: true))
+                            .foregroundStyle(isSelected ? Constants.VisualStyle.accent : Constants.VisualStyle.textQuaternary)
+                            .frame(width: 18, alignment: .center)
                     }
 
-                    if metrics.showsPreview {
-                        Text(entry.previewLine)
-                            .font(.ui(.body))
-                            .foregroundStyle(Constants.VisualStyle.textSecondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    if !isInteractiveTodo {
+                        Image(systemName: entry.isCompleted ? "checkmark.circle.fill" : type.symbolName)
+                            .font(.icon(.base))
+                            .foregroundStyle(entry.isCompleted ? Constants.VisualStyle.success : level.color)
+                            .frame(width: 16, height: 16)
                     }
-                }
 
-                HStack(spacing: Design.Space.sm) {
-                    Text("\(entry.useCount) 次")
-                        .font(.ui(.micro, weight: .medium, mono: true))
-                        .foregroundStyle(level.color)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(
-                            RoundedRectangle(cornerRadius: Constants.Layout.badgeCornerRadius, style: .continuous)
-                                .fill(level.fillColor)
-                        )
-                    if showDefaultBadge {
-                        Text("通用")
-                            .font(.ui(.micro, weight: .medium))
-                            .foregroundStyle(Constants.VisualStyle.textTertiary)
+                    HStack(alignment: .firstTextBaseline, spacing: Design.Space.lg) {
+                        if let titleWidth = metrics.titleWidth {
+                            titleLabel
+                                .frame(width: titleWidth, alignment: .leading)
+                        } else {
+                            titleLabel
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        if metrics.showsPreview {
+                            Text(entry.previewLine)
+                                .font(.ui(.body))
+                                .foregroundStyle(Constants.VisualStyle.textSecondary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+
+                    HStack(spacing: Design.Space.sm) {
+                        Text("\(entry.useCount) 次")
+                            .font(.ui(.micro, weight: .medium, mono: true))
+                            .foregroundStyle(level.color)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(
                                 RoundedRectangle(cornerRadius: Constants.Layout.badgeCornerRadius, style: .continuous)
-                                    .fill(Constants.VisualStyle.tintSubtle)
+                                    .fill(level.fillColor)
                             )
+                        if let scopeBadgeText {
+                            Text(scopeBadgeText)
+                                .font(.ui(.micro, weight: .medium))
+                                .foregroundStyle(Constants.VisualStyle.textTertiary)
+                                .lineLimit(1)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(
+                                    RoundedRectangle(cornerRadius: Constants.Layout.badgeCornerRadius, style: .continuous)
+                                        .fill(Constants.VisualStyle.tintSubtle)
+                                )
+                        }
+                        if metrics.showsRecency {
+                            Text(recencyLabel)
+                                .font(.ui(.micro, weight: .medium, mono: true))
+                                .foregroundStyle(isSelected ? Constants.VisualStyle.textSecondary : Constants.VisualStyle.textTertiary)
+                        }
                     }
-                    if metrics.showsRecency {
-                        Text(recencyLabel)
-                            .font(.ui(.micro, weight: .medium, mono: true))
-                            .foregroundStyle(isSelected ? Constants.VisualStyle.textSecondary : Constants.VisualStyle.textTertiary)
-                    }
+                    .layoutPriority(2)
+                    .fixedSize(horizontal: true, vertical: false)
                 }
-                .layoutPriority(2)
-                .fixedSize(horizontal: true, vertical: false)
+                .padding(.leading, isInteractiveTodo ? Design.Space.xs : Design.Space.sm)
+                .padding(.trailing, Design.Space.lg)
+                .frame(maxWidth: .infinity)
+                .frame(height: isCompact ? Constants.Layout.compactRowHeight : Constants.Layout.regularRowHeight)
+                .contentShape(Rectangle())
             }
-            .padding(.leading, Design.Space.sm)
-            .padding(.trailing, Design.Space.lg)
+            .buttonStyle(.plain)
             .frame(maxWidth: .infinity)
-            .frame(height: isCompact ? Constants.Layout.compactRowHeight : Constants.Layout.regularRowHeight)
-            .roundedHitTarget(cornerRadius: Design.rowCornerRadius)
-            .overlay(alignment: .leading) {
-                if isSelected {
-                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                        .fill(Constants.VisualStyle.accent)
-                        .frame(width: 2.5, height: isCompact ? 14 : 16)
-                }
-            }
-            .background(
-                RoundedRectangle(cornerRadius: Design.rowCornerRadius, style: .continuous)
-                    .fill(isSelected ? Constants.VisualStyle.tintMedium : Color.clear)
-            )
         }
-        .buttonStyle(.plain)
-        .frame(maxWidth: .infinity)
+        .roundedHitTarget(cornerRadius: Design.rowCornerRadius)
+        .overlay(alignment: .leading) {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    .fill(Constants.VisualStyle.accent)
+                    .frame(width: 2.5, height: isCompact ? 14 : 16)
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: Design.rowCornerRadius, style: .continuous)
+                .fill(isSelected ? Constants.VisualStyle.tintMedium : Color.clear)
+        )
         .contentShape(RoundedRectangle(cornerRadius: Design.rowCornerRadius, style: .continuous))
         .contextMenu {
             Button("执行词条 (Enter)") { onTap() }
             Button("仅复制内容 (⌘C)") { onCopy() }
+            Divider()
+            Button(entry.isCompleted ? "标记为未完成" : "标记为已完成") { onToggleComplete() }
+            Button(entry.isPinned ? "取消置顶" : "置顶词条") { onTogglePin() }
         }
     }
 

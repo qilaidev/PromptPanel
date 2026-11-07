@@ -668,7 +668,9 @@ final class MainWindowViewModel: ObservableObject {
         case copySelectedEntry
         case editSelectedEntry
         case createNewEntry
+        case saveInlineDraft
         case openReferenceWindow
+        case openSettings
         case moveSelectionUp
         case moveSelectionDown
     }
@@ -710,6 +712,8 @@ final class MainWindowViewModel: ObservableObject {
         case "f": return .focusSearch
         case "e": return .editSelectedEntry
         case "n": return .createNewEntry
+        case "s": return .saveInlineDraft
+        case ",": return .openSettings
         default: return nil
         }
     }
@@ -727,7 +731,7 @@ final class MainWindowViewModel: ObservableObject {
         if textView.selectedRange().length > 0 {
             return false
         }
-        if !textView.isFieldEditor, textView.string.contains("\n") {
+        if !textView.isFieldEditor && (textView.string.contains("\n") || textView.enclosingScrollView != nil) {
             return false
         }
         return true
@@ -735,6 +739,11 @@ final class MainWindowViewModel: ObservableObject {
 
     @discardableResult
     func handleMainWindowKeyCommand(_ command: MainWindowKeyCommand) -> Bool {
+        if command == .openSettings {
+            commitPendingInlineChangesIfNeeded()
+            selectedTab = .settings
+            return true
+        }
         guard selectedTab == .library else {
             return false
         }
@@ -759,8 +768,15 @@ final class MainWindowViewModel: ObservableObject {
             startEditEntry(entry)
         case .createNewEntry:
             startCreateEntry()
+        case .saveInlineDraft:
+            guard let entry = selectedEntry, hasUnsavedInlineChanges(for: entry) else {
+                return false
+            }
+            _ = commitInlineChanges(for: entry)
         case .openReferenceWindow:
             openReferenceWindow()
+        case .openSettings:
+            selectedTab = .settings
         case .moveSelectionUp:
             return moveSelectedEntry(offset: -1)
         case .moveSelectionDown:
@@ -801,6 +817,12 @@ final class MainWindowViewModel: ObservableObject {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         if pasteboard.setString(effectiveEntry.content, forType: .string) {
+            do {
+                try entryRepository.recordExecution(id: entry.id)
+                NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            } catch {
+                PPLogger.entry.error("Failed to record usage on library copy: \(error.localizedDescription)")
+            }
             bannerMessage = "已复制到剪贴板：\(effectiveEntry.title)"
         } else {
             bannerMessage = "复制到剪贴板失败，请重试。"
@@ -1356,25 +1378,37 @@ final class MainWindowViewModel: ObservableObject {
             guard let self, self.activeMaintenanceTask == nil, !self.isCloudSyncInFlight else { return }
             self.isCloudSyncInFlight = true
             self.maintenanceQueue.async { [weak self] in
-                let summary = try? cloudSyncService.syncNow(endpoint: endpoint, apiKey: apiKey)
+                let result = Result { try cloudSyncService.syncNow(endpoint: endpoint, apiKey: apiKey) }
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
                     self.isCloudSyncInFlight = false
-                    guard let summary else { return }
-                    self.cloudSyncConnectionHealthy = true
-                    self.refreshCloudSyncState()
-                    if summary.entriesCreated > 0 || summary.entriesUpdated > 0 || summary.projectsCreated > 0 || summary.projectsUpdated > 0 {
-                        self.isApplyingCloudSyncChanges = true
-                        self.loadProjects()
-                        self.scheduleEntriesRefresh(delayMs: 0)
-                        self.refreshProjectEntryCounts()
-                        self.isApplyingCloudSyncChanges = false
+                    switch result {
+                    case .success(let summary):
+                        self.cloudSyncConnectionHealthy = true
+                        self.refreshCloudSyncState()
+                        if summary.entriesCreated > 0 || summary.entriesUpdated > 0 || summary.projectsCreated > 0 || summary.projectsUpdated > 0 {
+                            self.isApplyingCloudSyncChanges = true
+                            self.loadProjects()
+                            self.scheduleEntriesRefresh(delayMs: 0)
+                            self.refreshProjectEntryCounts()
+                            self.isApplyingCloudSyncChanges = false
+                        }
+                    case .failure(let error):
+                        PPLogger.app.error("Auto cloud sync failed: \(error.localizedDescription)")
+                        self.cloudSyncConnectionHealthy = false
                     }
                 }
             }
         }
         pendingAutoCloudSyncWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: workItem)
+    }
+
+    func cancelPendingBackgroundTasks() {
+        pendingEntriesRefreshWorkItem?.cancel()
+        pendingEntriesRefreshWorkItem = nil
+        pendingAutoCloudSyncWorkItem?.cancel()
+        pendingAutoCloudSyncWorkItem = nil
     }
 
     // MARK: - Off-main maintenance plumbing
@@ -1693,6 +1727,43 @@ final class MainWindowViewModel: ObservableObject {
 
     func requestDeleteEntry(_ entry: Entry) {
         entryPendingDeletion = entry
+    }
+
+    func updateEntryProject(_ entry: Entry, toProjectId targetProjectId: String) {
+        guard entry.projectId != targetProjectId else { return }
+        var updated = entry
+        updated.projectId = targetProjectId
+        updated.updatedAt = Date()
+        do {
+            try entryRepository.update(updated)
+            if inlineDraftEntryId == entry.id {
+                inlineDraftProjectId = targetProjectId
+            }
+            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            bannerMessage = "已移至「\(projectName(for: targetProjectId))」。"
+        } catch {
+            PPLogger.entry.error("Failed to update entry project: \(error.localizedDescription)")
+            bannerMessage = "更改归属分组失败，请重试。"
+        }
+    }
+
+    func updateEntryType(_ entry: Entry, toType newType: String) {
+        guard entry.type != newType else { return }
+        var updated = entry
+        updated.type = newType
+        updated.updatedAt = Date()
+        do {
+            try entryRepository.update(updated)
+            if inlineDraftEntryId == entry.id {
+                inlineDraftType = newType
+            }
+            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            let displayName = Constants.EntryType.resolve(newType).displayName
+            bannerMessage = "已设为「\(displayName)」。"
+        } catch {
+            PPLogger.entry.error("Failed to update entry type: \(error.localizedDescription)")
+            bannerMessage = "更改词条类型失败，请重试。"
+        }
     }
 
     func toggleEntryCompleted(_ entry: Entry) {

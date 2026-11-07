@@ -384,6 +384,25 @@ public enum CoreTestSuite {
         )
         try check(
             MainWindowViewModel.mainWindowKeyCommand(
+                modifierFlags: [.command],
+                charactersIgnoringModifiers: "s"
+            ) == .saveInlineDraft
+        )
+        try check(
+            MainWindowViewModel.mainWindowKeyCommand(
+                modifierFlags: [.command],
+                charactersIgnoringModifiers: ","
+            ) == .openSettings
+        )
+        try check(
+            QuickPanelViewModel.panelKeyCommand(
+                keyCode: 45,
+                modifierFlags: [.command],
+                charactersIgnoringModifiers: "n"
+            ) == .quickCreateEntry
+        )
+        try check(
+            MainWindowViewModel.mainWindowKeyCommand(
                 keyCode: 126,
                 modifierFlags: [],
                 charactersIgnoringModifiers: nil
@@ -415,6 +434,14 @@ public enum CoreTestSuite {
         textView.isFieldEditor = false
         textView.string = "第一行\n第二行"
         try check(!MainWindowViewModel.shouldAllowArrowKeyNavigation(firstResponder: textView))
+
+        // Even single-line content inside a scroll-view-backed TextEditor should not have arrow keys swallowed
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
+        let editorTextView = NSTextView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
+        editorTextView.isFieldEditor = false
+        editorTextView.string = "单行正文但处于多行编辑器容器内"
+        scrollView.documentView = editorTextView
+        try check(!MainWindowViewModel.shouldAllowArrowKeyNavigation(firstResponder: editorTextView))
     }
 
     static func verifyQuickPanelScopeSafetyAndCopyUsage() throws {
@@ -488,6 +515,51 @@ public enum CoreTestSuite {
             try check(didClosePanel)
             let updatedBeta = try unwrap(entryRepo.fetchById(entryB.id))
             try check(updatedBeta.useCount >= 6)
+
+            // Verify global search fallback when current project + default project have no match
+            let otherProject = Project(id: "proj-other", name: "后端专项", groupKind: .project)
+            let archivedProject = Project(id: "proj-archived", name: "归档老项目", groupKind: .project, isArchived: true)
+            try projectRepo.create(otherProject)
+            try projectRepo.create(archivedProject)
+            let crossProjectEntry = Entry(
+                id: "entry-cross",
+                projectId: otherProject.id,
+                title: "Kubernetes 部署排障",
+                content: "kubectl describe pod",
+                tags: ["k8s"]
+            )
+            let archivedEntry = Entry(
+                id: "entry-archived-only",
+                projectId: archivedProject.id,
+                title: "Kubernetes 归档旧方案",
+                content: "legacy k8s",
+                tags: ["k8s"]
+            )
+            try entryRepo.create(crossProjectEntry)
+            try entryRepo.create(archivedEntry)
+
+            viewModel.query = "Kubernetes"
+            let fallbackDeadline = Date().addingTimeInterval(1)
+            while viewModel.isScopeSearchInFlight && Date() < fallbackDeadline {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.005))
+            }
+            try check(viewModel.isShowingGlobalFallback)
+            try check(viewModel.entries.map(\.id) == [crossProjectEntry.id])
+
+            // Verify ⌘N quickCreateEntryFromPanel creates an entry directly from the non-matching query
+            viewModel.query = "快速记录新想法 #idea"
+            let noMatchDeadline = Date().addingTimeInterval(1)
+            while viewModel.isScopeSearchInFlight && Date() < noMatchDeadline {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.005))
+            }
+            try check(viewModel.entries.isEmpty)
+            _ = viewModel.handlePanelKeyCommand(.quickCreateEntry)
+            let createDeadline = Date().addingTimeInterval(1)
+            while (viewModel.isScopeSearchInFlight || !viewModel.query.isEmpty) && Date() < createDeadline {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.005))
+            }
+            let createdFromPanel = try entryRepo.fetchByProject(defaultProject.id).first(where: { $0.content.contains("快速记录新想法") })
+            try check(createdFromPanel != nil)
         }
     }
 
@@ -844,6 +916,32 @@ public enum CoreTestSuite {
                 try check(CloudSyncService.resolvedHealthPath(from: "") == "/v1/health")
                 try check(CloudSyncService.resolvedHealthPath(from: "/v1/sync") == "/v1/health")
                 try check(CloudSyncService.resolvedHealthPath(from: "/promptpanel/v1/sync") == "/promptpanel/v1/health")
+                try check(CloudSyncService.resolvedHealthPath(from: "/api/sync") == "/api/v1/health")
+
+                // Step G: Verify AES-256-GCM+Gzip (HKDF-SHA256) envelope encryption & SettingsRepository token encryption
+                let testToken = "pp_live_secret_token_2026_aead_verify"
+                let sealedPayload = try CloudSyncCrypto.sealEnvelopeData(mobileCamelJSON, apiKey: testToken)
+                let sealedString = String(data: sealedPayload, encoding: .utf8) ?? ""
+                try check(sealedString.contains("\"cipher\":\"aes-256-gcm+gzip\""))
+                try check(!sealedString.contains("Swift 并发检查清单"), "Plaintext entry title must never appear in AES-256-GCM ciphertext")
+                let openedPayload = try CloudSyncCrypto.openEnvelopeData(sealedPayload, apiKey: testToken)
+                try check(openedPayload == mobileCamelJSON)
+
+                var wrongKeyThrew = false
+                do {
+                    _ = try CloudSyncCrypto.openEnvelopeData(sealedPayload, apiKey: "pp_live_wrong_token_000000000000")
+                } catch {
+                    wrongKeyThrew = true
+                }
+                try check(wrongKeyThrew, "AES-256-GCM authentication tag must reject wrong token")
+
+                let macSettingsRepo = SettingsRepository(dbQueue: macManager.dbQueue)
+                try macSettingsRepo.setCloudSyncApiKey(testToken)
+                let rawStoredKey = try macManager.dbQueue.read { db in
+                    try String.fetchOne(db, sql: "SELECT value FROM app_settings WHERE key = ?", arguments: [Constants.SettingsKey.cloudSyncApiKey])
+                }
+                try check(rawStoredKey?.hasPrefix("enc:v2:") == true, "API key in app_settings must be encrypted at rest")
+                try check(try macSettingsRepo.getCloudSyncApiKey() == testToken)
             }
         }
     }

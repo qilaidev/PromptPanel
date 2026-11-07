@@ -94,22 +94,33 @@ final class EntryRepository: @unchecked Sendable {
     }
 
     /// Full-text search across title and content across all projects.
-    func searchAll(query: String, tag: String? = nil) throws -> [Entry] {
+    func searchAll(query: String, tag: String? = nil, excludeArchivedProjects: Bool = false) throws -> [Entry] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             let entries = try fetchAll()
-            return Self.applyTagFilter(entries, tag: tag)
+            let filtered = Self.applyTagFilter(entries, tag: tag)
+            guard excludeArchivedProjects else { return filtered }
+            return try dbQueue.read { db in
+                let activeProjectIds = Set(try String.fetchAll(
+                    db,
+                    sql: "SELECT id FROM projects WHERE deleted_at IS NULL AND is_archived = 0"
+                ))
+                return filtered.filter { activeProjectIds.contains($0.projectId) }
+            }
         }
 
         return try dbQueue.read { db in
             let tokens = Self.searchTokens(from: trimmed)
             let escapedQuery = Self.makeFTS5PrefixQuery(fromTokens: tokens)
             let substringClause = Self.makeSubstringWhereClause(tokenCount: tokens.count)
+            let archiveClause = excludeArchivedProjects
+                ? "\n  AND entries.project_id IN (SELECT id FROM projects WHERE deleted_at IS NULL AND is_archived = 0)"
+                : ""
             let limitClause = tag == nil ? "\nLIMIT 100" : ""
             let sql = """
                 SELECT entries.*
                 FROM entries
-                WHERE entries.deleted_at IS NULL
+                WHERE entries.deleted_at IS NULL\(archiveClause)
                   AND (
                     entries.rowid IN (
                         SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?

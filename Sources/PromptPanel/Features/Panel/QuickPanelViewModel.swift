@@ -48,6 +48,8 @@ final class QuickPanelViewModel: ObservableObject {
     }
     @Published private(set) var entries: [Entry] = []
     @Published private(set) var projects: [Project] = []
+    @Published private(set) var projectNamesById: [String: String] = [:]
+    @Published private(set) var isShowingGlobalFallback: Bool = false
     @Published var currentProjectId: String = ""
     @Published var selectedIndex: Int = 0
     @Published var focusToken: Int = 0
@@ -280,13 +282,108 @@ final class QuickPanelViewModel: ObservableObject {
     private func loadProjects() {
         do {
             projects = try projectRepository.fetchAll(includeArchived: false)
+            projectNamesById = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0.name) })
             if currentProjectId.isEmpty || !projects.contains(where: { $0.id == currentProjectId }) {
                 currentProjectId = appState.effectiveProjectId
             }
         } catch {
             PPLogger.project.error("Failed to load projects for panel: \(error.localizedDescription)")
             projects = []
+            projectNamesById = [:]
             setStatus("加载项目失败，请重试。", tone: .error)
+        }
+    }
+
+    func projectName(for projectId: String) -> String? {
+        projectNamesById[projectId]
+    }
+
+    /// Creates a new entry from the current search query (or clipboard if the query is empty)
+    /// directly inside the quick panel, or opens the main window's entry editor when `entryRepository` is unavailable.
+    func quickCreateEntryFromPanel(type: Constants.EntryType = .prompt) {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let (cleanedQuery, inlineTag) = Self.extractTagFilter(from: trimmedQuery)
+        let effectiveQueryContent = cleanedQuery.isEmpty ? trimmedQuery : cleanedQuery
+        let clipboardText = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let rawContent = !effectiveQueryContent.isEmpty ? effectiveQueryContent : clipboardText
+        guard !rawContent.isEmpty, let entryRepository else {
+            onOpenSettings()
+            return
+        }
+
+        let targetProjectId: String = {
+            if type == .todo || type == .note,
+               let inbox = projects.first(where: { $0.groupKind == .inbox }) {
+                return inbox.id
+            }
+            return currentProjectId.isEmpty ? appState.effectiveProjectId : currentProjectId
+        }()
+        guard !targetProjectId.isEmpty else {
+            onOpenSettings()
+            return
+        }
+
+        let firstLine = rawContent
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty }) ?? "快捷新建"
+        let title = String(firstLine.prefix(36))
+        let tags: [String] = {
+            guard let inlineTag, !inlineTag.isEmpty else { return [] }
+            return Entry.normalizeTags([inlineTag])
+        }()
+
+        let newEntry = Entry(
+            projectId: targetProjectId,
+            title: title,
+            content: rawContent,
+            type: type.rawValue,
+            tags: tags
+        )
+
+        do {
+            try entryRepository.create(newEntry, changeNote: "快捷面板新建")
+            isSuppressingQueryDidSet = true
+            query = ""
+            isSuppressingQueryDidSet = false
+            if targetProjectId != currentProjectId && targetProjectId != appState.defaultProjectId {
+                activateProject(targetProjectId)
+            } else {
+                scheduleEntriesRefresh(delayMs: 0, reason: .dataChanged)
+            }
+            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            setStatus("已新建词条：\(title)", tone: .info)
+        } catch {
+            PPLogger.entry.error("Failed to quick-create entry from panel: \(error.localizedDescription)")
+            setStatus("新建词条失败，请重试。", tone: .error)
+        }
+    }
+
+    func toggleEntryCompleted(_ entry: Entry) {
+        guard let entryRepository else { return }
+        let nextState = !entry.isCompleted
+        do {
+            try entryRepository.setCompleted(id: entry.id, isCompleted: nextState)
+            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            scheduleEntriesRefresh(delayMs: 0, reason: .dataChanged)
+        } catch {
+            PPLogger.entry.error("Failed to toggle entry completed in panel: \(error.localizedDescription)")
+            setStatus("更新完成状态失败，请重试。", tone: .error)
+        }
+    }
+
+    func toggleEntryPinned(_ entry: Entry) {
+        guard let entryRepository else { return }
+        var updated = entry
+        updated.isPinned.toggle()
+        updated.updatedAt = Date()
+        do {
+            try entryRepository.update(updated)
+            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            scheduleEntriesRefresh(delayMs: 0, reason: .dataChanged)
+        } catch {
+            PPLogger.entry.error("Failed to toggle entry pin in panel: \(error.localizedDescription)")
+            setStatus("更新置顶状态失败，请重试。", tone: .error)
         }
     }
 
@@ -324,16 +421,19 @@ final class QuickPanelViewModel: ObservableObject {
 
         let runSearch: @Sendable () -> Void = { [weak self] in
             searchQueue.async {
-                let result: Result<[Entry], Error>
+                let result: Result<(entries: [Entry], isGlobalFallback: Bool), Error>
                 do {
-                    var entries = try searchService.search(
+                    let searchOutcome = try searchService.searchWithScopeFallback(
                         query: query,
                         currentProjectId: effectiveCurrentProjectId,
                         defaultProjectId: defaultProjectId,
                         tag: tagFilter
                     )
-                    entries = Self.applyPanelRankingSort(entries, currentProjectId: effectiveCurrentProjectId)
-                    result = .success(entries)
+                    let sortedEntries = Self.applyPanelRankingSort(
+                        searchOutcome.entries,
+                        currentProjectId: effectiveCurrentProjectId
+                    )
+                    result = .success((sortedEntries, searchOutcome.isGlobalFallback))
                 } catch {
                     result = .failure(error)
                 }
@@ -348,8 +448,9 @@ final class QuickPanelViewModel: ObservableObject {
                     self.deferredExecutionRequest = nil
 
                     switch result {
-                    case .success(let entries):
+                    case .success(let (entries, isGlobalFallback)):
                         self.isLoadingEntries = false
+                        self.isShowingGlobalFallback = isGlobalFallback
                         let previousSelectionId = self.selectedEntry?.id
                         self.entries = entries
                         if entries.isEmpty || reason == .scopeChanged {
@@ -382,6 +483,7 @@ final class QuickPanelViewModel: ObservableObject {
                     case .failure(let error):
                         PPLogger.search.error("Panel search failed: \(error.localizedDescription)")
                         self.isLoadingEntries = false
+                        self.isShowingGlobalFallback = false
                         self.entries = []
                         self.selectedIndex = 0
                         self.setStatus("搜索失败，请稍后重试。", tone: .error)
@@ -477,6 +579,7 @@ final class QuickPanelViewModel: ObservableObject {
         case executeEntry(number: Int)
         case copySelection
         case togglePin
+        case quickCreateEntry
         case closePanel
     }
 
@@ -512,6 +615,8 @@ final class QuickPanelViewModel: ObservableObject {
             return .copySelection
         case "p":
             return .togglePin
+        case "n":
+            return .quickCreateEntry
         default:
             return nil
         }
@@ -542,6 +647,8 @@ final class QuickPanelViewModel: ObservableObject {
             copySelectionOnly()
         case .togglePin:
             togglePanelPinned()
+        case .quickCreateEntry:
+            quickCreateEntryFromPanel()
         case .closePanel:
             closePanel()
         }

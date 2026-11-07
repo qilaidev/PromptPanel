@@ -887,9 +887,9 @@ private struct PreviewPane: View {
                     )
                     .overlay {
                         Menu {
-                            ForEach(viewModel.projects) { project in
+                            ForEach(viewModel.projects.filter { !$0.isArchived || $0.id == viewModel.inlineDraftProjectId }) { project in
                                 Button {
-                                    viewModel.inlineDraftProjectId = project.id
+                                    viewModel.updateEntryProject(entry, toProjectId: project.id)
                                 } label: {
                                     Label(project.name, systemImage: project.effectiveIconName)
                                 }
@@ -932,7 +932,7 @@ private struct PreviewPane: View {
                         Menu {
                             ForEach(Constants.EntryType.allCases, id: \.rawValue) { kind in
                                 Button {
-                                    viewModel.inlineDraftType = kind.rawValue
+                                    viewModel.updateEntryType(entry, toType: kind.rawValue)
                                 } label: {
                                     Label(kind.displayName, systemImage: kind.symbolName)
                                 }

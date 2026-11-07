@@ -10,7 +10,39 @@ final class EntrySearchService: @unchecked Sendable {
     }
 
     /// Search entries for the current project + default project.
-    /// Empty query returns all entries (no filter).
+    /// Empty query returns all entries for the current scope.
+    /// When `query` or `tag` is non-empty, if the scoped search returns zero matches,
+    /// `searchWithScopeFallback` can automatically expand across all non-archived projects
+    /// so the user doesn't hit a dead end when a prompt lives in another category/project.
+    struct SearchResult {
+        let entries: [Entry]
+        let isGlobalFallback: Bool
+    }
+
+    func searchWithScopeFallback(
+        query: String,
+        currentProjectId: String,
+        defaultProjectId: String?,
+        tag: String? = nil
+    ) throws -> SearchResult {
+        let scoped = try search(
+            query: query,
+            currentProjectId: currentProjectId,
+            defaultProjectId: defaultProjectId,
+            tag: tag
+        )
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard scoped.isEmpty, (!normalizedQuery.isEmpty || (tag != nil && !(tag?.isEmpty ?? true))) else {
+            return SearchResult(entries: scoped, isGlobalFallback: false)
+        }
+        let globalMatches = try entryRepository.searchAll(
+            query: normalizedQuery,
+            tag: tag,
+            excludeArchivedProjects: true
+        )
+        return SearchResult(entries: globalMatches, isGlobalFallback: !globalMatches.isEmpty)
+    }
+
     func search(
         query: String,
         currentProjectId: String,
