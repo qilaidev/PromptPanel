@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import GRDB
 
@@ -175,10 +176,36 @@ final class SettingsRepository: @unchecked Sendable {
     }
 
     func getCloudSyncApiKey() throws -> String {
-        try get(Constants.SettingsKey.cloudSyncApiKey) ?? ""
+        guard let stored = try get(Constants.SettingsKey.cloudSyncApiKey), !stored.isEmpty else {
+            return ""
+        }
+        if stored.hasPrefix("enc:v2:") {
+            let b64 = String(stored.dropFirst("enc:v2:".count))
+            guard let combined = Data(base64Encoded: b64) else { return "" }
+            let box = try AES.GCM.SealedBox(combined: combined)
+            let opened = try AES.GCM.open(box, using: Self.localSettingsKey, authenticating: Self.apiKeyAAD)
+            return String(data: opened, encoding: .utf8) ?? ""
+        }
+        // Transparently upgrade legacy plaintext API key in-place
+        try? setCloudSyncApiKey(stored)
+        return stored
     }
 
     func setCloudSyncApiKey(_ apiKey: String) throws {
-        try set(Constants.SettingsKey.cloudSyncApiKey, value: apiKey.trimmingCharacters(in: .whitespacesAndNewlines))
+        let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            try set(Constants.SettingsKey.cloudSyncApiKey, value: "")
+            return
+        }
+        let sealed = try AES.GCM.seal(Data(trimmed.utf8), using: Self.localSettingsKey, authenticating: Self.apiKeyAAD)
+        let encoded = "enc:v2:" + (sealed.combined?.base64EncodedString() ?? "")
+        try set(Constants.SettingsKey.cloudSyncApiKey, value: encoded)
     }
+
+    private static let apiKeyAAD = Data("promptpanel-local-settings-apikey-v2".utf8)
+    private static let localSettingsKey: SymmetricKey = {
+        let material = Data("PromptPanel-Local-Settings-\(NSUserName())".utf8)
+        let prk = Data(HMAC<SHA256>.authenticationCode(for: material, using: SymmetricKey(data: Data("PromptPanel-Settings-Salt-v2".utf8))))
+        return SymmetricKey(data: prk)
+    }()
 }

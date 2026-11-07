@@ -1,5 +1,167 @@
+import CryptoKit
 import Foundation
 import GRDB
+import zlib
+
+enum CloudSyncCrypto {
+    private static let hkdfSalt = Data("PromptPanel-HKDF-Salt-v2".utf8)
+    private static let hkdfInfo = Data("promptpanel-v2-aes256gcm-key".utf8) + Data([0x01])
+    private static let wireAAD = Data("promptpanel-aead-v2".utf8)
+    private static let maxDecompressedBytes = 16 * 1024 * 1024
+
+    private struct EncryptedWireWrapper: Codable {
+        let cipher: String
+        let v: Int?
+        let data: String
+    }
+
+    static func deriveSymmetricKey(from token: String) -> SymmetricKey {
+        let ikm = Data(token.trimmingCharacters(in: .whitespacesAndNewlines).utf8)
+        let prk = Data(HMAC<SHA256>.authenticationCode(for: ikm, using: SymmetricKey(data: hkdfSalt)))
+        let okm = Data(HMAC<SHA256>.authenticationCode(for: hkdfInfo, using: SymmetricKey(data: prk)))
+        return SymmetricKey(data: okm)
+    }
+
+    static func sealEnvelopeData(_ plaintextJSON: Data, apiKey: String) throws -> Data {
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedKey.count >= 12 else {
+            return plaintextJSON
+        }
+        let key = deriveSymmetricKey(from: trimmedKey)
+        let compressed = try gzipCompress(plaintextJSON)
+        let sealedBox = try AES.GCM.seal(compressed, using: key, authenticating: wireAAD)
+        guard let combined = sealedBox.combined else {
+            throw CloudSyncError.invalidPayload("AES-256-GCM 封装失败")
+        }
+        let wrapper = EncryptedWireWrapper(
+            cipher: "aes-256-gcm+gzip",
+            v: 2,
+            data: combined.base64EncodedString()
+        )
+        return try JSONEncoder().encode(wrapper)
+    }
+
+    static func openEnvelopeData(_ rawData: Data, apiKey: String) throws -> Data {
+        guard let wrapper = try? JSONDecoder().decode(EncryptedWireWrapper.self, from: rawData),
+              wrapper.cipher.hasPrefix("aes-256-gcm") else {
+            return rawData
+        }
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedKey.count >= 12 else {
+            throw CloudSyncError.invalidPayload("收到加密同步包，但本地未配置有效 Token 密钥")
+        }
+        guard let combined = Data(base64Encoded: wrapper.data), combined.count >= 28 else {
+            throw CloudSyncError.invalidPayload("加密同步包 Base64 数据损坏")
+        }
+        let key = deriveSymmetricKey(from: trimmedKey)
+        let sealedBox: AES.GCM.SealedBox
+        do {
+            sealedBox = try AES.GCM.SealedBox(combined: combined)
+        } catch {
+            throw CloudSyncError.invalidPayload("AES-256-GCM 密文结构无效")
+        }
+        let decrypted: Data
+        do {
+            decrypted = try AES.GCM.open(sealedBox, using: key, authenticating: wireAAD)
+        } catch {
+            throw CloudSyncError.invalidPayload("AES-256-GCM 签名校验或解密失败，请确认两端 Token 一致")
+        }
+        if wrapper.cipher == "aes-256-gcm+gzip" || (decrypted.count >= 2 && decrypted[decrypted.startIndex] == 0x1f && decrypted[decrypted.startIndex + 1] == 0x8b) {
+            return try gzipDecompress(decrypted)
+        }
+        return decrypted
+    }
+
+    static func gzipCompress(_ input: Data) throws -> Data {
+        if input.isEmpty { return Data() }
+        var stream = z_stream()
+        let initStatus = deflateInit2_(
+            &stream,
+            Z_DEFAULT_COMPRESSION,
+            Z_DEFLATED,
+            MAX_WBITS + 16,
+            8,
+            Z_DEFAULT_STRATEGY,
+            ZLIB_VERSION,
+            Int32(MemoryLayout<z_stream>.size)
+        )
+        guard initStatus == Z_OK else {
+            throw CloudSyncError.invalidPayload("Gzip 压缩初始化失败")
+        }
+        defer { deflateEnd(&stream) }
+
+        let chunkSize = 32_768
+        var output = Data(capacity: max(256, input.count / 2))
+        var chunk = [UInt8](repeating: 0, count: chunkSize)
+
+        try input.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.bindMemory(to: Bytef.self).baseAddress else { return }
+            stream.next_in = UnsafeMutablePointer<Bytef>(mutating: baseAddress)
+            stream.avail_in = uInt(input.count)
+
+            repeat {
+                try chunk.withUnsafeMutableBufferPointer { outBuf in
+                    stream.next_out = outBuf.baseAddress
+                    stream.avail_out = uInt(chunkSize)
+                    let ret = deflate(&stream, Z_FINISH)
+                    guard ret != Z_STREAM_ERROR else {
+                        throw CloudSyncError.invalidPayload("Gzip 压缩流错误")
+                    }
+                    let produced = chunkSize - Int(stream.avail_out)
+                    if produced > 0, let base = outBuf.baseAddress {
+                        output.append(base, count: produced)
+                    }
+                }
+            } while stream.avail_out == 0
+        }
+        return output
+    }
+
+    static func gzipDecompress(_ input: Data) throws -> Data {
+        if input.isEmpty { return Data() }
+        var stream = z_stream()
+        let initStatus = inflateInit2_(
+            &stream,
+            MAX_WBITS + 32,
+            ZLIB_VERSION,
+            Int32(MemoryLayout<z_stream>.size)
+        )
+        guard initStatus == Z_OK else {
+            throw CloudSyncError.invalidPayload("Gzip 解压初始化失败")
+        }
+        defer { inflateEnd(&stream) }
+
+        let chunkSize = 65_536
+        var output = Data(capacity: min(maxDecompressedBytes, input.count * 3))
+        var chunk = [UInt8](repeating: 0, count: chunkSize)
+
+        try input.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.bindMemory(to: Bytef.self).baseAddress else { return }
+            stream.next_in = UnsafeMutablePointer<Bytef>(mutating: baseAddress)
+            stream.avail_in = uInt(input.count)
+
+            var status: Int32 = Z_OK
+            repeat {
+                try chunk.withUnsafeMutableBufferPointer { outBuf in
+                    stream.next_out = outBuf.baseAddress
+                    stream.avail_out = uInt(chunkSize)
+                    status = inflate(&stream, Z_NO_FLUSH)
+                    guard status == Z_OK || status == Z_STREAM_END else {
+                        throw CloudSyncError.invalidPayload("Gzip 解压校验失败")
+                    }
+                    let produced = chunkSize - Int(stream.avail_out)
+                    if produced > 0, let base = outBuf.baseAddress {
+                        output.append(base, count: produced)
+                        if output.count > maxDecompressedBytes {
+                            throw CloudSyncError.invalidPayload("解压体积超出安全上限")
+                        }
+                    }
+                }
+            } while status != Z_STREAM_END && stream.avail_out == 0
+        }
+        return output
+    }
+}
 
 struct CloudSyncEnvelope: Codable, Equatable {
     static let currentSchemaVersion = 2
@@ -516,19 +678,20 @@ final class CloudSyncService: @unchecked Sendable {
                 let expanded = NSString(string: trimmed).expandingTildeInPath
                 fileURL = URL(fileURLWithPath: expanded)
             }
-            return try syncViaFile(fileURL: fileURL)
+            return try syncViaFile(fileURL: fileURL, apiKey: apiKey)
         }
     }
 
-    private func syncViaFile(fileURL: URL) throws -> CloudSyncSummary {
+    private func syncViaFile(fileURL: URL, apiKey: String = "") throws -> CloudSyncSummary {
         let encoder = Self.makeEncoder()
         let decoder = Self.makeDecoder()
         let summary: CloudSyncSummary
 
         if FileManager.default.fileExists(atPath: fileURL.path) {
-            let data = try Data(contentsOf: fileURL)
-            if !data.isEmpty {
-                let remoteEnvelope = try decoder.decode(CloudSyncEnvelope.self, from: data)
+            let rawData = try Data(contentsOf: fileURL)
+            if !rawData.isEmpty {
+                let openedData = try CloudSyncCrypto.openEnvelopeData(rawData, apiKey: apiKey)
+                let remoteEnvelope = try decoder.decode(CloudSyncEnvelope.self, from: openedData)
                 summary = try mergeRemoteEnvelope(remoteEnvelope)
             } else {
                 summary = try mergeRemoteEnvelope(buildLocalEnvelope())
@@ -541,7 +704,8 @@ final class CloudSyncService: @unchecked Sendable {
 
         let mergedEnvelope = try buildLocalEnvelope()
         let encoded = try encoder.encode(mergedEnvelope)
-        try encoded.write(to: fileURL, options: .atomic)
+        let sealed = try CloudSyncCrypto.sealEnvelopeData(encoded, apiKey: apiKey)
+        try sealed.write(to: fileURL, options: .atomic)
         return summary
     }
 
@@ -555,12 +719,17 @@ final class CloudSyncService: @unchecked Sendable {
         getRequest.setValue("application/json", forHTTPHeaderField: "Accept")
         if !apiKey.isEmpty {
             getRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            getRequest.setValue("aes-256-gcm+gzip", forHTTPHeaderField: "X-PromptPanel-Cipher")
         }
 
         let (getData, getResponse) = try performSynchronousRequest(getRequest)
-        if let httpResponse = getResponse as? HTTPURLResponse,
-           httpResponse.statusCode == 401 {
-            throw CloudSyncError.networkFailure("Token 鉴权未通过 (HTTP 401)，请确认已填写不少于 12 位的专属 Token")
+        if let httpResponse = getResponse as? HTTPURLResponse {
+            if httpResponse.statusCode == 401 {
+                throw CloudSyncError.networkFailure("Token 鉴权未通过 (HTTP 401)，请确认已填写不少于 12 位的专属 Token")
+            }
+            if !(200..<300).contains(httpResponse.statusCode) && httpResponse.statusCode != 404 {
+                throw CloudSyncError.networkFailure("远端拉取失败 (HTTP \(httpResponse.statusCode))")
+            }
         }
 
         var summary: CloudSyncSummary
@@ -568,8 +737,11 @@ final class CloudSyncService: @unchecked Sendable {
            (200..<300).contains(httpResponse.statusCode),
            !getData.isEmpty {
             do {
-                let remoteEnvelope = try decoder.decode(CloudSyncEnvelope.self, from: getData)
+                let openedGetData = try CloudSyncCrypto.openEnvelopeData(getData, apiKey: apiKey)
+                let remoteEnvelope = try decoder.decode(CloudSyncEnvelope.self, from: openedGetData)
                 summary = try mergeRemoteEnvelope(remoteEnvelope)
+            } catch let syncErr as CloudSyncError {
+                throw syncErr
             } catch {
                 throw CloudSyncError.invalidPayload(error.localizedDescription)
             }
@@ -585,8 +757,10 @@ final class CloudSyncService: @unchecked Sendable {
         postRequest.setValue("application/json", forHTTPHeaderField: "Accept")
         if !apiKey.isEmpty {
             postRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            postRequest.setValue("aes-256-gcm+gzip", forHTTPHeaderField: "X-PromptPanel-Cipher")
         }
-        postRequest.httpBody = try encoder.encode(mergedEnvelope)
+        let rawPostBody = try encoder.encode(mergedEnvelope)
+        postRequest.httpBody = try CloudSyncCrypto.sealEnvelopeData(rawPostBody, apiKey: apiKey)
 
         let (postData, postResponse) = try performSynchronousRequest(postRequest)
         if let httpResponse = postResponse as? HTTPURLResponse,
@@ -595,7 +769,8 @@ final class CloudSyncService: @unchecked Sendable {
         }
         if !postData.isEmpty {
             do {
-                let serverMergedEnvelope = try decoder.decode(CloudSyncEnvelope.self, from: postData)
+                let openedPostData = try CloudSyncCrypto.openEnvelopeData(postData, apiKey: apiKey)
+                let serverMergedEnvelope = try decoder.decode(CloudSyncEnvelope.self, from: openedPostData)
                 let secondPass = try mergeRemoteEnvelope(serverMergedEnvelope)
                 summary = CloudSyncSummary(
                     projectsCreated: summary.projectsCreated + secondPass.projectsCreated,
@@ -620,28 +795,64 @@ final class CloudSyncService: @unchecked Sendable {
         return summary
     }
 
-    private func performSynchronousRequest(_ request: URLRequest) throws -> (Data, URLResponse) {
-        let semaphore = DispatchSemaphore(value: 0)
-        var responseData = Data()
-        var urlResponse: URLResponse?
-        var requestError: Error?
+    private func performSynchronousRequest(_ request: URLRequest, maxAttempts: Int = 2) throws -> (Data, URLResponse) {
+        let attempts = max(1, maxAttempts)
+        var lastError: CloudSyncError = .networkFailure("无响应")
 
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
-            if let data { responseData = data }
-            urlResponse = response
-            requestError = error
-            semaphore.signal()
-        }
-        task.resume()
-        semaphore.wait()
+        for attempt in 1...attempts {
+            let semaphore = DispatchSemaphore(value: 0)
+            var responseData = Data()
+            var urlResponse: URLResponse?
+            var requestError: Error?
 
-        if let requestError {
-            throw CloudSyncError.networkFailure(requestError.localizedDescription)
+            let task = URLSession.shared.dataTask(with: request) { data, response, error in
+                if let data { responseData = data }
+                urlResponse = response
+                requestError = error
+                semaphore.signal()
+            }
+            task.resume()
+
+            let waitTimeout = max(5.0, request.timeoutInterval) + 3.0
+            if semaphore.wait(timeout: .now() + waitTimeout) == .timedOut {
+                task.cancel()
+                lastError = .networkFailure("网络请求超时")
+                if attempt < attempts {
+                    Thread.sleep(forTimeInterval: 0.25)
+                    continue
+                }
+                throw lastError
+            }
+
+            if let requestError {
+                lastError = .networkFailure(requestError.localizedDescription)
+                if attempt < attempts {
+                    Thread.sleep(forTimeInterval: 0.25)
+                    continue
+                }
+                throw lastError
+            }
+
+            guard let urlResponse else {
+                lastError = .networkFailure("无响应")
+                if attempt < attempts {
+                    Thread.sleep(forTimeInterval: 0.25)
+                    continue
+                }
+                throw lastError
+            }
+
+            if let httpResponse = urlResponse as? HTTPURLResponse,
+               [429, 502, 503, 504].contains(httpResponse.statusCode),
+               attempt < attempts {
+                Thread.sleep(forTimeInterval: 0.25)
+                continue
+            }
+
+            return (responseData, urlResponse)
         }
-        guard let urlResponse else {
-            throw CloudSyncError.networkFailure("无响应")
-        }
-        return (responseData, urlResponse)
+
+        throw lastError
     }
 
     static func makeEncoder() -> JSONEncoder {
