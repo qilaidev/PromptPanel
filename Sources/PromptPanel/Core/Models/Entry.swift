@@ -167,7 +167,7 @@ struct Entry: Identifiable, Codable, Equatable {
         for raw in tags {
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
-            if seen.insert(trimmed).inserted {
+            if seen.insert(trimmed.lowercased()).inserted {
                 out.append(trimmed)
             }
         }

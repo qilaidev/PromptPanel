@@ -115,6 +115,7 @@ final class LibraryTransferService: @unchecked Sendable {
         var summary = LibraryTransferSummary(backupURL: backupURL)
         try projectRepository.writeInTransaction { db in
             let localProjects = try Project
+                .filter(Project.Columns.deletedAt == nil)
                 .order(Project.Columns.isDefault.desc, Project.Columns.name.asc)
                 .fetchAll(db)
             let localDefaultProject = localProjects.first(where: \.isDefault)
@@ -141,6 +142,7 @@ final class LibraryTransferService: @unchecked Sendable {
                     var updated = importedProject
                     updated.name = name
                     updated.isDefault = false
+                    updated.deletedAt = nil
                     updated.updatedAt = Date()
                     try updated.update(db)
                     projectById[updated.id] = updated
@@ -149,7 +151,8 @@ final class LibraryTransferService: @unchecked Sendable {
                     var created = importedProject
                     created.name = name
                     created.isDefault = false
-                    try created.insert(db)
+                    created.deletedAt = nil
+                    try created.save(db)
                     projectById[created.id] = created
                     projectIdMap[importedProject.id] = created.id
                     summary.projectsCreated += 1
@@ -316,6 +319,7 @@ final class LibraryTransferService: @unchecked Sendable {
     private func markdownFence(for content: String) -> String {
         let longestFence = content
             .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { $0.hasPrefix("```") }
             .map { line in line.prefix { $0 == "`" }.count }
             .max() ?? 2

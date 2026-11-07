@@ -86,7 +86,9 @@ final class ProjectRepository: @unchecked Sendable {
     /// Create a new project or category.
     func create(_ project: Project) throws {
         try dbQueue.write { db in
-            try project.insert(db)
+            var projectToSave = project
+            projectToSave.deletedAt = nil
+            try projectToSave.save(db)
         }
         PPLogger.project.info("Project created: \(project.id) kind=\(project.groupKind.rawValue)")
     }
@@ -152,10 +154,10 @@ final class ProjectRepository: @unchecked Sendable {
         PPLogger.project.info("Project group kind updated: \(id) kind=\(groupKind.rawValue)")
     }
 
-    /// Delete a project. Fails if the project is system-protected or still has active entries.
+    /// Soft-delete a project so cloud sync propagates a tombstone. Fails if the project is system-protected or still has active entries.
     func delete(id: String) throws {
         try dbQueue.write { db in
-            guard let project = try Project.fetchOne(db, key: id), project.deletedAt == nil else {
+            guard var project = try Project.fetchOne(db, key: id), project.deletedAt == nil else {
                 throw RepositoryError.notFound("Project \(id)")
             }
             guard !project.isSystemProtected else {
@@ -167,18 +169,21 @@ final class ProjectRepository: @unchecked Sendable {
             guard count == 0 else {
                 throw RepositoryError.projectNotEmpty(count: count)
             }
-            try project.delete(db)
+            let now = Date()
+            project.deletedAt = now
+            project.updatedAt = now
+            try project.update(db)
         }
-        PPLogger.project.info("Project deleted: \(id)")
+        PPLogger.project.info("Project soft-deleted: \(id)")
     }
 
-    /// Migrate all entries from one project to another, then delete the source project.
+    /// Migrate all active entries from one project to another, then soft-delete the source project.
     func migrateAndDelete(fromId: String, toId: String) throws {
         try dbQueue.write { db in
             guard fromId != toId else {
                 throw RepositoryError.invalidMigrationTarget
             }
-            guard let source = try Project.fetchOne(db, key: fromId), source.deletedAt == nil else {
+            guard var source = try Project.fetchOne(db, key: fromId), source.deletedAt == nil else {
                 throw RepositoryError.notFound("Source project \(fromId)")
             }
             guard !source.isSystemProtected else {
@@ -188,17 +193,19 @@ final class ProjectRepository: @unchecked Sendable {
                 throw RepositoryError.notFound("Target project \(toId)")
             }
 
-            // Migrate entries
+            // Migrate active entries
             let now = Date()
             try db.execute(
-                sql: "UPDATE entries SET project_id = ?, updated_at = ? WHERE project_id = ?",
-                arguments: [toId, now, fromId]
+                sql: "UPDATE entries SET project_id = ?, updated_at = ? WHERE project_id = ? AND deleted_at IS NULL",
+                arguments: [target.id, now, fromId]
             )
 
-            // Delete source project
-            try source.delete(db)
+            // Soft-delete source project so tombstones sync cleanly across devices
+            source.deletedAt = now
+            source.updatedAt = now
+            try source.update(db)
         }
-        PPLogger.project.info("Migrated entries from \(fromId) to \(toId) and deleted source project")
+        PPLogger.project.info("Migrated entries from \(fromId) to \(toId) and soft-deleted source project")
     }
 }
 

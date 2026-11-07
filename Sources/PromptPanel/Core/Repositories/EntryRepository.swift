@@ -307,14 +307,21 @@ final class EntryRepository: @unchecked Sendable {
     /// Create a new entry and record its initial v1 version snapshot.
     func create(_ entry: Entry, changeNote: String = "初始版本") throws {
         try dbQueue.write { db in
-            try entry.insert(db)
+            var entryToSave = entry
+            entryToSave.deletedAt = nil
+            try entryToSave.save(db)
+            let existingMaxVersion = try Int.fetchOne(
+                db,
+                sql: "SELECT COALESCE(MAX(version_number), 0) FROM entry_versions WHERE entry_id = ?",
+                arguments: [entryToSave.id]
+            ) ?? 0
             let initialVersion = EntryVersion(
-                entryId: entry.id,
-                versionNumber: 1,
-                title: entry.title,
-                content: entry.content,
+                entryId: entryToSave.id,
+                versionNumber: existingMaxVersion + 1,
+                title: entryToSave.title,
+                content: entryToSave.content,
                 changeNote: changeNote,
-                createdAt: entry.createdAt
+                createdAt: entryToSave.createdAt
             )
             try initialVersion.insert(db)
         }
@@ -428,15 +435,18 @@ final class EntryRepository: @unchecked Sendable {
         PPLogger.entry.debug("Completion state updated for entry: \(id) completed=\(isCompleted)")
     }
 
-    /// Delete an entry by ID.
+    /// Soft-delete an entry by ID so cloud sync propagates a tombstone instead of resurrecting it.
     func delete(id: String) throws {
         try dbQueue.write { db in
-            guard let entry = try Entry.fetchOne(db, key: id) else {
+            guard var entry = try Entry.fetchOne(db, key: id), entry.deletedAt == nil else {
                 throw RepositoryError.notFound("Entry \(id)")
             }
-            try entry.delete(db)
+            let now = Date()
+            entry.deletedAt = now
+            entry.updatedAt = now
+            try entry.update(db)
         }
-        PPLogger.entry.debug("Entry deleted: \(id)")
+        PPLogger.entry.debug("Entry soft-deleted: \(id)")
     }
 
     /// Record an execution: increment use_count and set last_used_at.
