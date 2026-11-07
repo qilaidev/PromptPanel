@@ -1,411 +1,1603 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="system">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-<title>项目快贴 PromptPanel Mobile</title>
+<title>PromptPanel</title>
 <style>
-  :root {
-    --bg: #F6F7F9;
+  :root, html[data-theme="light"] {
+    --bg: #F3F4F7;
     --surface: #FFFFFF;
-    --surface-2: #EEF1F6;
-    --border: rgba(15, 23, 42, 0.08);
-    --text: #0F172A;
-    --text-sub: #475569;
-    --text-muted: #94A3B8;
-    --accent: #2563EB;
-    --accent-soft: rgba(37, 99, 235, 0.10);
-    --success: #16A34A;
-    --danger: #DC2626;
-    --radius: 12px;
+    --surface-raised: #FFFFFF;
+    --surface-hover: #EFF1F5;
+    --surface-active: #E6E9F0;
+    --sidebar: #F3F4F7;
+    --segment-active: #FFFFFF;
+    --input-fill: #F5F6F9;
+
+    --border: rgba(0, 0, 0, 0.09);
+    --border-strong: rgba(0, 0, 0, 0.14);
+    --divider: rgba(0, 0, 0, 0.07);
+
+    --text: #16181D;
+    --text-sub: #464B55;
+    --text-muted: #646B78;
+    --text-faint: #828997;
+
+    --accent: #4F5FE8;
+    --accent-dim: rgba(79, 95, 232, 0.11);
+    --accent-border: rgba(79, 95, 232, 0.30);
+    --banner-fill: #ECF0FF;
+    --banner-border: #C7D2FE;
+
+    --success: #227A43;
+    --success-dim: rgba(34, 122, 67, 0.11);
+    --warn: #9A6510;
+    --warn-dim: rgba(154, 101, 16, 0.11);
+    --danger: #BF2C2C;
+    --danger-dim: rgba(191, 44, 44, 0.11);
+
+    --tint-subtle: rgba(0, 0, 0, 0.04);
+    --tint-medium: rgba(0, 0, 0, 0.055);
+    --tint-strong: rgba(0, 0, 0, 0.085);
+
+    --level-blue: #3066CC;
+    --level-blue-dim: rgba(48, 102, 204, 0.12);
+    --level-green: #247A43;
+    --level-green-dim: rgba(36, 122, 67, 0.12);
+    --level-yellow: #9A6510;
+    --level-yellow-dim: rgba(154, 101, 16, 0.13);
+    --level-pink: #C2417D;
+    --level-pink-dim: rgba(194, 65, 125, 0.11);
+    --level-orange: #B05418;
+    --level-orange-dim: rgba(176, 84, 24, 0.12);
+    --level-purple: #6D32B8;
+    --level-purple-dim: rgba(109, 50, 184, 0.12);
+    --level-master: #16181D;
+    --level-master-dim: rgba(22, 24, 29, 0.10);
+
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --ease: cubic-bezier(0.22, 1, 0.36, 1);
   }
+
   @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #0F1115;
-      --surface: #181B22;
-      --surface-2: #222731;
+    html[data-theme="system"] {
+      --bg: #111215;
+      --surface: #17181C;
+      --surface-raised: #1E2025;
+      --surface-hover: #24272E;
+      --surface-active: #2B2E37;
+      --sidebar: #141518;
+      --segment-active: #2C2F37;
+      --input-fill: #141519;
+
       --border: rgba(255, 255, 255, 0.08);
-      --text: #F1F5F9;
-      --text-sub: #94A3B8;
-      --text-muted: #64748B;
-      --accent: #3B82F6;
-      --accent-soft: rgba(59, 130, 246, 0.16);
-      --success: #22C55E;
-      --danger: #EF4444;
+      --border-strong: rgba(255, 255, 255, 0.13);
+      --divider: rgba(255, 255, 255, 0.06);
+
+      --text: #ECEEF2;
+      --text-sub: #B2B8C4;
+      --text-muted: #8A919E;
+      --text-faint: #6E7583;
+
+      --accent: #7C8CF8;
+      --accent-dim: rgba(124, 140, 248, 0.15);
+      --accent-border: rgba(124, 140, 248, 0.36);
+      --banner-fill: #23273A;
+      --banner-border: #3B4478;
+
+      --success: #5FB37A;
+      --success-dim: rgba(95, 179, 122, 0.14);
+      --warn: #D4A35A;
+      --warn-dim: rgba(212, 163, 90, 0.14);
+      --danger: #D97373;
+      --danger-dim: rgba(217, 115, 115, 0.14);
+
+      --tint-subtle: rgba(255, 255, 255, 0.045);
+      --tint-medium: rgba(255, 255, 255, 0.07);
+      --tint-strong: rgba(255, 255, 255, 0.11);
+
+      --level-blue: #6DA8F7;
+      --level-blue-dim: rgba(109, 168, 247, 0.14);
+      --level-green: #5CB87A;
+      --level-green-dim: rgba(92, 184, 122, 0.14);
+      --level-yellow: #D9BB56;
+      --level-yellow-dim: rgba(217, 187, 86, 0.16);
+      --level-pink: #EB87B3;
+      --level-pink-dim: rgba(235, 135, 179, 0.14);
+      --level-orange: #E89455;
+      --level-orange-dim: rgba(232, 148, 85, 0.14);
+      --level-purple: #B084EE;
+      --level-purple-dim: rgba(176, 132, 238, 0.16);
+      --level-master: #ECEEF2;
+      --level-master-dim: rgba(236, 238, 242, 0.18);
     }
   }
+
+  html[data-theme="dark"] {
+    --bg: #111215;
+    --surface: #17181C;
+    --surface-raised: #1E2025;
+    --surface-hover: #24272E;
+    --surface-active: #2B2E37;
+    --sidebar: #141518;
+    --segment-active: #2C2F37;
+    --input-fill: #141519;
+
+    --border: rgba(255, 255, 255, 0.08);
+    --border-strong: rgba(255, 255, 255, 0.13);
+    --divider: rgba(255, 255, 255, 0.06);
+
+    --text: #ECEEF2;
+    --text-sub: #B2B8C4;
+    --text-muted: #8A919E;
+    --text-faint: #6E7583;
+
+    --accent: #7C8CF8;
+    --accent-dim: rgba(124, 140, 248, 0.15);
+    --accent-border: rgba(124, 140, 248, 0.36);
+    --banner-fill: #23273A;
+    --banner-border: #3B4478;
+
+    --success: #5FB37A;
+    --success-dim: rgba(95, 179, 122, 0.14);
+    --warn: #D4A35A;
+    --warn-dim: rgba(212, 163, 90, 0.14);
+    --danger: #D97373;
+    --danger-dim: rgba(217, 115, 115, 0.14);
+
+    --tint-subtle: rgba(255, 255, 255, 0.045);
+    --tint-medium: rgba(255, 255, 255, 0.07);
+    --tint-strong: rgba(255, 255, 255, 0.11);
+
+    --level-blue: #6DA8F7;
+    --level-blue-dim: rgba(109, 168, 247, 0.14);
+    --level-green: #5CB87A;
+    --level-green-dim: rgba(92, 184, 122, 0.14);
+    --level-yellow: #D9BB56;
+    --level-yellow-dim: rgba(217, 187, 86, 0.16);
+    --level-pink: #EB87B3;
+    --level-pink-dim: rgba(235, 135, 179, 0.14);
+    --level-orange: #E89455;
+    --level-orange-dim: rgba(232, 148, 85, 0.14);
+    --level-purple: #B084EE;
+    --level-purple-dim: rgba(176, 132, 238, 0.16);
+    --level-master: #ECEEF2;
+    --level-master-dim: rgba(236, 238, 242, 0.18);
+  }
+
   * {
     box-sizing: border-box;
     -webkit-tap-highlight-color: transparent;
   }
+
   html, body {
     margin: 0;
     padding: 0;
     height: 100%;
-    background: var(--bg);
+    background: var(--surface);
     color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
-    font-size: 15px;
-    line-height: 1.45;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    line-height: 1.4;
     user-select: none;
     overflow: hidden;
+    -webkit-font-smoothing: antialiased;
   }
+
   .app-shell {
     display: flex;
     flex-direction: column;
     height: 100%;
+    background: var(--surface);
   }
+
+  /* Window Header — mirrors MainWindowView.windowHeader */
   .topbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 16px 10px;
+    height: 44px;
+    padding: 0 12px;
     background: var(--surface);
-    border-bottom: 1px solid var(--border);
-  }
-  .topbar-title {
-    display: flex;
-    align-items: baseline;
+    border-bottom: 0.5px solid var(--divider);
+    flex-shrink: 0;
     gap: 8px;
   }
-  .topbar-title h1 {
-    margin: 0;
-    font-size: 18px;
-    font-weight: 700;
-    letter-spacing: -0.2px;
-  }
-  .topbar-badge {
+
+  .scope-pill {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 26px;
+    padding: 0 8px;
+    border-radius: 6px;
+    background: var(--tint-subtle);
+    border: 0.5px solid var(--border);
+    color: var(--text-sub);
     font-size: 11px;
-    padding: 2px 7px;
-    border-radius: 999px;
-    background: var(--accent-soft);
-    color: var(--accent);
-    font-weight: 600;
+    font-weight: 500;
+    max-width: 46%;
+    overflow: hidden;
   }
+
+  .scope-pill svg.scope-icon {
+    width: 12px;
+    height: 12px;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .scope-pill span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .scope-pill svg.chev-icon {
+    width: 10px;
+    height: 10px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .scope-native-select {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    width: 100%;
+    height: 100%;
+    cursor: pointer;
+  }
+
+  .segmented-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 7px;
+    background: var(--input-fill);
+    border: 0.5px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .segment-btn {
+    height: 22px;
+    padding: 0 10px;
+    border-radius: 5px;
+    border: 0.5px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 140ms var(--ease), color 140ms var(--ease);
+  }
+
+  .segment-btn.active {
+    background: var(--segment-active);
+    border-color: var(--border);
+    color: var(--text);
+  }
+
   .topbar-actions {
     display: flex;
+    align-items: center;
     gap: 6px;
+    flex-shrink: 0;
   }
-  .icon-btn {
-    border: 1px solid var(--border);
-    background: var(--surface-2);
+
+  .quiet-btn {
+    height: 26px;
+    padding: 0 8px;
+    border-radius: 6px;
+    border: 0.5px solid var(--border);
+    background: var(--tint-medium);
     color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    transition: background-color 140ms var(--ease), transform 120ms var(--ease);
+  }
+
+  .quiet-btn svg {
+    width: 13px;
+    height: 13px;
+    color: var(--text-sub);
+    flex-shrink: 0;
+  }
+
+  .quiet-btn:active {
+    background: var(--surface-active);
+    transform: scale(0.98);
+  }
+
+  .quiet-icon-btn {
+    width: 26px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  /* Banner Strip — mirrors SettingsBanner */
+  .banner-strip {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 12px 0;
+    padding: 6px 10px;
     border-radius: 8px;
-    padding: 7px 11px;
+    background: var(--banner-fill);
+    border: 0.5px solid var(--banner-border);
+    color: var(--text-sub);
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+
+  .banner-strip.visible {
+    display: flex;
+  }
+
+  .banner-strip svg {
+    width: 14px;
+    height: 14px;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .banner-text {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Search Bar — mirrors LibraryView.searchBar */
+  .search-wrap {
+    padding: 8px 12px;
+    background: var(--surface);
+    border-bottom: 0.5px solid var(--divider);
+    flex-shrink: 0;
+  }
+
+  .search-box {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    padding: 0 8px;
+    border-radius: 6px;
+    background: var(--input-fill);
+    border: 0.5px solid var(--border);
+    transition: border-color 140ms var(--ease);
+  }
+
+  .search-box:focus-within {
+    border-color: var(--accent-border);
+  }
+
+  .search-box svg.search-icon {
+    width: 13px;
+    height: 13px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .search-input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    outline: none;
+    padding: 0;
+  }
+
+  .search-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .kbd-badge {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-sub);
+    background: var(--tint-subtle);
+    border: 0.5px solid var(--border);
+    border-radius: 4px;
+    padding: 0 5px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .clear-btn {
+    width: 18px;
+    height: 18px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    padding: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+
+  .clear-btn svg {
+    width: 13px;
+    height: 13px;
+  }
+
+  /* Group & Filter Strips — mirrors DesignComponents.FilterChip */
+  .chip-strip {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    overflow-x: auto;
+    padding: 6px 12px;
+    background: var(--surface);
+    border-bottom: 0.5px solid var(--divider);
+    scrollbar-width: none;
+    flex-shrink: 0;
+  }
+
+  .chip-strip::-webkit-scrollbar {
+    display: none;
+  }
+
+  .chip {
+    flex-shrink: 0;
+    height: 22px;
+    padding: 0 6px;
+    border-radius: 4px;
+    border: 0.5px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    transition: background-color 140ms var(--ease), color 140ms var(--ease);
+  }
+
+  .chip svg {
+    width: 11px;
+    height: 11px;
+    flex-shrink: 0;
+  }
+
+  .chip-count {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.8;
+  }
+
+  .chip.active {
+    background: var(--accent-dim);
+    color: var(--accent);
+  }
+
+  .chip-divider {
+    width: 0.5px;
+    height: 12px;
+    background: var(--divider);
+    margin: 0 2px;
+    flex-shrink: 0;
+  }
+
+  /* Count & Sort Row — mirrors LibraryView.countSortRow */
+  .toolbar-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 34px;
+    padding: 0 12px;
+    background: var(--surface);
+    border-bottom: 0.5px solid var(--divider);
+    flex-shrink: 0;
+  }
+
+  .entry-count-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-sub);
+  }
+
+  .toolbar-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .sort-pill-wrap {
+    position: relative;
+    height: 22px;
+    padding: 0 7px;
+    border-radius: 5px;
+    background: var(--tint-subtle);
+    border: 0.5px solid var(--border);
+    color: var(--text-sub);
+    font-size: 11px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .sort-pill-wrap svg {
+    width: 10px;
+    height: 10px;
+  }
+
+  .sort-native-select {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    width: 100%;
+    height: 100%;
+    cursor: pointer;
+  }
+
+  .new-entry-btn {
+    height: 22px;
+    padding: 0 8px;
+    border-radius: 5px;
+    background: var(--accent-dim);
+    border: 0.5px solid var(--accent-border);
+    color: var(--accent);
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+  }
+
+  .new-entry-btn svg {
+    width: 10px;
+    height: 10px;
+  }
+
+  .clip-quick-btn {
+    width: 24px;
+    height: 22px;
+    padding: 0;
+    border-radius: 5px;
+    background: var(--tint-subtle);
+    border: 0.5px solid var(--border);
+    color: var(--text-sub);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+
+  .clip-quick-btn svg {
+    width: 11px;
+    height: 11px;
+  }
+
+  /* Flat High-Density List — mirrors LibraryView.EntryListRow */
+  .content-list {
+    flex: 1;
+    overflow-y: auto;
+    background: var(--surface);
+  }
+
+  .entry-row {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--surface);
+    cursor: pointer;
+    transition: background-color 120ms var(--ease);
+  }
+
+  .entry-row:active {
+    background: var(--surface-hover);
+  }
+
+  .entry-row.selected-row {
+    background: var(--accent-dim);
+  }
+
+  .entry-row.selected-row::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2.5px;
+    background: var(--accent);
+  }
+
+  .row-divider {
+    height: 0.5px;
+    background: var(--divider);
+    margin-left: 38px;
+  }
+
+  .entry-leading {
+    width: 18px;
+    height: 18px;
+    margin-top: 2px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+  }
+
+  .entry-leading svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .todo-check-btn {
+    width: 22px;
+    height: 22px;
+    margin: 0 -2px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--text-muted);
+  }
+
+  .todo-check-btn.done {
+    color: var(--accent);
+  }
+
+  .todo-check-btn svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .entry-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .entry-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .entry-title {
     font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .entry-title.done {
+    text-decoration: line-through;
+    color: var(--text-muted);
+  }
+
+  .pin-glyph {
+    width: 10px;
+    height: 10px;
+    color: var(--warn);
+    flex-shrink: 0;
+  }
+
+  .level-badge {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    padding: 1px 4px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    line-height: 1.3;
+  }
+
+  .type-badge {
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--text-sub);
+    background: var(--tint-subtle);
+    padding: 1px 4px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    line-height: 1.3;
+  }
+
+  .entry-preview {
+    font-size: 12px;
+    color: var(--text-sub);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .entry-preview.done {
+    text-decoration: line-through;
+    color: var(--text-muted);
+  }
+
+  .entry-meta {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    color: var(--text-muted);
+    min-width: 0;
+  }
+
+  .meta-mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+  }
+
+  .meta-proj {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 120px;
+  }
+
+  .meta-sep {
+    flex-shrink: 0;
+  }
+
+  .meta-spacer {
+    flex: 1;
+  }
+
+  .tag-chips {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    flex-shrink: 0;
+  }
+
+  .tag-chip {
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-sub);
+    background: var(--tint-subtle);
+    padding: 1px 4px;
+    border-radius: 3px;
+    line-height: 1.3;
+  }
+
+  .tag-overflow {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+  }
+
+  .row-copy-btn {
+    width: 26px;
+    height: 26px;
+    margin-top: 2px;
+    border-radius: 5px;
+    border: 0.5px solid var(--border);
+    background: var(--tint-subtle);
+    color: var(--text-sub);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: background-color 140ms var(--ease), color 140ms var(--ease), transform 120ms var(--ease);
+  }
+
+  .row-copy-btn svg {
+    width: 12px;
+    height: 12px;
+  }
+
+  .row-copy-btn:active {
+    transform: scale(0.96);
+    background: var(--accent-dim);
+    color: var(--accent);
+  }
+
+  .row-copy-btn.copied {
+    background: var(--success-dim);
+    border-color: var(--success);
+    color: var(--success);
+  }
+
+  /* Empty State — mirrors LibraryView.emptyState */
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 200px;
+    padding: 24px;
+    color: var(--text-sub);
+    font-size: 12px;
+    text-align: center;
+  }
+
+  .empty-state svg {
+    width: 18px;
+    height: 18px;
+    color: var(--text-muted);
+  }
+
+  /* Bottom Navigation — mirrors Sidebar 4-Section Architecture */
+  .bottom-nav {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--sidebar);
+    border-top: 0.5px solid var(--divider);
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+    flex-shrink: 0;
+  }
+
+  .nav-item {
+    flex: 1;
+    height: 34px;
+    padding: 0 6px;
+    border-radius: 6px;
+    border: 0.5px solid transparent;
+    color: var(--text-sub);
+    font-size: 11px;
+    font-weight: 400;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    cursor: pointer;
+    transition: background-color 140ms var(--ease), color 140ms var(--ease);
+    min-width: 0;
+  }
+
+  .nav-item svg {
+    width: 13px;
+    height: 13px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .nav-item .nav-label {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .nav-item .nav-count {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .nav-item.active {
+    background: var(--accent-dim);
+    border-color: var(--accent-border);
+    color: var(--text);
     font-weight: 600;
+  }
+
+  .nav-item.active svg,
+  .nav-item.active .nav-count {
+    color: var(--accent);
+  }
+
+  /* Settings View (Full Tab) — mirrors SettingsView.swift */
+  .settings-view {
+    flex: 1;
+    overflow-y: auto;
+    background: var(--bg);
+    padding: 12px;
+    display: none;
+  }
+
+  .settings-top-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    gap: 8px;
+  }
+
+  .settings-area-picker {
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 8px;
+    background: var(--surface-raised);
+    border: 0.5px solid var(--border);
+  }
+
+  .area-btn {
+    height: 24px;
+    padding: 0 10px;
+    border-radius: 6px;
+    border: 0.5px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 500;
     display: inline-flex;
     align-items: center;
     gap: 5px;
     cursor: pointer;
   }
-  .icon-btn:active {
-    opacity: 0.75;
+
+  .area-btn svg {
+    width: 12px;
+    height: 12px;
   }
-  .search-bar {
-    padding: 10px 16px 8px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-  }
-  .search-input {
-    width: 100%;
-    padding: 9px 12px;
-    border-radius: 9px;
-    border: 1px solid var(--border);
-    background: var(--surface-2);
+
+  .area-btn.active {
+    background: var(--accent-dim);
+    border-color: var(--accent-border);
     color: var(--text);
-    font-size: 14px;
-    outline: none;
   }
-  .search-input:focus {
-    border-color: var(--accent);
+
+  .health-inline {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
   }
-  .chip-strip {
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--success);
+  }
+
+  .settings-card {
+    background: var(--surface-raised);
+    border: 0.5px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+
+  .settings-card-header {
     display: flex;
     align-items: center;
-    gap: 8px;
-    overflow-x: auto;
-    padding: 10px 16px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    scrollbar-width: none;
-  }
-  .chip-strip::-webkit-scrollbar {
-    display: none;
-  }
-  .chip {
-    flex-shrink: 0;
-    padding: 6px 12px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    background: var(--surface-2);
-    color: var(--text-sub);
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-  }
-  .chip.active {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #FFFFFF;
-    font-weight: 600;
-  }
-  .content-list {
-    flex: 1;
-    overflow-y: auto;
-    padding: 12px 16px 88px;
-  }
-  .entry-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 12px 14px;
+    justify-content: space-between;
     margin-bottom: 10px;
-    display: flex;
-    align-items: flex-start;
-    gap: 11px;
   }
-  .entry-check {
-    width: 20px;
-    height: 20px;
-    margin-top: 2px;
-    accent-color: var(--accent);
-    flex-shrink: 0;
-  }
-  .entry-main {
-    flex: 1;
-    min-width: 0;
-  }
-  .entry-header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 4px;
-  }
-  .entry-title {
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .entry-title.done {
-    text-decoration: line-through;
-    color: var(--text-muted);
-  }
-  .pin-tag {
+
+  .settings-card-title {
     font-size: 11px;
-    padding: 1px 6px;
-    border-radius: 4px;
-    background: var(--accent-soft);
-    color: var(--accent);
     font-weight: 600;
-    flex-shrink: 0;
+    color: var(--text-muted);
+    letter-spacing: 0.2px;
   }
-  .entry-body {
-    font-size: 13.5px;
-    color: var(--text-sub);
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    word-break: break-word;
-    margin-bottom: 6px;
-    user-select: text;
-  }
-  .entry-meta {
+
+  .settings-row {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
-    gap: 6px;
-    font-size: 11.5px;
-    color: var(--text-muted);
+    justify-content: space-between;
+    padding: 8px 0;
+    border-top: 0.5px solid var(--divider);
+    gap: 10px;
   }
-  .tag-pill {
-    padding: 1px 6px;
-    border-radius: 4px;
-    background: var(--surface-2);
-    color: var(--text-sub);
+
+  .settings-row:first-of-type {
+    border-top: none;
+    padding-top: 0;
   }
-  .copy-btn {
-    flex-shrink: 0;
-    border: 1px solid var(--border);
-    background: var(--accent-soft);
-    color: var(--accent);
-    border-radius: 8px;
-    padding: 7px 11px;
-    font-size: 12.5px;
-    font-weight: 600;
-    cursor: pointer;
+
+  .settings-row:last-of-type {
+    padding-bottom: 0;
   }
-  .copy-btn:active {
-    opacity: 0.7;
-  }
-  .empty-state {
-    text-align: center;
-    padding: 56px 20px;
-    color: var(--text-muted);
-    font-size: 14px;
-  }
-  .fab {
-    position: fixed;
-    right: 18px;
-    bottom: 76px;
-    background: var(--accent);
-    color: #FFFFFF;
-    border: none;
-    border-radius: 999px;
-    padding: 12px 18px;
-    font-size: 14px;
-    font-weight: 600;
-    box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
-    cursor: pointer;
-    z-index: 10;
-  }
-  .bottom-nav {
-    display: flex;
-    background: var(--surface);
-    border-top: 1px solid var(--border);
-    padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
-  }
-  .nav-item {
-    flex: 1;
-    text-align: center;
-    padding: 6px 4px;
-    border-radius: 8px;
-    color: var(--text-sub);
+
+  .settings-row-label {
     font-size: 12px;
     font-weight: 500;
-    cursor: pointer;
+    color: var(--text);
   }
-  .nav-item.active {
-    color: var(--accent);
-    background: var(--accent-soft);
-    font-weight: 600;
+
+  .settings-row-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
   }
-  .nav-icon {
-    display: block;
-    font-size: 16px;
-    margin-bottom: 2px;
-  }
+
+  /* Modal / Sheet — mirrors PreviewPane, ReferenceLibraryWindowView */
   .modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.48);
+    background: rgba(0, 0, 0, 0.44);
     display: none;
     align-items: flex-end;
     justify-content: center;
     z-index: 50;
   }
+
   .modal-backdrop.open {
     display: flex;
   }
+
   .sheet {
     width: 100%;
-    max-width: 600px;
-    max-height: 88vh;
+    max-width: 640px;
+    max-height: 92vh;
     background: var(--surface);
-    border-radius: 18px 18px 0 0;
-    padding: 18px 16px 24px;
-    overflow-y: auto;
+    border-top: 0.5px solid var(--border-strong);
+    border-radius: 12px 12px 0 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
+
+  .sheet-grabber-bar {
+    display: flex;
+    justify-content: center;
+    padding: 6px 0 2px;
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+
+  .sheet-grabber {
+    width: 32px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--border-strong);
+  }
+
   .sheet-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 14px;
+    height: 38px;
+    padding: 0 14px;
+    border-bottom: 0.5px solid var(--divider);
+    flex-shrink: 0;
   }
+
   .sheet-title {
-    font-size: 16px;
-    font-weight: 700;
-  }
-  .form-group {
-    margin-bottom: 12px;
-  }
-  .form-label {
-    display: block;
-    font-size: 12.5px;
+    font-size: 13px;
     font-weight: 600;
-    color: var(--text-sub);
-    margin-bottom: 5px;
-  }
-  .form-input, .form-textarea, .form-select {
-    width: 100%;
-    padding: 10px 12px;
-    border-radius: 9px;
-    border: 1px solid var(--border);
-    background: var(--surface-2);
     color: var(--text);
-    font-size: 14px;
-    font-family: inherit;
+  }
+
+  .sheet-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 14px 20px;
+  }
+
+  /* PreviewPane-style pill bar inside editor */
+  .meta-pill-bar {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 5px;
+    margin-bottom: 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .meta-pill-bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .pill-select-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    background: var(--surface-raised);
+    border: 0.5px solid var(--border);
+    border-radius: 6px;
+    padding: 0 7px;
+    gap: 4px;
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 500;
+    flex-shrink: 0;
+    max-width: 132px;
+  }
+
+  .pill-select-wrap svg.pill-lead-icon {
+    width: 11px;
+    height: 11px;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .pill-select-wrap span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .pill-select-wrap svg.pill-chev-icon {
+    width: 9px;
+    height: 9px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .pill-select {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    width: 100%;
+    height: 100%;
+    cursor: pointer;
+  }
+
+  .pill-toggle {
+    height: 24px;
+    padding: 0 7px;
+    border-radius: 6px;
+    border: 0.5px solid var(--border);
+    background: var(--surface-raised);
+    color: var(--text-sub);
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .pill-toggle svg {
+    width: 11px;
+    height: 11px;
+  }
+
+  .pill-toggle.active-success {
+    background: var(--success-dim);
+    border-color: var(--success);
+    color: var(--text);
+  }
+
+  .pill-toggle.active-success svg {
+    color: var(--success);
+  }
+
+  .pill-toggle.active-warn {
+    background: var(--warn-dim);
+    border-color: var(--warn);
+    color: var(--text);
+  }
+
+  .pill-toggle.active-warn svg {
+    color: var(--warn);
+  }
+
+  .detail-meta-line {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 0.5px solid var(--divider);
+  }
+
+  .inline-title-input {
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 18px;
+    font-weight: 600;
+    outline: none;
+    padding: 0;
+    margin-bottom: 8px;
+  }
+
+  .inline-title-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .inline-tag-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+    border-bottom: 0.5px solid var(--divider);
+  }
+
+  .inline-tag-row svg {
+    width: 12px;
+    height: 12px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .inline-tag-input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--text-sub);
+    font-family: var(--font-sans);
+    font-size: 11px;
+    outline: none;
+    padding: 0;
+  }
+
+  .char-counter {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .inline-content-editor {
+    width: 100%;
+    min-height: 156px;
+    padding: 10px;
+    border-radius: 6px;
+    border: 0.5px solid var(--border);
+    background: var(--input-fill);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.55;
+    resize: none;
     outline: none;
   }
-  .form-textarea {
-    min-height: 110px;
-    resize: vertical;
+
+  .inline-content-editor:focus {
+    border-color: var(--accent-border);
   }
+
+  /* Dirty Save Bar — mirrors PreviewPane.isDirty bar */
+  .dirty-save-bar {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: var(--tint-subtle);
+    border: 0.5px solid var(--border);
+  }
+
+  .dirty-save-bar.visible {
+    display: flex;
+  }
+
+  .dirty-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .dirty-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-sub);
+    flex: 1;
+  }
+
+  .form-group {
+    margin-bottom: 10px;
+  }
+
+  .form-label {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 5px;
+  }
+
+  .form-input, .form-select {
+    width: 100%;
+    height: 30px;
+    padding: 0 8px;
+    border-radius: 6px;
+    border: 0.5px solid var(--border);
+    background: var(--input-fill);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    outline: none;
+  }
+
+  .form-select {
+    appearance: none;
+    -webkit-appearance: none;
+    padding-right: 24px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238A919E' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 7px center;
+    background-size: 11px 11px;
+  }
+
+  .form-input:focus, .form-select:focus {
+    border-color: var(--accent-border);
+  }
+
+  .switch-toggle {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    border-radius: 999px;
+    border: 0.5px solid var(--border-strong);
+    background: var(--input-fill);
+    padding: 2px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background-color 140ms var(--ease), border-color 140ms var(--ease);
+  }
+
+  .switch-toggle::after {
+    content: "";
+    display: block;
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    background: var(--text-muted);
+    transition: transform 140ms var(--ease), background-color 140ms var(--ease);
+  }
+
+  .switch-toggle.checked {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .switch-toggle.checked::after {
+    transform: translateX(16px);
+    background: #FFFFFF;
+  }
+
   .btn-row {
     display: flex;
-    gap: 10px;
-    margin-top: 14px;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
   }
+
   .btn-primary {
-    flex: 1;
+    height: 28px;
+    padding: 0 12px;
+    border-radius: 6px;
+    border: none;
     background: var(--accent);
     color: #FFFFFF;
-    border: none;
-    border-radius: 9px;
-    padding: 11px 16px;
-    font-size: 14px;
+    font-family: var(--font-sans);
+    font-size: 12px;
     font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
     cursor: pointer;
   }
+
   .btn-secondary {
-    background: var(--surface-2);
+    height: 28px;
+    padding: 0 10px;
+    border-radius: 6px;
+    border: 0.5px solid var(--border);
+    background: var(--tint-medium);
     color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 9px;
-    padding: 11px 14px;
-    font-size: 14px;
-    font-weight: 600;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
     cursor: pointer;
   }
+
   .btn-danger {
-    background: rgba(220, 38, 38, 0.12);
+    height: 28px;
+    padding: 0 10px;
+    border-radius: 6px;
+    border: 0.5px solid rgba(191, 44, 44, 0.3);
+    background: var(--danger-dim);
     color: var(--danger);
-    border: 1px solid rgba(220, 38, 38, 0.25);
-    border-radius: 9px;
-    padding: 11px 14px;
-    font-size: 14px;
-    font-weight: 600;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     cursor: pointer;
   }
-  .version-box {
+
+  /* Version History Cards — mirrors VersionHistoryPopover */
+  .version-section {
     margin-top: 14px;
     padding-top: 12px;
-    border-top: 1px solid var(--border);
+    border-top: 0.5px solid var(--divider);
   }
-  .version-item {
+
+  .version-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 10px;
-    border-radius: 8px;
-    background: var(--surface-2);
-    margin-top: 6px;
-    font-size: 12.5px;
+    margin-bottom: 8px;
   }
+
+  .version-card {
+    padding: 10px;
+    border-radius: 8px;
+    background: var(--surface-raised);
+    border: 0.5px solid var(--border);
+    margin-bottom: 8px;
+  }
+
+  .version-card-top {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+    font-size: 11px;
+    color: var(--text-sub);
+  }
+
+  .version-num {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--accent);
+  }
+
+  .version-time {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-sub);
+  }
+
+  .version-chars {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+  }
+
+  .version-snippet {
+    font-size: 11px;
+    color: var(--text-sub);
+    background: var(--input-fill);
+    padding: 6px 8px;
+    border-radius: 5px;
+    margin-bottom: 8px;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+  }
+
+  .version-actions {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .mini-pill-btn {
+    height: 22px;
+    padding: 0 8px;
+    border-radius: 5px;
+    border: 0.5px solid var(--border);
+    background: var(--tint-subtle);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .mini-pill-btn.primary {
+    background: var(--accent-dim);
+    border-color: var(--accent-border);
+    color: var(--accent);
+  }
+
+  /* Reference & Clipboard Assembly Window — mirrors ReferenceLibraryWindowView */
+  .clip-strip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    background: var(--surface);
+    border-bottom: 0.5px solid var(--divider);
+  }
+
+  .clip-preview-box {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-sub);
+    background: var(--input-fill);
+    border: 0.5px solid var(--border);
+    border-radius: 5px;
+    padding: 4px 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .ref-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 0.5px solid var(--divider);
+  }
+
+  .ref-source-badge {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-dim);
+    padding: 1px 5px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+
   .toast {
     position: fixed;
     left: 50%;
-    bottom: 84px;
+    bottom: 56px;
     transform: translateX(-50%);
-    background: rgba(15, 23, 42, 0.92);
-    color: #FFFFFF;
-    padding: 9px 16px;
-    border-radius: 999px;
-    font-size: 13px;
+    background: var(--surface-raised);
+    color: var(--text);
+    border: 0.5px solid var(--border-strong);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 11px;
     font-weight: 500;
     display: none;
     z-index: 100;
@@ -414,118 +1606,410 @@
 </head>
 <body>
 <div class="app-shell">
+  <!-- Window Header (Mirrors MainWindowView.windowHeader) -->
   <header class="topbar">
-    <div class="topbar-title">
-      <h1 id="topTitle">速记与待办</h1>
-      <span class="topbar-badge">v1.6.0</span>
+    <div class="scope-pill" title="切换快捷面板默认绑定的项目">
+      <svg class="scope-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="3" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="21"/><line x1="3" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="21" y2="12"/></svg>
+      <span id="scopeBindLabel">当前面板：通用项目</span>
+      <svg class="chev-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      <select id="scopeBindSelect" class="scope-native-select" onchange="onChangeCurrentScope(this.value)" aria-label="切换当前面板绑定项目"></select>
     </div>
+
+    <div class="segmented-control">
+      <button id="segLibrary" class="segment-btn active" onclick="switchMainSegment('library')">内容库</button>
+      <button id="segSettings" class="segment-btn" onclick="switchMainSegment('settings')">设置</button>
+    </div>
+
     <div class="topbar-actions">
-      <button class="icon-btn" onclick="triggerCloudSync()">↻ 同步</button>
-      <button class="icon-btn" onclick="openSettingsSheet()">⚙ 设置</button>
+      <button class="quiet-btn" onclick="openReferenceModal()" title="打开参考与剪贴板装配台">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
+        <span>参考窗</span>
+      </button>
     </div>
   </header>
 
-  <div class="search-bar">
-    <input id="searchInput" class="search-input" type="search" placeholder="搜索标题、正文或 #标签..." oninput="render()" />
+  <!-- Transient Status Banner (Mirrors SettingsBanner) -->
+  <div id="bannerStrip" class="banner-strip">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+    <span id="bannerText" class="banner-text"></span>
+    <button class="clear-btn" style="display:inline-flex;" onclick="dismissBanner()" aria-label="关闭提示">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
   </div>
 
-  <div id="chipStrip" class="chip-strip" style="display:none;"></div>
-
-  <main id="entryList" class="content-list"></main>
-
-  <button id="fabBtn" class="fab" onclick="openEditorSheet(null)">+ 新建待办</button>
-
-  <nav class="bottom-nav">
-    <div class="nav-item active" id="nav-0" onclick="switchTab(0)">
-      <span class="nav-icon">☑</span>速记与待办
-    </div>
-    <div class="nav-item" id="nav-1" onclick="switchTab(1)">
-      <span class="nav-icon">❖</span>常用类型
-    </div>
-    <div class="nav-item" id="nav-2" onclick="switchTab(2)">
-      <span class="nav-icon">▤</span>项目管理
-    </div>
-  </nav>
-</div>
-
-<!-- 新建/编辑词条弹窗 -->
-<div id="editorModal" class="modal-backdrop" onclick="if(event.target===this)closeModals()">
-  <div class="sheet">
-    <div class="sheet-header">
-      <span id="editorTitle" class="sheet-title">新建词条</span>
-      <button class="icon-btn" onclick="closeModals()">关闭</button>
-    </div>
-    <div class="form-group">
-      <label class="form-label">所属分组 / 项目</label>
-      <select id="fieldProject" class="form-select"></select>
-    </div>
-    <div class="form-group">
-      <label class="form-label">词条类型</label>
-      <select id="fieldType" class="form-select">
-        <option value="todo">待办事项 (todo)</option>
-        <option value="note">随手记 (note)</option>
-        <option value="prompt">提示词 (prompt)</option>
-        <option value="code">代码片段 (code)</option>
-        <option value="reply">常用回复 (reply)</option>
-      </select>
-    </div>
-    <div class="form-group">
-      <label class="form-label">标题（可选，留空自动提取首行）</label>
-      <input id="fieldTitle" class="form-input" type="text" placeholder="输入简短标题" />
-    </div>
-    <div class="form-group">
-      <label class="form-label">正文内容</label>
-      <textarea id="fieldContent" class="form-textarea" placeholder="输入提示词、待办或文本内容..."></textarea>
-    </div>
-    <div class="form-group">
-      <label class="form-label">标签（空格或逗号分隔，不含 #）</label>
-      <input id="fieldTags" class="form-input" type="text" placeholder="例如：开发 常用 提示词" />
-    </div>
-    <div class="btn-row">
-      <button id="deleteBtn" class="btn-danger" style="display:none;" onclick="deleteCurrentEntry()">删除</button>
-      <button id="pinBtn" class="btn-secondary" style="display:none;" onclick="togglePinCurrentEntry()">置顶</button>
-      <button class="btn-primary" onclick="saveCurrentEntry()">保存</button>
-    </div>
-    <div id="versionBox" class="version-box" style="display:none;">
-      <div class="form-label">历史版本（点击一键无损回滚）</div>
-      <div id="versionList"></div>
-    </div>
-  </div>
-</div>
-
-<!-- 同步与分组管理设置弹窗 -->
-<div id="settingsModal" class="modal-backdrop" onclick="if(event.target===this)closeModals()">
-  <div class="sheet">
-    <div class="sheet-header">
-      <span class="sheet-title">云端同步与工作区设置</span>
-      <button class="icon-btn" onclick="closeModals()">关闭</button>
-    </div>
-    <div class="form-group">
-      <label class="form-label">自托管云同步地址 (HTTP / HTTPS)</label>
-      <input id="syncEndpoint" class="form-input" type="url" placeholder="https://your-server.example.com/sync" />
-    </div>
-    <div class="form-group">
-      <label class="form-label">访问令牌 (Bearer Token)</label>
-      <input id="syncToken" class="form-input" type="password" placeholder="与 macOS 端一致的访问令牌" />
-    </div>
-    <div class="btn-row">
-      <button class="btn-primary" onclick="saveSyncSettings()">保存同步配置</button>
-      <button class="btn-secondary" onclick="triggerCloudSync()">立即同步</button>
-    </div>
-    <div class="version-box">
-      <div class="form-label">新建常用类型或具体项目</div>
-      <div class="btn-row">
-        <input id="newGroupName" class="form-input" type="text" placeholder="输入新分类或项目名称" style="flex:1;" />
-        <select id="newGroupKind" class="form-select" style="width:120px;">
-          <option value="project">具体项目</option>
-          <option value="category">常用类型</option>
-        </select>
-        <button class="btn-secondary" onclick="createNewGroup()">添加</button>
+  <!-- Library Segment -->
+  <div id="librarySegment" style="display:flex;flex-direction:column;flex:1;overflow:hidden;">
+    <div class="search-wrap">
+      <div class="search-box">
+        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="searchInput" class="search-input" type="search" placeholder="搜索标题、内容或 #标签" oninput="onSearchInput()" />
+        <span id="searchTagHint" class="kbd-badge">#标签</span>
+        <button id="clearSearchBtn" class="clear-btn" onclick="clearSearch()" aria-label="清除搜索">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
       </div>
     </div>
-    <div class="version-box">
-      <div class="form-label">当前状态</div>
-      <div id="syncStatusText" style="font-size:12.5px;color:var(--text-sub);">就绪 · 本地存储已启用（CloudSyncEnvelope v2 协议）</div>
+
+    <!-- Group Selector Strip (for Categories & Projects tabs) -->
+    <div id="groupStrip" class="chip-strip" style="display:none;"></div>
+
+    <!-- Entry Kind & Top Tag Facets Strip (Mirrors LibraryView.filterChipsRow) -->
+    <div id="facetStrip" class="chip-strip" style="display:none;"></div>
+
+    <!-- Count, Sort & Quick Clipboard Create Row (Mirrors LibraryView.countSortRow) -->
+    <div class="toolbar-row">
+      <span id="entryCountLabel" class="entry-count-label">0 条</span>
+      <div class="toolbar-controls">
+        <div class="sort-pill-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="m21 8-4-4-4 4"/><path d="M17 4v16"/></svg>
+          <span id="sortModeLabel">按使用</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          <select id="sortSelect" class="sort-native-select" onchange="onChangeSortMode(this.value)" aria-label="排序方式">
+            <option value="uses">按使用</option>
+            <option value="by_level">按等级</option>
+            <option value="recent">按最近</option>
+            <option value="alpha">按字母</option>
+          </select>
+        </div>
+
+        <button class="new-entry-btn" onclick="openEditorSheet(null)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          <span>新建</span>
+        </button>
+
+        <button class="clip-quick-btn" onclick="openClipboardMenuSheet()" title="从系统剪贴板快速新建词条或待办">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <main id="entryList" class="content-list"></main>
+
+    <!-- 4-Section Sidebar Architecture on Mobile Bottom Bar -->
+    <nav class="bottom-nav">
+      <div class="nav-item" id="nav-0" onclick="switchTab(0)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+        <span class="nav-label">全部内容</span>
+        <span id="navCount0" class="nav-count">0</span>
+      </div>
+      <div class="nav-item active" id="nav-1" onclick="switchTab(1)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>
+        <span class="nav-label">速记待办</span>
+        <span id="navCount1" class="nav-count">0</span>
+      </div>
+      <div class="nav-item" id="nav-2" onclick="switchTab(2)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+        <span class="nav-label">常用类型</span>
+        <span id="navCount2" class="nav-count">0</span>
+      </div>
+      <div class="nav-item" id="nav-3" onclick="switchTab(3)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        <span class="nav-label">项目</span>
+        <span id="navCount3" class="nav-count">0</span>
+      </div>
+    </nav>
+  </div>
+
+  <!-- Settings Segment (Mirrors SettingsView.swift: 偏好 / 维护) -->
+  <div id="settingsSegment" class="settings-view">
+    <div class="settings-top-row">
+      <div class="settings-area-picker">
+        <button id="areaBtnPref" class="area-btn active" onclick="switchSettingsArea('preferences')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+          <span>偏好</span>
+        </button>
+        <button id="areaBtnMaint" class="area-btn" onclick="switchSettingsArea('maintenance')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="12" x2="6.01" y2="12"/><line x1="10" y1="12" x2="18" y2="12"/></svg>
+          <span>维护</span>
+        </button>
+      </div>
+      <div class="health-inline">
+        <span class="status-dot"></span>
+        <span id="healthInlineText">SQLite WAL · KeyStore AES-256 · v1.6.0 (10)</span>
+      </div>
+    </div>
+
+    <!-- Area 1: 偏好 -->
+    <div id="settingsAreaPref">
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <span class="settings-card-title">外观与偏好</span>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">界面主题</div>
+            <div class="settings-row-desc">与 macOS 端一致的石墨暗色与浅色模式</div>
+          </div>
+          <select id="themeSelect" class="form-select" style="width:116px;" onchange="onChangeThemeMode(this.value)">
+            <option value="system">跟随系统</option>
+            <option value="dark">深色</option>
+            <option value="light">浅色</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">默认排序方式</div>
+            <div class="settings-row-desc">列表词条的默认排序策略</div>
+          </div>
+          <select id="prefSortSelect" class="form-select" style="width:116px;" onchange="onChangeSortMode(this.value)">
+            <option value="uses">按使用</option>
+            <option value="by_level">按等级</option>
+            <option value="recent">按最近</option>
+            <option value="alpha">按字母</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <span class="settings-card-title">云端同步 (CloudSyncService v2)</span>
+          <span id="syncBadgeText" class="kbd-badge">未检测</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">自托管同步服务地址 (HTTP / HTTPS)</label>
+          <input id="syncEndpoint" class="form-input" type="url" placeholder="https://your-server.example.com/v1/sync" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">访问令牌 (Bearer Token，不少于 12 位)</label>
+          <input id="syncToken" class="form-input" type="password" placeholder="与 macOS 端一致的访问令牌" />
+        </div>
+        <div class="settings-row" style="padding:6px 0 10px;">
+          <div>
+            <div class="settings-row-label">修改后自动同步</div>
+            <div class="settings-row-desc">保存词条或打开应用时自动拉取并推送增量</div>
+          </div>
+          <button id="autoSyncSwitch" type="button" role="switch" aria-checked="false" class="switch-toggle" onclick="toggleAutoSyncSwitch()" aria-label="修改后自动同步"></button>
+        </div>
+        <div class="btn-row">
+          <button class="btn-secondary" onclick="testCloudConnection()">测试连接</button>
+          <button class="btn-secondary" onclick="saveSyncSettings()">保存配置</button>
+          <button class="btn-primary" style="flex:1;" onclick="triggerCloudSync()">立即双向同步</button>
+        </div>
+        <div id="syncStatusText" style="margin-top:10px;font-family:var(--font-mono);font-size:11px;color:var(--text-sub);line-height:1.45;">尚未执行云端同步</div>
+      </div>
+    </div>
+
+    <!-- Area 2: 维护 -->
+    <div id="settingsAreaMaint" style="display:none;">
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <span class="settings-card-title">分组管理（常用类型 & 项目）</span>
+          <button class="mini-pill-btn primary" onclick="openGroupManagerModal(null)">+ 新建分组</button>
+        </div>
+        <div id="settingsGroupList"></div>
+      </div>
+
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <span class="settings-card-title">词库导入与导出 (CloudSyncEnvelope JSON)</span>
+        </div>
+        <div id="storageStatsLine" style="font-family:var(--font-mono);font-size:11px;color:var(--text-sub);margin-bottom:10px;"></div>
+        <div class="btn-row">
+          <button class="btn-secondary" style="flex:1;" onclick="copyExportedJson()">复制词库 JSON 到剪贴板</button>
+          <button class="btn-secondary" style="flex:1;" onclick="openImportJsonModal()">从 JSON 导入合并</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 词条详情与内联编辑面板 (Mirrors PreviewPane + VersionHistoryPopover) -->
+<div id="editorModal" class="modal-backdrop" onclick="if(event.target===this)closeModals()">
+  <div class="sheet">
+    <div class="sheet-grabber-bar"><div class="sheet-grabber"></div></div>
+    <div class="sheet-header">
+      <span id="editorTitle" class="sheet-title">词条详情</span>
+      <div style="display:flex;gap:5px;">
+        <button id="modalCloneBtn" class="quiet-btn" style="display:none;" onclick="openCloneCurrentEntryModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <span>克隆</span>
+        </button>
+        <button id="modalCopyBtn" class="btn-primary" style="height:26px;padding:0 10px;font-size:11px;display:none;" onclick="copyEditingEntry()">复制</button>
+        <button id="deleteBtn" class="quiet-btn quiet-icon-btn" style="display:none;" onclick="deleteCurrentEntry()" title="删除此词条">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        </button>
+        <button class="quiet-btn" onclick="closeModals()">关闭</button>
+      </div>
+    </div>
+    <div class="sheet-body">
+      <div class="meta-pill-bar">
+        <div class="pill-select-wrap">
+          <svg class="pill-lead-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          <span id="fieldProjectLabel">通用项目</span>
+          <svg class="pill-chev-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          <select id="fieldProject" class="pill-select" onchange="syncDraftSelectLabels(); onInlineDraftMutated()"></select>
+        </div>
+
+        <div class="pill-select-wrap">
+          <svg class="pill-lead-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          <span id="fieldTypeLabel">提示词</span>
+          <svg class="pill-chev-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          <select id="fieldType" class="pill-select" onchange="syncDraftSelectLabels(); onInlineDraftMutated()">
+            <option value="prompt">提示词</option>
+            <option value="code">代码</option>
+            <option value="todo">待办</option>
+            <option value="note">临时记录</option>
+            <option value="reply">回复</option>
+          </select>
+        </div>
+
+        <button id="draftDonePill" type="button" class="pill-toggle" onclick="toggleDraftDone()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m9 12 2 2 4-4"/></svg>
+          <span>完成</span>
+        </button>
+
+        <button id="draftPinPill" type="button" class="pill-toggle" onclick="toggleDraftPin()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>
+          <span>置顶</span>
+        </button>
+
+        <span id="versionPillBadge" class="kbd-badge" style="margin-left:auto;">v1</span>
+      </div>
+
+      <div id="detailMetaLine" class="detail-meta-line">新建词条</div>
+
+      <input id="fieldTitle" class="inline-title-input" type="text" placeholder="输入标题…" oninput="onInlineDraftMutated()" />
+
+      <div class="inline-tag-row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+        <input id="fieldTags" class="inline-tag-input" type="text" placeholder="标签（逗号分隔，单标签不超过 10 字）" oninput="onInlineDraftMutated()" />
+        <span id="charCountLabel" class="char-counter">0 字</span>
+      </div>
+
+      <textarea id="fieldContent" class="inline-content-editor" placeholder="输入提示词、代码片段或待办内容…" oninput="onInlineDraftMutated()"></textarea>
+
+      <!-- Dirty Save Bar (Mirrors PreviewPane Save Bar) -->
+      <div id="dirtySaveBar" class="dirty-save-bar">
+        <span class="dirty-dot"></span>
+        <span id="dirtySaveText" class="dirty-label">未保存修改</span>
+        <button class="mini-pill-btn" onclick="discardInlineDraft()">放弃</button>
+        <button class="btn-primary" style="height:24px;padding:0 10px;font-size:11px;" onclick="saveCurrentEntry()">保存</button>
+      </div>
+
+      <div id="newEntryActionRow" class="btn-row" style="display:none;">
+        <button class="btn-primary" style="flex:1;" onclick="saveCurrentEntry()">创建词条</button>
+      </div>
+
+      <div id="versionBox" class="version-section" style="display:none;">
+        <div class="version-header">
+          <span class="form-label" style="margin:0;">版本历史</span>
+          <span id="versionCountLabel" class="char-counter">1 个版本</span>
+        </div>
+        <div id="versionList"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 双窗对照与剪贴板装配台 (Mirrors ReferenceLibraryWindowView) -->
+<div id="referenceModal" class="modal-backdrop" onclick="if(event.target===this)closeModals()">
+  <div class="sheet" style="height:88vh;">
+    <div class="sheet-grabber-bar"><div class="sheet-grabber"></div></div>
+    <div class="sheet-header">
+      <span class="sheet-title">参考窗口与剪贴板装配台</span>
+      <button class="quiet-btn" onclick="closeModals()">关闭</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px;padding:8px 14px;border-bottom:0.5px solid var(--divider);background:var(--surface);">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span style="font-size:11px;color:var(--text-muted);flex-shrink:0;">来源</span>
+        <select id="refSourceSelect" class="form-select" style="flex:1;height:26px;font-size:11px;" onchange="renderReferenceWindow()"></select>
+        <span style="font-size:11px;color:var(--text-muted);flex-shrink:0;">目标</span>
+        <select id="refTargetSelect" class="form-select" style="flex:1;height:26px;font-size:11px;" onchange="renderReferenceWindow()"></select>
+      </div>
+      <div class="search-box" style="height:28px;">
+        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="refSearchInput" class="search-input" type="search" placeholder="搜索参考词条标题或正文…" oninput="renderReferenceWindow()" />
+      </div>
+    </div>
+    <div class="clip-strip">
+      <span style="font-size:11px;font-weight:600;color:var(--text);flex-shrink:0;">剪贴板</span>
+      <div id="refClipboardPreview" class="clip-preview-box">剪贴板为空</div>
+      <button class="mini-pill-btn" onclick="refreshClipboardPreview()">刷新</button>
+      <button class="mini-pill-btn" onclick="importClipboardToInboxTodo()">记入待办</button>
+      <button id="refClipToTargetBtn" class="mini-pill-btn primary" onclick="importClipboardToRefTarget()">存入目标</button>
+    </div>
+    <div id="refEntryList" style="flex:1;overflow-y:auto;background:var(--surface-raised);"></div>
+  </div>
+</div>
+
+<!-- 剪贴板快速新建弹窗 (Mirrors countSortRow Clipboard Menu) -->
+<div id="clipboardMenuModal" class="modal-backdrop" onclick="if(event.target===this)closeModals()">
+  <div class="sheet">
+    <div class="sheet-grabber-bar"><div class="sheet-grabber"></div></div>
+    <div class="sheet-header">
+      <span class="sheet-title">从剪贴板快速新建</span>
+      <button class="quiet-btn" onclick="closeModals()">关闭</button>
+    </div>
+    <div class="sheet-body">
+      <div class="form-group">
+        <label class="form-label">当前系统剪贴板内容</label>
+        <div id="quickClipPreview" class="version-snippet" style="margin-bottom:12px;">读取中…</div>
+      </div>
+      <div class="btn-row" style="flex-direction:column;align-items:stretch;">
+        <button class="btn-primary" onclick="quickCreateFromClipboard('current', 'prompt')">从剪贴板直接存为提示词</button>
+        <button class="btn-secondary" onclick="quickCreateFromClipboard('inbox', 'todo')">从剪贴板存为待办事项（速记与待办）</button>
+        <button class="btn-secondary" onclick="quickCreateFromClipboard('inbox', 'note')">从剪贴板存为临时记录（速记与待办）</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 分组新建/编辑/迁移弹窗 (Mirrors ProjectEditorSheet & ProjectMigrationSheet) -->
+<div id="groupModal" class="modal-backdrop" onclick="if(event.target===this)closeModals()">
+  <div class="sheet">
+    <div class="sheet-grabber-bar"><div class="sheet-grabber"></div></div>
+    <div class="sheet-header">
+      <span id="groupModalTitle" class="sheet-title">新建分组</span>
+      <button class="quiet-btn" onclick="closeModals()">关闭</button>
+    </div>
+    <div class="sheet-body">
+      <div class="form-group">
+        <label class="form-label">分组类型</label>
+        <select id="groupModalKind" class="form-select">
+          <option value="project">项目</option>
+          <option value="category">常用类型</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">分组名称</label>
+        <input id="groupModalName" class="form-input" type="text" placeholder="输入分组名称" />
+      </div>
+      <div class="btn-row">
+        <button id="groupDeleteBtn" class="btn-danger" style="display:none;" onclick="deleteEditingGroup()">删除分组</button>
+        <button id="groupArchiveBtn" class="btn-secondary" style="display:none;" onclick="archiveEditingGroup()">归档</button>
+        <button class="btn-primary" style="flex:1;" onclick="saveEditingGroup()">保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 克隆词条目标选择弹窗 -->
+<div id="cloneModal" class="modal-backdrop" onclick="if(event.target===this)closeModals()">
+  <div class="sheet">
+    <div class="sheet-grabber-bar"><div class="sheet-grabber"></div></div>
+    <div class="sheet-header">
+      <span class="sheet-title">克隆到其他分组</span>
+      <button class="quiet-btn" onclick="closeModals()">关闭</button>
+    </div>
+    <div class="sheet-body">
+      <div id="cloneTargetList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- JSON 导入弹窗 -->
+<div id="importJsonModal" class="modal-backdrop" onclick="if(event.target===this)closeModals()">
+  <div class="sheet">
+    <div class="sheet-grabber-bar"><div class="sheet-grabber"></div></div>
+    <div class="sheet-header">
+      <span class="sheet-title">导入合并词库 JSON</span>
+      <button class="quiet-btn" onclick="closeModals()">关闭</button>
+    </div>
+    <div class="sheet-body">
+      <textarea id="importJsonTextarea" class="inline-content-editor" placeholder="粘贴 CloudSyncEnvelope v2 JSON 内容…"></textarea>
+      <div class="btn-row">
+        <button class="btn-primary" style="flex:1;" onclick="confirmImportJson()">导入并无损合并</button>
+      </div>
     </div>
   </div>
 </div>
@@ -534,10 +2018,62 @@
 
 <script>
 const BUILTIN_INBOX_ID = 'builtin-inbox';
-let currentTab = 0; // 0: inbox, 1: category, 2: project
+const ALL_PROJECTS_ID = '__all_projects__';
+
+let mainSegment = 'library'; // 'library' | 'settings'
+let settingsArea = 'preferences'; // 'preferences' | 'maintenance'
+let currentTab = 1; // 0: 全部内容, 1: 速记与待办, 2: 常用类型, 3: 项目
 let selectedGroupId = null;
+let entryKindFilter = null;
+let entryTagFilter = null;
 let showArchived = false;
+let sortMode = 'uses'; // 'uses' | 'by_level' | 'recent' | 'alpha'
+let currentScopeProjectId = 'default-general';
 let editingEntryId = null;
+let editingGroupId = null;
+let draftIsCompleted = false;
+let draftIsPinned = false;
+let lastCopiedEntryId = null;
+let clipboardPreviewText = '';
+
+const TYPE_META = {
+  prompt: {
+    name: '提示词',
+    color: 'var(--accent)',
+    svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'
+  },
+  code: {
+    name: '代码',
+    color: 'var(--level-green)',
+    svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>'
+  },
+  todo: {
+    name: '待办',
+    color: 'var(--warn)',
+    svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>'
+  },
+  note: {
+    name: '临时记录',
+    color: 'var(--level-blue)',
+    svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>'
+  },
+  reply: {
+    name: '回复',
+    color: 'var(--level-purple)',
+    svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>'
+  }
+};
+
+function resolveEntryLevel(useCount) {
+  const c = Math.max(0, useCount || 0);
+  if (c === 0) return { tier: 0, label: '新词条', color: 'var(--level-blue)', bg: 'var(--level-blue-dim)' };
+  if (c <= 3) return { tier: 1, label: '上手', color: 'var(--level-green)', bg: 'var(--level-green-dim)' };
+  if (c <= 9) return { tier: 2, label: '熟练', color: 'var(--level-yellow)', bg: 'var(--level-yellow-dim)' };
+  if (c <= 24) return { tier: 3, label: '常用', color: 'var(--level-pink)', bg: 'var(--level-pink-dim)' };
+  if (c <= 59) return { tier: 4, label: '高频', color: 'var(--level-orange)', bg: 'var(--level-orange-dim)' };
+  if (c <= 149) return { tier: 5, label: '重度', color: 'var(--level-purple)', bg: 'var(--level-purple-dim)' };
+  return { tier: 6, label: '传奇', color: 'var(--level-master)', bg: 'var(--level-master-dim)' };
+}
 
 let store = {
   schemaVersion: 2,
@@ -609,7 +2145,7 @@ function defaultSeedStore() {
         id: 'seed-todo-1',
         projectId: BUILTIN_INBOX_ID,
         title: '配置手机端与 macOS 云端同步',
-        content: '在右上角「设置」中填入自托管同步服务地址与 Token，点击「同步」即可与 macOS 端双向同步词条与版本历史。',
+        content: '在顶部「设置 → 偏好 → 云端同步」中填入自托管同步服务地址与 Token，点击「测试连接」或「立即双向同步」即可与 macOS 端同步词条与版本历史。',
         type: 'todo',
         isPinned: true,
         isCompleted: false,
@@ -623,21 +2159,89 @@ function defaultSeedStore() {
         tags: ['同步', '入门']
       },
       {
+        id: 'seed-note-1',
+        projectId: BUILTIN_INBOX_ID,
+        title: '桌面端快捷键与面板绑定速查',
+        content: 'macOS 快捷键 ⌘⇧P 唤出悬浮面板，顶部靶心胶囊可切换当前默认绑定的项目；手机端同样支持在顶栏一键切换当前绑定项目。',
+        type: 'note',
+        isPinned: false,
+        isCompleted: false,
+        sortOrder: 1,
+        useCount: 3,
+        lastUsedAt: now,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+        sourceEntryId: null,
+        tags: ['快捷键', '桌面协同']
+      },
+      {
         id: 'seed-prompt-1',
         projectId: 'default-general',
         title: '代码审查与边界条件排查 Prompt',
-        content: '请审查以下代码改动，重点检查：\n1. 并发安全与主线程阻塞风险\n2. 异常路径与数据回滚完整性\n3. 边界条件与空值处理',
+        content: '请审查以下代码改动，重点检查：\n1. 并发安全与主线程阻塞风险\n2. 异常路径与数据回滚完整性\n3. 边界条件与空值处理\n4. 与既有架构约定的契合度',
         type: 'prompt',
         isPinned: true,
         isCompleted: false,
         sortOrder: 0,
-        useCount: 5,
+        useCount: 18,
         lastUsedAt: now,
         createdAt: now,
         updatedAt: now,
         deletedAt: null,
         sourceEntryId: null,
         tags: ['代码审查', '开发']
+      },
+      {
+        id: 'seed-reply-1',
+        projectId: 'default-general',
+        title: '版本发布说明与验证清单模板',
+        content: '本次更新已完成构建与签名校验：\n- 变更摘要：统一桌面与移动端视觉规范及同步协议\n- 回归项：云端增量同步、冲突留存、JSON 导入导出',
+        type: 'reply',
+        isPinned: false,
+        isCompleted: false,
+        sortOrder: 1,
+        useCount: 5,
+        lastUsedAt: now,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+        sourceEntryId: null,
+        tags: ['发布', '模板']
+      },
+      {
+        id: 'seed-code-1',
+        projectId: 'cat-dev',
+        title: 'CloudSyncService 健康检查 cURL 命令',
+        content: 'curl -sS -H "Authorization: Bearer YOUR_TOKEN_12_CHARS" https://sync.example.com/v1/health | jq .',
+        type: 'code',
+        isPinned: false,
+        isCompleted: false,
+        sortOrder: 0,
+        useCount: 7,
+        lastUsedAt: now,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+        sourceEntryId: null,
+        tags: ['运维', 'API']
+      },
+      {
+        id: 'seed-proj-1',
+        projectId: 'proj-sample',
+        title: '跨端 CloudSyncEnvelope v2 字段对齐规范',
+        content: '桌面端与 Android 端统一采用 schemaVersion: 2 信封结构，包含 projects / entries / versions 三组全量与增量墓碑快照，冲突修改自动留存历史版本。',
+        type: 'prompt',
+        isPinned: true,
+        isCompleted: false,
+        sortOrder: 0,
+        useCount: 11,
+        lastUsedAt: now,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+        sourceEntryId: 'seed-prompt-1',
+        tags: ['协议', '跨端']
       }
     ],
     versions: [
@@ -646,7 +2250,16 @@ function defaultSeedStore() {
         entryId: 'seed-todo-1',
         versionNumber: 1,
         title: '配置手机端与 macOS 云端同步',
-        content: '在右上角「设置」中填入自托管同步服务地址与 Token，点击「同步」即可与 macOS 端双向同步词条与版本历史。',
+        content: '在顶部「设置 → 偏好 → 云端同步」中填入自托管同步服务地址与 Token，点击「测试连接」或「立即双向同步」即可与 macOS 端同步词条与版本历史。',
+        changeNote: '初始版本',
+        createdAt: now
+      },
+      {
+        id: 'seed-note-1-v1',
+        entryId: 'seed-note-1',
+        versionNumber: 1,
+        title: '桌面端快捷键与面板绑定速查',
+        content: 'macOS 快捷键 ⌘⇧P 唤出悬浮面板，顶部靶心胶囊可切换当前默认绑定的项目；手机端同样支持在顶栏一键切换当前绑定项目。',
         changeNote: '初始版本',
         createdAt: now
       },
@@ -658,12 +2271,64 @@ function defaultSeedStore() {
         content: '请审查以下代码改动，重点检查：\n1. 并发安全与主线程阻塞风险\n2. 异常路径与数据回滚完整性\n3. 边界条件与空值处理',
         changeNote: '初始版本',
         createdAt: now
+      },
+      {
+        id: 'seed-prompt-1-v2',
+        entryId: 'seed-prompt-1',
+        versionNumber: 2,
+        title: '代码审查与边界条件排查 Prompt',
+        content: '请审查以下代码改动，重点检查：\n1. 并发安全与主线程阻塞风险\n2. 异常路径与数据回滚完整性\n3. 边界条件与空值处理\n4. 与既有架构约定的契合度',
+        changeNote: '补充架构契合度检查项',
+        createdAt: now
+      },
+      {
+        id: 'seed-reply-1-v1',
+        entryId: 'seed-reply-1',
+        versionNumber: 1,
+        title: '版本发布说明与验证清单模板',
+        content: '本次更新已完成构建与签名校验：\n- 变更摘要：统一桌面与移动端视觉规范及同步协议\n- 回归项：云端增量同步、冲突留存、JSON 导入导出',
+        changeNote: '初始版本',
+        createdAt: now
+      },
+      {
+        id: 'seed-code-1-v1',
+        entryId: 'seed-code-1',
+        versionNumber: 1,
+        title: 'CloudSyncService 健康检查 cURL 命令',
+        content: 'curl -sS -H "Authorization: Bearer YOUR_TOKEN_12_CHARS" https://sync.example.com/v1/health | jq .',
+        changeNote: '初始版本',
+        createdAt: now
+      },
+      {
+        id: 'seed-proj-1-v1',
+        entryId: 'seed-proj-1',
+        versionNumber: 1,
+        title: '跨端 CloudSyncEnvelope v2 字段对齐规范',
+        content: '桌面端与 Android 端统一采用 schemaVersion: 2 信封结构，包含 projects / entries / versions 三组全量与增量墓碑快照，冲突修改自动留存历史版本。',
+        changeNote: '克隆自「通用项目」并定制',
+        createdAt: now
       }
     ]
   };
 }
 
-function loadStore() {
+function loadPreferencesAndStore() {
+  try {
+    let savedTheme = 'system';
+    let savedSort = 'uses';
+    if (window.AndroidBridge && AndroidBridge.getThemeMode) {
+      savedTheme = AndroidBridge.getThemeMode() || 'system';
+      savedSort = AndroidBridge.getSortMode() || 'uses';
+    } else {
+      savedTheme = localStorage.getItem('promptpanel_app_theme') || 'system';
+      savedSort = localStorage.getItem('promptpanel_entry_sort_mode') || 'uses';
+    }
+    document.documentElement.setAttribute('data-theme', savedTheme);
+    document.getElementById('themeSelect').value = savedTheme;
+    sortMode = ['uses', 'by_level', 'recent', 'alpha'].includes(savedSort) ? savedSort : 'uses';
+    syncSortSelectUI();
+  } catch (e) {}
+
   try {
     let raw = '';
     if (window.AndroidBridge && AndroidBridge.loadStore) {
@@ -685,27 +2350,58 @@ function loadStore() {
   persistStore();
 }
 
-function persistStore() {
+function persistStore(triggerAuto = false) {
   store.exportedAt = new Date().toISOString();
   const raw = JSON.stringify(store);
   try {
     if (window.AndroidBridge && AndroidBridge.saveStore) {
       AndroidBridge.saveStore(raw);
+    } else {
+      localStorage.setItem('promptpanel_mobile_store_v2', raw);
     }
-    localStorage.setItem('promptpanel_mobile_store_v2', raw);
   } catch (e) {}
+
+  if (triggerAuto && isAutoSyncEnabled()) {
+    clearTimeout(window.__autoSyncTimer);
+    window.__autoSyncTimer = setTimeout(() => {
+      triggerCloudSync(true);
+    }, 1200);
+  }
+}
+
+function showBanner(msg) {
+  const strip = document.getElementById('bannerStrip');
+  document.getElementById('bannerText').textContent = msg;
+  strip.classList.add('visible');
+  clearTimeout(window.__bannerTimer);
+  window.__bannerTimer = setTimeout(() => {
+    strip.classList.remove('visible');
+  }, 5000);
+}
+
+function dismissBanner() {
+  document.getElementById('bannerStrip').classList.remove('visible');
 }
 
 function showToast(msg) {
-  if (window.AndroidBridge && AndroidBridge.showToast) {
-    AndroidBridge.showToast(msg);
-    return;
-  }
   const el = document.getElementById('toastEl');
   el.textContent = msg;
   el.style.display = 'block';
   clearTimeout(window.__toastTimer);
-  window.__toastTimer = setTimeout(() => { el.style.display = 'none'; }, 2000);
+  window.__toastTimer = setTimeout(() => { el.style.display = 'none'; }, 1800);
+}
+
+function activeProjectsList() {
+  return (store.projects || []).filter(p => !p.deletedAt && !p.deleted_at);
+}
+
+function activeEntriesList() {
+  return (store.entries || []).filter(e => !e.deletedAt && !e.deleted_at);
+}
+
+function projectNameById(id) {
+  const p = activeProjectsList().find(x => x.id === id);
+  return p ? p.name : '通用项目';
 }
 
 function versionsForEntry(entryId) {
@@ -714,140 +2410,137 @@ function versionsForEntry(entryId) {
     .sort((a, b) => (b.versionNumber || b.version_number || 1) - (a.versionNumber || a.version_number || 1));
 }
 
-function frecencyScore(entry) {
-  const count = entry.useCount || 0;
-  if (count <= 0) return 0;
-  const last = entry.lastUsedAt ? new Date(entry.lastUsedAt).getTime() : new Date(entry.updatedAt).getTime();
-  const idleDays = Math.max(0, (Date.now() - last) / 86400000);
-  return count * Math.pow(2, -idleDays / 90);
+function formatShortDay(iso) {
+  if (!iso) return '';
+  return String(iso).slice(0, 10);
+}
+
+function formatFullDateTime(iso) {
+  if (!iso) return '';
+  return String(iso).replace('T', ' ').slice(0, 16);
+}
+
+function formatRelativeTime(iso) {
+  if (!iso) return '未使用';
+  const diffSec = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (diffSec < 60) return '刚刚';
+  if (diffSec < 3600) return Math.floor(diffSec / 60) + ' 分钟前';
+  if (diffSec < 86400) return Math.floor(diffSec / 3600) + ' 小时前';
+  const days = Math.floor(diffSec / 86400);
+  if (days < 30) return days + ' 天前';
+  return formatShortDay(iso);
+}
+
+function switchMainSegment(seg) {
+  mainSegment = seg;
+  document.getElementById('segLibrary').classList.toggle('active', seg === 'library');
+  document.getElementById('segSettings').classList.toggle('active', seg === 'settings');
+  document.getElementById('librarySegment').style.display = seg === 'library' ? 'flex' : 'none';
+  document.getElementById('settingsSegment').style.display = seg === 'settings' ? 'block' : 'none';
+  syncModalOpenBridge();
+  if (seg === 'settings') {
+    renderSettingsView();
+  } else {
+    render();
+  }
+}
+
+function switchSettingsArea(area) {
+  settingsArea = area;
+  document.getElementById('areaBtnPref').classList.toggle('active', area === 'preferences');
+  document.getElementById('areaBtnMaint').classList.toggle('active', area === 'maintenance');
+  document.getElementById('settingsAreaPref').style.display = area === 'preferences' ? 'block' : 'none';
+  document.getElementById('settingsAreaMaint').style.display = area === 'maintenance' ? 'block' : 'none';
+  renderSettingsView();
+}
+
+function onChangeThemeMode(mode) {
+  document.documentElement.setAttribute('data-theme', mode);
+  if (window.AndroidBridge && AndroidBridge.setThemeMode) {
+    AndroidBridge.setThemeMode(mode);
+  }
+  localStorage.setItem('promptpanel_app_theme', mode);
+}
+
+function syncSortSelectUI() {
+  const labels = { uses: '按使用', by_level: '按等级', recent: '按最近', alpha: '按字母' };
+  document.getElementById('sortModeLabel').textContent = labels[sortMode] || '按使用';
+  document.getElementById('sortSelect').value = sortMode;
+  const prefSort = document.getElementById('prefSortSelect');
+  if (prefSort) prefSort.value = sortMode;
+}
+
+function onChangeSortMode(mode) {
+  sortMode = mode;
+  syncSortSelectUI();
+  if (window.AndroidBridge && AndroidBridge.setSortMode) {
+    AndroidBridge.setSortMode(mode);
+  }
+  localStorage.setItem('promptpanel_entry_sort_mode', mode);
+  render();
+}
+
+function onChangeCurrentScope(projId) {
+  currentScopeProjectId = projId;
+  localStorage.setItem('promptpanel_current_project_id', projId);
+  const p = activeProjectsList().find(x => x.id === projId);
+  if (p) {
+    const kind = p.groupKindRaw || p.group_kind || (p.isDefault ? 'category' : 'project');
+    if (kind === 'inbox') {
+      switchTab(1);
+    } else if (kind === 'category') {
+      selectedGroupId = p.id;
+      switchTab(2);
+    } else {
+      selectedGroupId = p.id;
+      switchTab(3);
+    }
+  }
+  render();
+}
+
+function onSearchInput() {
+  const val = document.getElementById('searchInput').value || '';
+  document.getElementById('clearSearchBtn').style.display = val.length > 0 ? 'inline-flex' : 'none';
+  document.getElementById('searchTagHint').style.display = val.length > 0 ? 'none' : 'inline-flex';
+  render();
+}
+
+function clearSearch() {
+  document.getElementById('searchInput').value = '';
+  onSearchInput();
 }
 
 function switchTab(idx) {
   currentTab = idx;
-  selectedGroupId = null;
-  for (let i = 0; i < 3; i++) {
+  entryKindFilter = null;
+  entryTagFilter = null;
+  for (let i = 0; i < 4; i++) {
     document.getElementById('nav-' + i).classList.toggle('active', i === idx);
   }
-  const titles = ['速记与待办', '常用类型', '项目管理'];
-  document.getElementById('topTitle').textContent = titles[idx];
-  document.getElementById('fabBtn').textContent = idx === 0 ? '+ 新建待办' : '+ 新建词条';
   render();
-}
-
-function render() {
-  const queryRaw = (document.getElementById('searchInput').value || '').trim();
-  let tagFilter = null;
-  let textFilter = queryRaw.toLowerCase();
-  if (queryRaw.startsWith('#')) {
-    const parts = queryRaw.split(/\s+/);
-    tagFilter = parts[0].slice(1).toLowerCase();
-    textFilter = parts.slice(1).join(' ').toLowerCase();
-  }
-
-  const chipStrip = document.getElementById('chipStrip');
-  const activeProjects = (store.projects || []).filter(p => !p.deletedAt && !p.deleted_at);
-
-  let items = (store.entries || []).filter(e => !e.deletedAt && !e.deleted_at);
-
-  if (currentTab === 0) {
-    chipStrip.style.display = 'none';
-    items = items.filter(e =>
-      (e.projectId || e.project_id) === BUILTIN_INBOX_ID ||
-      e.type === 'todo' ||
-      e.type === 'note'
-    );
-  } else {
-    chipStrip.style.display = 'flex';
-    const targetKind = currentTab === 1 ? 'category' : 'project';
-    const groups = activeProjects.filter(p => {
-      const kind = p.groupKindRaw || p.group_kind || (p.isDefault ? 'category' : 'project');
-      const archived = p.isArchived || p.is_archived || false;
-      return kind === targetKind && (showArchived || !archived);
-    });
-    if (!selectedGroupId || !groups.some(g => g.id === selectedGroupId)) {
-      selectedGroupId = groups.length > 0 ? groups[0].id : null;
-    }
-
-    let chipHtml = '';
-    for (const g of groups) {
-      const archived = g.isArchived || g.is_archived || false;
-      const activeCls = g.id === selectedGroupId ? 'chip active' : 'chip';
-      chipHtml += `<div class="${activeCls}" onclick="selectGroup('${g.id}')">${escapeHtml(g.name)}${archived ? ' (已归档)' : ''}</div>`;
-    }
-    if (currentTab === 2) {
-      chipHtml += `<div class="chip ${showArchived ? 'active' : ''}" onclick="toggleShowArchived()">显示已归档</div>`;
-      if (selectedGroupId) {
-        chipHtml += `<div class="chip" onclick="toggleArchiveSelectedProject()">归档/恢复当前项目</div>`;
-      }
-    }
-    chipStrip.innerHTML = chipHtml;
-
-    items = selectedGroupId
-      ? items.filter(e => (e.projectId || e.project_id) === selectedGroupId)
-      : [];
-  }
-
-  if (tagFilter) {
-    items = items.filter(e => (e.tags || []).some(t => String(t).toLowerCase().includes(tagFilter)));
-  }
-  if (textFilter) {
-    items = items.filter(e =>
-      (e.title || '').toLowerCase().includes(textFilter) ||
-      (e.content || '').toLowerCase().includes(textFilter) ||
-      (e.tags || []).some(t => String(t).toLowerCase().includes(textFilter))
-    );
-  }
-
-  items.sort((a, b) => {
-    const pinA = a.isPinned || a.is_pinned ? 1 : 0;
-    const pinB = b.isPinned || b.is_pinned ? 1 : 0;
-    if (pinA !== pinB) return pinB - pinA;
-    const scoreDiff = frecencyScore(b) - frecencyScore(a);
-    if (Math.abs(scoreDiff) > 0.001) return scoreDiff;
-    return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
-  });
-
-  const listEl = document.getElementById('entryList');
-  if (items.length === 0) {
-    listEl.innerHTML = `<div class="empty-state">暂无匹配词条 · 点击右下角按钮新建</div>`;
-    return;
-  }
-
-  let html = '';
-  for (const item of items) {
-    const vers = versionsForEntry(item.id);
-    const vNum = vers.length > 0 ? (vers[0].versionNumber || vers[0].version_number || 1) : 1;
-    const isTodo = currentTab === 0 || item.type === 'todo';
-    const done = !!(item.isCompleted || item.is_completed);
-    const pinned = !!(item.isPinned || item.is_pinned);
-    const createdStr = String(item.createdAt || item.created_at || '').replace('T', ' ').slice(0, 16);
-    const tagsHtml = (item.tags || []).map(t => `<span class="tag-pill">#${escapeHtml(t)}</span>`).join('');
-
-    html += `
-      <div class="entry-card" onclick="openEditorSheet('${item.id}')">
-        ${isTodo ? `<input type="checkbox" class="entry-check" ${done ? 'checked' : ''} onclick="event.stopPropagation(); toggleTodoDone('${item.id}')" />` : ''}
-        <div class="entry-main">
-          <div class="entry-header">
-            ${pinned ? `<span class="pin-tag">置顶</span>` : ''}
-            <div class="entry-title ${done ? 'done' : ''}">${escapeHtml(item.title)}</div>
-          </div>
-          <div class="entry-body">${escapeHtml(item.content)}</div>
-          <div class="entry-meta">
-            <span>v${vNum}</span>
-            <span>· 用 ${item.useCount || 0} 次</span>
-            <span>· ${createdStr}</span>
-            ${tagsHtml}
-          </div>
-        </div>
-        <button class="copy-btn" onclick="event.stopPropagation(); copyEntry('${item.id}')">复制</button>
-      </div>
-    `;
-  }
-  listEl.innerHTML = html;
 }
 
 function selectGroup(id) {
   selectedGroupId = id;
+  entryKindFilter = null;
+  entryTagFilter = null;
+  render();
+}
+
+function toggleEntryKindFilter(kind) {
+  entryKindFilter = entryKindFilter === kind ? null : kind;
+  render();
+}
+
+function toggleEntryTagFilter(tag) {
+  entryTagFilter = entryTagFilter === tag ? null : tag;
+  render();
+}
+
+function clearEntryFilters() {
+  entryKindFilter = null;
+  entryTagFilter = null;
   render();
 }
 
@@ -856,14 +2549,290 @@ function toggleShowArchived() {
   render();
 }
 
-function toggleArchiveSelectedProject() {
-  const proj = (store.projects || []).find(p => p.id === selectedGroupId);
-  if (!proj) return;
-  proj.isArchived = !(proj.isArchived || proj.is_archived);
-  proj.updatedAt = new Date().toISOString();
-  persistStore();
-  showToast(proj.isArchived ? '已归档项目：' + proj.name : '已恢复项目：' + proj.name);
-  render();
+function compareEntriesByRecencyThenTitle(a, b) {
+  const aTouch = a.lastUsedAt || a.updatedAt || '';
+  const bTouch = b.lastUsedAt || b.updatedAt || '';
+  if (aTouch !== bTouch) return String(bTouch).localeCompare(String(aTouch));
+  return String(a.title || '').localeCompare(String(b.title || ''), 'zh-CN');
+}
+
+function renderScopeHeaderSelect() {
+  const projects = activeProjectsList().filter(p => !(p.isArchived || p.is_archived));
+  if (!projects.some(p => p.id === currentScopeProjectId)) {
+    currentScopeProjectId = projects.length > 0 ? projects[0].id : BUILTIN_INBOX_ID;
+  }
+  document.getElementById('scopeBindLabel').textContent = '当前面板：' + projectNameById(currentScopeProjectId);
+  const sel = document.getElementById('scopeBindSelect');
+  sel.innerHTML = projects.map(p =>
+    `<option value="${p.id}" ${p.id === currentScopeProjectId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
+  ).join('');
+}
+
+function render() {
+  renderScopeHeaderSelect();
+
+  const activeProjects = activeProjectsList();
+  const allEntries = activeEntriesList();
+
+  // Bottom nav 4-section counts
+  const inboxEntriesAll = allEntries.filter(e =>
+    (e.projectId || e.project_id) === BUILTIN_INBOX_ID || e.type === 'todo' || e.type === 'note'
+  );
+  const categoryIds = new Set(
+    activeProjects.filter(p => (p.groupKindRaw || p.group_kind || (p.isDefault ? 'category' : 'project')) === 'category').map(p => p.id)
+  );
+  const projectIds = new Set(
+    activeProjects.filter(p => (p.groupKindRaw || p.group_kind || (p.isDefault ? 'category' : 'project')) === 'project' && (showArchived || !(p.isArchived || p.is_archived))).map(p => p.id)
+  );
+
+  document.getElementById('navCount0').textContent = allEntries.length;
+  document.getElementById('navCount1').textContent = inboxEntriesAll.length;
+  document.getElementById('navCount2').textContent = allEntries.filter(e => categoryIds.has(e.projectId || e.project_id)).length;
+  document.getElementById('navCount3').textContent = allEntries.filter(e => projectIds.has(e.projectId || e.project_id)).length;
+
+  const groupStrip = document.getElementById('groupStrip');
+  let scopedEntries = allEntries.slice();
+
+  if (currentTab === 0) {
+    groupStrip.style.display = 'none';
+  } else if (currentTab === 1) {
+    groupStrip.style.display = 'none';
+    scopedEntries = inboxEntriesAll.slice();
+  } else {
+    groupStrip.style.display = 'flex';
+    const targetKind = currentTab === 2 ? 'category' : 'project';
+    const groups = activeProjects.filter(p => {
+      const kind = p.groupKindRaw || p.group_kind || (p.isDefault ? 'category' : 'project');
+      const archived = p.isArchived || p.is_archived || false;
+      return kind === targetKind && (showArchived || !archived);
+    });
+
+    if (!selectedGroupId || !groups.some(g => g.id === selectedGroupId)) {
+      selectedGroupId = groups.length > 0 ? groups[0].id : null;
+    }
+
+    let gHtml = '';
+    for (const g of groups) {
+      const archived = g.isArchived || g.is_archived || false;
+      const gCount = allEntries.filter(e => (e.projectId || e.project_id) === g.id).length;
+      const isCurrentBind = g.id === currentScopeProjectId;
+      const activeCls = g.id === selectedGroupId ? 'chip active' : 'chip';
+      gHtml += `
+        <button class="${activeCls}" onclick="selectGroup('${g.id}')">
+          <span>${escapeHtml(g.name)}${archived ? ' (已归档)' : ''}${isCurrentBind ? ' · 当前' : ''}</span>
+          <span class="chip-count">${gCount}</span>
+        </button>
+      `;
+    }
+    if (currentTab === 3) {
+      const archivedTotal = activeProjects.filter(p => (p.groupKindRaw || p.group_kind) === 'project' && (p.isArchived || p.is_archived)).length;
+      if (archivedTotal > 0 || showArchived) {
+        gHtml += `<div class="chip-divider"></div>`;
+        gHtml += `<button class="chip ${showArchived ? 'active' : ''}" onclick="toggleShowArchived()"><span>已归档</span><span class="chip-count">${archivedTotal}</span></button>`;
+      }
+    }
+    gHtml += `<div class="chip-divider"></div>`;
+    gHtml += `<button class="chip" onclick="openGroupManagerModal(null)"><span>+ 分组</span></button>`;
+    if (selectedGroupId) {
+      gHtml += `<button class="chip" onclick="openGroupManagerModal('${selectedGroupId}')"><span>分组设置</span></button>`;
+    }
+    groupStrip.innerHTML = gHtml;
+
+    scopedEntries = selectedGroupId
+      ? allEntries.filter(e => (e.projectId || e.project_id) === selectedGroupId)
+      : [];
+  }
+
+  // Search text & #tag query parsing
+  const queryRaw = (document.getElementById('searchInput').value || '').trim();
+  let searchTag = null;
+  let searchText = queryRaw.toLowerCase();
+  if (queryRaw.startsWith('#')) {
+    const parts = queryRaw.split(/\s+/);
+    searchTag = parts[0].slice(1).toLowerCase();
+    searchText = parts.slice(1).join(' ').toLowerCase();
+  }
+
+  if (searchTag) {
+    scopedEntries = scopedEntries.filter(e => (e.tags || []).some(t => String(t).toLowerCase().includes(searchTag)));
+  }
+  if (searchText) {
+    scopedEntries = scopedEntries.filter(e =>
+      (e.title || '').toLowerCase().includes(searchText) ||
+      (e.content || '').toLowerCase().includes(searchText) ||
+      (e.tags || []).some(t => String(t).toLowerCase().includes(searchText))
+    );
+  }
+
+  // Compute Kind & Top Tag Facets (mirrors MainWindowViewModel.refreshEntryFacets)
+  const kindCounts = {};
+  const tagCounts = {};
+  for (const e of scopedEntries) {
+    const k = TYPE_META[e.type] ? e.type : 'prompt';
+    kindCounts[k] = (kindCounts[k] || 0) + 1;
+    for (const t of (e.tags || [])) {
+      tagCounts[t] = (tagCounts[t] || 0) + 1;
+    }
+  }
+  const availableKinds = Object.keys(kindCounts);
+  const topTags = Object.entries(tagCounts)
+    .sort((a, b) => b[1] !== a[1] ? b[1] - a[1] : a[0].localeCompare(b[0]))
+    .slice(0, 6);
+
+  const facetStrip = document.getElementById('facetStrip');
+  const minFacetItems = currentTab >= 2 ? 4 : 2;
+  const shouldShowFacets = Boolean(entryKindFilter || entryTagFilter) ||
+    (scopedEntries.length >= minFacetItems && (availableKinds.length > 1 || topTags.length > 0));
+  if (shouldShowFacets) {
+    facetStrip.style.display = 'flex';
+    const allActive = !entryKindFilter && !entryTagFilter;
+    let fHtml = `
+      <button class="chip ${allActive ? 'active' : ''}" onclick="clearEntryFilters()">
+        <span>全部</span><span class="chip-count">${scopedEntries.length}</span>
+      </button>
+    `;
+    if (availableKinds.length > 0) {
+      fHtml += `<div class="chip-divider"></div>`;
+      for (const k of availableKinds) {
+        const meta = TYPE_META[k] || TYPE_META.prompt;
+        const active = entryKindFilter === k;
+        fHtml += `
+          <button class="chip ${active ? 'active' : ''}" onclick="toggleEntryKindFilter('${k}')">
+            ${meta.svg}
+            <span>${meta.name}</span>
+            <span class="chip-count">${kindCounts[k]}</span>
+          </button>
+        `;
+      }
+    }
+    if (topTags.length > 0) {
+      fHtml += `<div class="chip-divider"></div>`;
+      for (const [tag, cnt] of topTags) {
+        const active = entryTagFilter === tag;
+        fHtml += `
+          <button class="chip ${active ? 'active' : ''}" onclick="toggleEntryTagFilter('${escapeHtml(tag)}')">
+            <span>#${escapeHtml(tag)}</span>
+            <span class="chip-count">${cnt}</span>
+          </button>
+        `;
+      }
+    }
+    facetStrip.innerHTML = fHtml;
+  } else {
+    facetStrip.style.display = 'none';
+  }
+
+  // Apply facet filters
+  let items = scopedEntries.filter(e => {
+    if (entryKindFilter && (e.type || 'prompt') !== entryKindFilter) return false;
+    if (entryTagFilter && !(e.tags || []).some(t => String(t).toLowerCase() === entryTagFilter.toLowerCase())) return false;
+    return true;
+  });
+
+  // Sort using macOS 4 Sort Modes (uses / by_level / recent / alpha)
+  items.sort((a, b) => {
+    const pinA = a.isPinned || a.is_pinned ? 1 : 0;
+    const pinB = b.isPinned || b.is_pinned ? 1 : 0;
+    if (pinA !== pinB) return pinB - pinA;
+
+    if (sortMode === 'uses') {
+      const uA = a.useCount || 0;
+      const uB = b.useCount || 0;
+      if (uA !== uB) return uB - uA;
+      return compareEntriesByRecencyThenTitle(a, b);
+    }
+    if (sortMode === 'by_level') {
+      const lA = resolveEntryLevel(a.useCount || 0).tier;
+      const lB = resolveEntryLevel(b.useCount || 0).tier;
+      if (lA !== lB) return lB - lA;
+      return compareEntriesByRecencyThenTitle(a, b);
+    }
+    if (sortMode === 'recent') {
+      return compareEntriesByRecencyThenTitle(a, b);
+    }
+    if (sortMode === 'alpha') {
+      const cmp = String(a.title || '').localeCompare(String(b.title || ''), 'zh-CN');
+      if (cmp !== 0) return cmp;
+      return compareEntriesByRecencyThenTitle(a, b);
+    }
+    return 0;
+  });
+
+  document.getElementById('entryCountLabel').textContent = items.length + ' 条';
+
+  const listEl = document.getElementById('entryList');
+  if (items.length === 0) {
+    listEl.innerHTML = `
+      <div class="empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+        <span>${queryRaw ? '无匹配内容' : '当前分组暂无内容'}</span>
+      </div>
+    `;
+    return;
+  }
+
+  let html = '';
+  items.forEach((item, idx) => {
+    const typeKey = TYPE_META[item.type] ? item.type : 'prompt';
+    const typeInfo = TYPE_META[typeKey];
+    const isInboxRow = currentTab === 1 || (item.projectId || item.project_id) === BUILTIN_INBOX_ID || typeKey === 'todo' || typeKey === 'note';
+    const done = !!(item.isCompleted || item.is_completed);
+    const pinned = !!(item.isPinned || item.is_pinned);
+    const useCount = item.useCount || 0;
+    const level = resolveEntryLevel(useCount);
+
+    const previewLine = String(item.content || '').replace(/\s+/g, ' ').trim();
+    const lastUsedStr = formatRelativeTime(item.lastUsedAt || item.last_used_at);
+    const secondMeta = currentTab === 0
+      ? projectNameById(item.projectId || item.project_id)
+      : formatShortDay(item.createdAt || item.created_at);
+
+    const tags = item.tags || [];
+    const visibleTags = tags.slice(0, 2);
+    const overflowTags = tags.length - visibleTags.length;
+    const tagsHtml = visibleTags.map(t => `<span class="tag-chip">#${escapeHtml(t)}</span>`).join('') +
+      (overflowTags > 0 ? `<span class="tag-overflow">+${overflowTags}</span>` : '');
+
+    const leadingHtml = isInboxRow
+      ? `<button class="todo-check-btn ${done ? 'done' : ''}" onclick="event.stopPropagation(); toggleTodoDone('${item.id}')" aria-label="切换完成状态">
+          ${done
+            ? '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>'
+            : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="9"/></svg>'}
+        </button>`
+      : `<div class="entry-leading" style="color:${typeInfo.color}">${typeInfo.svg}</div>`;
+
+    const isCopied = lastCopiedEntryId === item.id;
+    const copyIcon = isCopied
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+
+    html += `
+      <div class="entry-row ${pinned ? 'pinned-row' : ''}" onclick="openEditorSheet('${item.id}')">
+        ${leadingHtml}
+        <div class="entry-main">
+          <div class="entry-header">
+            <div class="entry-title ${done ? 'done' : ''}">${escapeHtml(item.title)}</div>
+            ${pinned ? `<svg class="pin-glyph" viewBox="0 0 24 24" fill="currentColor"><path d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>` : ''}
+            ${useCount > 0 ? `<span class="level-badge" style="color:${level.color};background:${level.bg};">${useCount}次</span>` : ''}
+            <span class="type-badge">${typeInfo.name}</span>
+          </div>
+          <div class="entry-preview ${done ? 'done' : ''}">${escapeHtml(previewLine)}</div>
+          <div class="entry-meta">
+            <span>${escapeHtml(lastUsedStr)}</span>
+            <span class="meta-sep">·</span>
+            <span class="${currentTab === 0 ? 'meta-proj' : 'meta-mono'}">${escapeHtml(secondMeta)}</span>
+            <span class="meta-spacer"></span>
+            ${tags.length > 0 ? `<div class="tag-chips">${tagsHtml}</div>` : ''}
+          </div>
+        </div>
+        <button class="row-copy-btn ${isCopied ? 'copied' : ''}" onclick="event.stopPropagation(); copyEntry('${item.id}')" aria-label="复制内容">
+          ${copyIcon}
+        </button>
+      </div>
+      ${idx < items.length - 1 ? '<div class="row-divider"></div>' : ''}
+    `;
+  });
+  listEl.innerHTML = html;
 }
 
 function toggleTodoDone(entryId) {
@@ -871,38 +2840,135 @@ function toggleTodoDone(entryId) {
   if (!item) return;
   item.isCompleted = !(item.isCompleted || item.is_completed);
   item.updatedAt = new Date().toISOString();
-  persistStore();
+  persistStore(true);
   render();
+}
+
+function writeSystemClipboard(label, text) {
+  if (window.AndroidBridge && AndroidBridge.copyText) {
+    AndroidBridge.copyText(label || 'PromptPanel', text || '');
+  } else if (navigator.clipboard) {
+    navigator.clipboard.writeText(text || '');
+  }
+}
+
+function readSystemClipboard() {
+  if (window.AndroidBridge && AndroidBridge.readClipboardText) {
+    return AndroidBridge.readClipboardText() || '';
+  }
+  return clipboardPreviewText || '';
 }
 
 function copyEntry(entryId) {
   const item = (store.entries || []).find(e => e.id === entryId);
   if (!item) return;
+  const now = new Date().toISOString();
   item.useCount = (item.useCount || 0) + 1;
-  item.lastUsedAt = new Date().toISOString();
-  persistStore();
+  item.lastUsedAt = now;
+  item.updatedAt = now;
+  lastCopiedEntryId = entryId;
+  persistStore(true);
 
-  if (window.AndroidBridge && AndroidBridge.copyText) {
-    AndroidBridge.copyText(item.title, item.content);
-  } else if (navigator.clipboard) {
-    navigator.clipboard.writeText(item.content);
-  }
+  writeSystemClipboard(item.title, item.content);
   showToast('已复制：' + item.title);
   render();
+  clearTimeout(window.__copyFeedbackTimer);
+  window.__copyFeedbackTimer = setTimeout(() => {
+    lastCopiedEntryId = null;
+    render();
+  }, 1200);
+}
+
+function copyEditingEntry() {
+  if (!editingEntryId) return;
+  copyEntry(editingEntryId);
+}
+
+/* PreviewPane Inline Draft & Dirty Detection */
+function syncDraftSelectLabels() {
+  const projSel = document.getElementById('fieldProject');
+  const typeSel = document.getElementById('fieldType');
+  const projOpt = projSel && projSel.options[projSel.selectedIndex];
+  const typeOpt = typeSel && typeSel.options[typeSel.selectedIndex];
+  document.getElementById('fieldProjectLabel').textContent = projOpt ? projOpt.textContent : '通用项目';
+  document.getElementById('fieldTypeLabel').textContent = typeOpt ? typeOpt.textContent : '提示词';
+}
+
+function updateDraftPills() {
+  document.getElementById('draftDonePill').classList.toggle('active-success', draftIsCompleted);
+  document.getElementById('draftPinPill').classList.toggle('active-warn', draftIsPinned);
+}
+
+function toggleDraftDone() {
+  draftIsCompleted = !draftIsCompleted;
+  updateDraftPills();
+  onInlineDraftMutated();
+}
+
+function toggleDraftPin() {
+  draftIsPinned = !draftIsPinned;
+  updateDraftPills();
+  onInlineDraftMutated();
+}
+
+function onInlineDraftMutated() {
+  const content = document.getElementById('fieldContent').value || '';
+  document.getElementById('charCountLabel').textContent = content.length + ' 字';
+
+  const dirtyBar = document.getElementById('dirtySaveBar');
+  if (!editingEntryId) {
+    dirtyBar.classList.remove('visible');
+    return;
+  }
+  const item = (store.entries || []).find(e => e.id === editingEntryId);
+  if (!item) return;
+
+  const title = document.getElementById('fieldTitle').value || '';
+  const projId = document.getElementById('fieldProject').value;
+  const type = document.getElementById('fieldType').value;
+  const tagsRaw = (document.getElementById('fieldTags').value || '').trim();
+  const itemTagsRaw = (item.tags || []).join(' ');
+
+  const contentChanged = title !== (item.title || '') || content !== (item.content || '');
+  const metaChanged = projId !== (item.projectId || item.project_id) ||
+    type !== (item.type || 'prompt') ||
+    tagsRaw !== itemTagsRaw ||
+    draftIsCompleted !== !!(item.isCompleted || item.is_completed) ||
+    draftIsPinned !== !!(item.isPinned || item.is_pinned);
+
+  if (contentChanged || metaChanged) {
+    const vers = versionsForEntry(item.id);
+    const latestVer = vers.length > 0 ? (vers[0].versionNumber || 1) : 1;
+    document.getElementById('dirtySaveText').textContent = contentChanged
+      ? `未保存修改 · 保存后生成 v${latestVer + 1}`
+      : '未保存修改';
+    dirtyBar.classList.add('visible');
+  } else {
+    dirtyBar.classList.remove('visible');
+  }
+}
+
+function discardInlineDraft() {
+  if (editingEntryId) {
+    openEditorSheet(editingEntryId);
+  }
 }
 
 function openEditorSheet(entryId) {
   editingEntryId = entryId;
   const projSelect = document.getElementById('fieldProject');
-  const activeProjects = (store.projects || []).filter(p => !p.deletedAt && !p.deleted_at);
+  const activeProjects = activeProjectsList();
   projSelect.innerHTML = activeProjects.map(p =>
     `<option value="${p.id}">${escapeHtml(p.name)}</option>`
   ).join('');
 
   const item = entryId ? (store.entries || []).find(e => e.id === entryId) : null;
-  document.getElementById('editorTitle').textContent = item ? '编辑词条与历史版本' : '新建词条';
-  document.getElementById('deleteBtn').style.display = item ? 'inline-block' : 'none';
-  document.getElementById('pinBtn').style.display = item ? 'inline-block' : 'none';
+  document.getElementById('editorTitle').textContent = item ? '词条详情' : '新建词条';
+  document.getElementById('deleteBtn').style.display = item ? 'inline-flex' : 'none';
+  document.getElementById('modalCopyBtn').style.display = item ? 'inline-flex' : 'none';
+  document.getElementById('modalCloneBtn').style.display = item ? 'inline-flex' : 'none';
+  document.getElementById('newEntryActionRow').style.display = item ? 'none' : 'flex';
+  document.getElementById('dirtySaveBar').classList.remove('visible');
 
   if (item) {
     projSelect.value = item.projectId || item.project_id || BUILTIN_INBOX_ID;
@@ -910,20 +2976,45 @@ function openEditorSheet(entryId) {
     document.getElementById('fieldTitle').value = item.title || '';
     document.getElementById('fieldContent').value = item.content || '';
     document.getElementById('fieldTags').value = (item.tags || []).join(' ');
-    document.getElementById('pinBtn').textContent = (item.isPinned || item.is_pinned) ? '取消置顶' : '置顶';
-    renderVersionHistory(item.id);
+    draftIsCompleted = !!(item.isCompleted || item.is_completed);
+    draftIsPinned = !!(item.isPinned || item.is_pinned);
+
+    const vers = versionsForEntry(item.id);
+    const latestVer = vers.length > 0 ? (vers[0].versionNumber || 1) : 1;
+    document.getElementById('versionPillBadge').textContent = 'v' + latestVer;
+
+    const createdStr = formatShortDay(item.createdAt || item.created_at);
+    const updatedStr = formatShortDay(item.updatedAt || item.updated_at);
+    const usedStr = item.lastUsedAt
+      ? `使用 ${formatRelativeTime(item.lastUsedAt)} (${item.useCount || 0}次)`
+      : '未使用';
+    const srcHint = item.sourceEntryId ? ' · 来自常用类型' : '';
+    document.getElementById('detailMetaLine').textContent = `创建 ${createdStr} · 修改 ${updatedStr} · ${usedStr}${srcHint}`;
+
+    renderVersionHistory(item.id, item.content);
   } else {
-    projSelect.value = currentTab === 0 ? BUILTIN_INBOX_ID : (selectedGroupId || 'default-general');
-    document.getElementById('fieldType').value = currentTab === 0 ? 'todo' : 'prompt';
+    const defaultProj = currentTab === 1
+      ? BUILTIN_INBOX_ID
+      : (selectedGroupId || currentScopeProjectId || 'default-general');
+    projSelect.value = defaultProj;
+    document.getElementById('fieldType').value = currentTab === 1 ? (entryKindFilter || 'todo') : (entryKindFilter || 'prompt');
     document.getElementById('fieldTitle').value = '';
     document.getElementById('fieldContent').value = '';
     document.getElementById('fieldTags').value = '';
+    draftIsCompleted = false;
+    draftIsPinned = false;
+    document.getElementById('versionPillBadge').textContent = 'v1';
+    document.getElementById('detailMetaLine').textContent = '新建词条 · 保存后自动记录 v1 初始版本';
     document.getElementById('versionBox').style.display = 'none';
   }
+  syncDraftSelectLabels();
+  updateDraftPills();
+  onInlineDraftMutated();
   document.getElementById('editorModal').classList.add('open');
+  syncModalOpenBridge();
 }
 
-function renderVersionHistory(entryId) {
+function renderVersionHistory(entryId, currentContent) {
   const vers = versionsForEntry(entryId);
   const box = document.getElementById('versionBox');
   const list = document.getElementById('versionList');
@@ -932,17 +3023,39 @@ function renderVersionHistory(entryId) {
     return;
   }
   box.style.display = 'block';
+  document.getElementById('versionCountLabel').textContent = vers.length + ' 个版本';
   list.innerHTML = vers.map(v => {
     const vNum = v.versionNumber || v.version_number || 1;
     const note = v.changeNote || v.change_note || '历史快照';
-    const time = String(v.createdAt || v.created_at || '').replace('T', ' ').slice(0, 16);
+    const time = formatFullDateTime(v.createdAt || v.created_at);
+    const content = String(v.content || '');
+    const isSame = content === currentContent;
     return `
-      <div class="version-item">
-        <div><strong>v${vNum}</strong> · ${escapeHtml(note)} <span style="color:var(--text-muted)">(${time})</span></div>
-        <button class="copy-btn" onclick="rollbackToVersion('${entryId}', '${v.id}')">回滚到此版</button>
+      <div class="version-card">
+        <div class="version-card-top">
+          <span class="version-num">v${vNum}</span>
+          <span class="version-time">${escapeHtml(time)}</span>
+          <span>· ${escapeHtml(note)}</span>
+          <span class="version-chars">${content.length} 字</span>
+        </div>
+        <div class="version-snippet">${escapeHtml(content)}</div>
+        <div class="version-actions">
+          <button class="mini-pill-btn" onclick="copyVersionContent('${v.id}')">复制</button>
+          ${isSame
+            ? `<span style="font-size:10px;color:var(--text-muted);">当前版本</span>`
+            : `<button class="mini-pill-btn primary" onclick="rollbackToVersion('${entryId}', '${v.id}')">恢复此版本</button>`
+          }
+        </div>
       </div>
     `;
   }).join('');
+}
+
+function copyVersionContent(versionId) {
+  const targetVer = (store.versions || []).find(v => v.id === versionId);
+  if (!targetVer) return;
+  writeSystemClipboard(targetVer.title, targetVer.content);
+  showBanner('已复制 v' + (targetVer.versionNumber || 1) + ' 内容');
 }
 
 function rollbackToVersion(entryId, versionId) {
@@ -951,12 +3064,27 @@ function rollbackToVersion(entryId, versionId) {
   if (!item || !targetVer) return;
 
   const vers = versionsForEntry(entryId);
-  const nextVer = (vers.length > 0 ? (vers[0].versionNumber || 1) : 0) + 1;
+  let nextVer = vers.length > 0 ? (vers[0].versionNumber || 1) : 1;
   const now = new Date().toISOString();
+
+  // Snapshot current state before restoring if different from latest snapshot
+  if (!vers.length || vers[0].content !== item.content || vers[0].title !== item.title) {
+    nextVer += 1;
+    store.versions.push({
+      id: entryId + '-v' + nextVer,
+      entryId: entryId,
+      versionNumber: nextVer,
+      title: item.title,
+      content: item.content,
+      changeNote: '恢复前自动留存当前版本',
+      createdAt: now
+    });
+  }
 
   item.title = targetVer.title;
   item.content = targetVer.content;
   item.updatedAt = now;
+  nextVer += 1;
 
   store.versions.push({
     id: entryId + '-v' + nextVer,
@@ -964,14 +3092,14 @@ function rollbackToVersion(entryId, versionId) {
     versionNumber: nextVer,
     title: item.title,
     content: item.content,
-    changeNote: '回滚至 v' + (targetVer.versionNumber || 1),
+    changeNote: '恢复至 v' + (targetVer.versionNumber || 1),
     createdAt: now
   });
 
-  persistStore();
+  persistStore(true);
   openEditorSheet(entryId);
   render();
-  showToast('已回滚至 v' + (targetVer.versionNumber || 1));
+  showToast('已恢复至 v' + (targetVer.versionNumber || 1));
 }
 
 function saveCurrentEntry() {
@@ -985,7 +3113,7 @@ function saveCurrentEntry() {
   const projectId = document.getElementById('fieldProject').value || BUILTIN_INBOX_ID;
   const type = document.getElementById('fieldType').value || 'prompt';
   const tagsRaw = (document.getElementById('fieldTags').value || '').trim();
-  const tags = tagsRaw ? tagsRaw.split(/[\s,，]+/).map(t => t.replace(/^#/, '')).filter(Boolean) : [];
+  const tags = tagsRaw ? tagsRaw.split(/[\s,，、]+/).map(t => t.replace(/^#/, '').slice(0, 10)).filter(Boolean) : [];
   const now = new Date().toISOString();
 
   if (editingEntryId) {
@@ -997,6 +3125,8 @@ function saveCurrentEntry() {
       item.title = title;
       item.content = content;
       item.tags = tags;
+      item.isCompleted = draftIsCompleted;
+      item.isPinned = draftIsPinned;
       item.updatedAt = now;
       if (changed) {
         const vers = versionsForEntry(item.id);
@@ -1007,10 +3137,15 @@ function saveCurrentEntry() {
           versionNumber: nextVer,
           title: title,
           content: content,
-          changeNote: '手机端编辑保存',
+          changeNote: '编辑保存',
           createdAt: now
         });
       }
+      persistStore(true);
+      openEditorSheet(item.id);
+      render();
+      showToast('已保存修改');
+      return;
     }
   } else {
     const newId = 'mob-' + Date.now();
@@ -1020,8 +3155,8 @@ function saveCurrentEntry() {
       title: title,
       content: content,
       type: type,
-      isPinned: false,
-      isCompleted: false,
+      isPinned: draftIsPinned,
+      isCompleted: draftIsCompleted,
       sortOrder: 0,
       useCount: 0,
       lastUsedAt: null,
@@ -1037,27 +3172,14 @@ function saveCurrentEntry() {
       versionNumber: 1,
       title: title,
       content: content,
-      changeNote: '手机端创建',
+      changeNote: '新建词条',
       createdAt: now
     });
+    persistStore(true);
+    closeModals();
+    render();
+    showToast('已创建词条');
   }
-
-  persistStore();
-  closeModals();
-  render();
-  showToast('已保存');
-}
-
-function togglePinCurrentEntry() {
-  if (!editingEntryId) return;
-  const item = (store.entries || []).find(e => e.id === editingEntryId);
-  if (!item) return;
-  item.isPinned = !(item.isPinned || item.is_pinned);
-  item.updatedAt = new Date().toISOString();
-  persistStore();
-  closeModals();
-  render();
-  showToast(item.isPinned ? '已置顶' : '已取消置顶');
 }
 
 function deleteCurrentEntry() {
@@ -1066,13 +3188,318 @@ function deleteCurrentEntry() {
   if (!item) return;
   item.deletedAt = new Date().toISOString();
   item.updatedAt = item.deletedAt;
-  persistStore();
+  persistStore(true);
   closeModals();
   render();
-  showToast('已删除词条');
+  showBanner('已删除词条：' + item.title);
 }
 
-function openSettingsSheet() {
+/* Clone Entry to Another Project */
+function openCloneCurrentEntryModal() {
+  if (!editingEntryId) return;
+  const item = (store.entries || []).find(e => e.id === editingEntryId);
+  if (!item) return;
+  const targets = activeProjectsList().filter(p => !(p.isArchived || p.is_archived) && p.id !== (item.projectId || item.project_id));
+  const listEl = document.getElementById('cloneTargetList');
+  if (targets.length === 0) {
+    listEl.innerHTML = `<div style="color:var(--text-muted);padding:12px 0;">暂无其他可用分组</div>`;
+  } else {
+    listEl.innerHTML = targets.map(t => `
+      <div class="settings-row" style="cursor:pointer;" onclick="cloneEntryToProject('${item.id}', '${t.id}')">
+        <span class="settings-row-label">${escapeHtml(t.name)}</span>
+        <span class="mini-pill-btn primary">克隆到此分组</span>
+      </div>
+    `).join('');
+  }
+  document.getElementById('cloneModal').classList.add('open');
+  syncModalOpenBridge();
+}
+
+function cloneEntryToProject(entryId, targetProjectId) {
+  const src = (store.entries || []).find(e => e.id === entryId);
+  if (!src) return;
+  const now = new Date().toISOString();
+  const newId = 'clone-' + Date.now();
+  store.entries.unshift({
+    id: newId,
+    projectId: targetProjectId,
+    title: src.title,
+    content: src.content,
+    type: src.type || 'prompt',
+    isPinned: false,
+    isCompleted: false,
+    sortOrder: 0,
+    useCount: 0,
+    lastUsedAt: null,
+    createdAt: now,
+    updatedAt: now,
+    deletedAt: null,
+    sourceEntryId: src.id,
+    tags: (src.tags || []).slice()
+  });
+  store.versions.push({
+    id: newId + '-v1',
+    entryId: newId,
+    versionNumber: 1,
+    title: src.title,
+    content: src.content,
+    changeNote: '克隆自「' + projectNameById(src.projectId || src.project_id) + '」',
+    createdAt: now
+  });
+  persistStore(true);
+  document.getElementById('cloneModal').classList.remove('open');
+  render();
+  showToast('已克隆到「' + projectNameById(targetProjectId) + '」');
+}
+
+/* Clipboard Quick Create & Reference Assembly Window */
+function refreshClipboardPreview() {
+  clipboardPreviewText = readSystemClipboard().trim();
+  const refBox = document.getElementById('refClipboardPreview');
+  if (refBox) {
+    refBox.textContent = clipboardPreviewText ? clipboardPreviewText.replace(/\s+/g, ' ') : '剪贴板为空';
+  }
+  const quickBox = document.getElementById('quickClipPreview');
+  if (quickBox) {
+    quickBox.textContent = clipboardPreviewText || '（系统剪贴板为空）';
+  }
+}
+
+function openClipboardMenuSheet() {
+  refreshClipboardPreview();
+  document.getElementById('clipboardMenuModal').classList.add('open');
+  syncModalOpenBridge();
+}
+
+function createEntryFromText(text, targetProjectId, type) {
+  const trimmed = (text || '').trim();
+  if (!trimmed) {
+    showToast('剪贴板内容为空');
+    return false;
+  }
+  const title = trimmed.split('\n')[0].slice(0, 28);
+  const now = new Date().toISOString();
+  const newId = 'clip-' + Date.now();
+  store.entries.unshift({
+    id: newId,
+    projectId: targetProjectId,
+    title: title,
+    content: trimmed,
+    type: type,
+    isPinned: false,
+    isCompleted: false,
+    sortOrder: 0,
+    useCount: 0,
+    lastUsedAt: null,
+    createdAt: now,
+    updatedAt: now,
+    deletedAt: null,
+    sourceEntryId: null,
+    tags: []
+  });
+  store.versions.push({
+    id: newId + '-v1',
+    entryId: newId,
+    versionNumber: 1,
+    title: title,
+    content: trimmed,
+    changeNote: '从剪贴板导入',
+    createdAt: now
+  });
+  persistStore(true);
+  render();
+  return true;
+}
+
+function quickCreateFromClipboard(targetMode, type) {
+  refreshClipboardPreview();
+  const targetId = targetMode === 'inbox'
+    ? BUILTIN_INBOX_ID
+    : (selectedGroupId || currentScopeProjectId || 'default-general');
+  if (createEntryFromText(clipboardPreviewText, targetId, type)) {
+    closeModals();
+    showToast('已存入「' + projectNameById(targetId) + '」');
+  }
+}
+
+function openReferenceModal() {
+  refreshClipboardPreview();
+  const projs = activeProjectsList().filter(p => !(p.isArchived || p.is_archived));
+  const srcSel = document.getElementById('refSourceSelect');
+  srcSel.innerHTML = `<option value="${ALL_PROJECTS_ID}">全部来源</option>` +
+    projs.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+
+  const tgtSel = document.getElementById('refTargetSelect');
+  const defaultTgt = selectedGroupId || currentScopeProjectId || 'default-general';
+  tgtSel.innerHTML = projs.map(p =>
+    `<option value="${p.id}" ${p.id === defaultTgt ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
+  ).join('');
+
+  renderReferenceWindow();
+  document.getElementById('referenceModal').classList.add('open');
+  syncModalOpenBridge();
+}
+
+function renderReferenceWindow() {
+  const srcId = document.getElementById('refSourceSelect').value || ALL_PROJECTS_ID;
+  const tgtId = document.getElementById('refTargetSelect').value || 'default-general';
+  const tgtName = projectNameById(tgtId);
+  const q = (document.getElementById('refSearchInput').value || '').trim().toLowerCase();
+
+  document.getElementById('refClipToTargetBtn').textContent = `存入「${tgtName}」`;
+
+  let items = activeEntriesList();
+  if (srcId !== ALL_PROJECTS_ID) {
+    items = items.filter(e => (e.projectId || e.project_id) === srcId);
+  }
+  if (q) {
+    items = items.filter(e =>
+      (e.title || '').toLowerCase().includes(q) ||
+      (e.content || '').toLowerCase().includes(q)
+    );
+  }
+
+  const listEl = document.getElementById('refEntryList');
+  if (items.length === 0) {
+    listEl.innerHTML = `<div class="empty-state"><span>没有匹配的参考词条</span></div>`;
+    return;
+  }
+
+  listEl.innerHTML = items.map(item => {
+    const sName = projectNameById(item.projectId || item.project_id);
+    const inTarget = (item.projectId || item.project_id) === tgtId;
+    return `
+      <div class="ref-row">
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+            <span class="ref-source-badge">${escapeHtml(sName)}</span>
+            <span style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(item.title)}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text-sub);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${escapeHtml(item.content)}</div>
+        </div>
+        <div style="display:flex;gap:5px;flex-shrink:0;">
+          <button class="mini-pill-btn" onclick="copyEntry('${item.id}')">复制</button>
+          <button class="mini-pill-btn primary" onclick="cloneEntryToProject('${item.id}', '${tgtId}');renderReferenceWindow();">${inTarget ? '再次克隆' : '克隆到「' + escapeHtml(tgtName) + '」'}</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function importClipboardToInboxTodo() {
+  refreshClipboardPreview();
+  if (createEntryFromText(clipboardPreviewText, BUILTIN_INBOX_ID, 'todo')) {
+    renderReferenceWindow();
+    showToast('已记入「速记与待办」');
+  }
+}
+
+function importClipboardToRefTarget() {
+  refreshClipboardPreview();
+  const tgtId = document.getElementById('refTargetSelect').value || 'default-general';
+  if (createEntryFromText(clipboardPreviewText, tgtId, 'prompt')) {
+    renderReferenceWindow();
+    showToast('已存入「' + projectNameById(tgtId) + '」');
+  }
+}
+
+/* Group Management (Create / Rename / Switch Kind / Archive / Delete) */
+function openGroupManagerModal(groupId) {
+  editingGroupId = groupId;
+  const grp = groupId ? activeProjectsList().find(p => p.id === groupId) : null;
+  document.getElementById('groupModalTitle').textContent = grp ? '编辑分组' : '新建分组';
+  document.getElementById('groupModalName').value = grp ? grp.name : '';
+  document.getElementById('groupModalKind').value = grp
+    ? (grp.groupKindRaw || grp.group_kind || 'project')
+    : (currentTab === 2 ? 'category' : 'project');
+
+  const isProtected = grp && (grp.id === BUILTIN_INBOX_ID || grp.isDefault);
+  document.getElementById('groupDeleteBtn').style.display = (grp && !isProtected) ? 'inline-flex' : 'none';
+  document.getElementById('groupArchiveBtn').style.display = (grp && !isProtected) ? 'inline-flex' : 'none';
+  if (grp && !isProtected) {
+    document.getElementById('groupArchiveBtn').textContent = (grp.isArchived || grp.is_archived) ? '取消归档' : '归档';
+  }
+  document.getElementById('groupModal').classList.add('open');
+  syncModalOpenBridge();
+}
+
+function saveEditingGroup() {
+  const name = (document.getElementById('groupModalName').value || '').trim();
+  const kind = document.getElementById('groupModalKind').value || 'project';
+  if (!name) {
+    showToast('请输入分组名称');
+    return;
+  }
+  const now = new Date().toISOString();
+  if (editingGroupId) {
+    const grp = (store.projects || []).find(p => p.id === editingGroupId);
+    if (grp) {
+      grp.name = name;
+      if (grp.id !== BUILTIN_INBOX_ID) {
+        grp.groupKindRaw = kind;
+      }
+      grp.updatedAt = now;
+    }
+  } else {
+    const newProj = {
+      id: 'grp-' + Date.now(),
+      name: name,
+      isDefault: false,
+      groupKindRaw: kind,
+      isArchived: false,
+      iconName: kind === 'category' ? 'square.grid.2x2' : 'folder',
+      sortOrder: store.projects.length,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null
+    };
+    store.projects.push(newProj);
+    selectedGroupId = newProj.id;
+  }
+  persistStore(true);
+  closeModals();
+  if (mainSegment === 'settings') renderSettingsView();
+  render();
+  showToast('已保存分组：' + name);
+}
+
+function archiveEditingGroup() {
+  if (!editingGroupId) return;
+  const grp = (store.projects || []).find(p => p.id === editingGroupId);
+  if (!grp) return;
+  grp.isArchived = !(grp.isArchived || grp.is_archived);
+  grp.updatedAt = new Date().toISOString();
+  persistStore(true);
+  closeModals();
+  if (mainSegment === 'settings') renderSettingsView();
+  render();
+  showToast(grp.isArchived ? '已归档：' + grp.name : '已恢复：' + grp.name);
+}
+
+function deleteEditingGroup() {
+  if (!editingGroupId) return;
+  const grp = (store.projects || []).find(p => p.id === editingGroupId);
+  if (!grp || grp.id === BUILTIN_INBOX_ID || grp.isDefault) return;
+  const now = new Date().toISOString();
+  grp.deletedAt = now;
+  grp.updatedAt = now;
+  // Migrate active entries to default-general
+  for (const e of (store.entries || [])) {
+    if ((e.projectId || e.project_id) === grp.id) {
+      e.projectId = 'default-general';
+      e.updatedAt = now;
+    }
+  }
+  selectedGroupId = null;
+  persistStore(true);
+  closeModals();
+  if (mainSegment === 'settings') renderSettingsView();
+  render();
+  showBanner('已删除分组「' + grp.name + '」，所属词条已迁移至通用项目');
+}
+
+/* Settings View & CloudSyncService v2 Parity */
+function getSyncCredentials() {
   let ep = '';
   let tk = '';
   if (window.AndroidBridge && AndroidBridge.getEndpoint) {
@@ -1082,9 +3509,64 @@ function openSettingsSheet() {
     ep = localStorage.getItem('promptpanel_cloud_endpoint') || '';
     tk = localStorage.getItem('promptpanel_cloud_api_key') || '';
   }
-  document.getElementById('syncEndpoint').value = ep;
-  document.getElementById('syncToken').value = tk;
-  document.getElementById('settingsModal').classList.add('open');
+  return { ep: ep.trim(), tk: tk.trim() };
+}
+
+function isAutoSyncEnabled() {
+  if (window.AndroidBridge && AndroidBridge.getAutoSync) {
+    return !!AndroidBridge.getAutoSync();
+  }
+  return localStorage.getItem('promptpanel_cloud_sync_enabled') === 'true';
+}
+
+function syncAutoSyncSwitchUI(checked) {
+  const sw = document.getElementById('autoSyncSwitch');
+  if (!sw) return;
+  sw.classList.toggle('checked', !!checked);
+  sw.setAttribute('aria-checked', checked ? 'true' : 'false');
+}
+
+function toggleAutoSyncSwitch() {
+  const next = !isAutoSyncEnabled();
+  onToggleAutoSync(next);
+  syncAutoSyncSwitchUI(next);
+}
+
+function onToggleAutoSync(checked) {
+  if (window.AndroidBridge && AndroidBridge.setAutoSync) {
+    AndroidBridge.setAutoSync(checked);
+  }
+  localStorage.setItem('promptpanel_cloud_sync_enabled', checked ? 'true' : 'false');
+}
+
+function renderSettingsView() {
+  const creds = getSyncCredentials();
+  document.getElementById('syncEndpoint').value = creds.ep;
+  document.getElementById('syncToken').value = creds.tk;
+  syncAutoSyncSwitchUI(isAutoSyncEnabled());
+  syncSortSelectUI();
+
+  const pCount = activeProjectsList().length;
+  const eCount = activeEntriesList().length;
+  const vCount = (store.versions || []).length;
+  document.getElementById('storageStatsLine').textContent = `当前本地词库：${pCount} 个分组 · ${eCount} 条词条 · ${vCount} 个历史版本快照`;
+
+  const groupListEl = document.getElementById('settingsGroupList');
+  groupListEl.innerHTML = activeProjectsList().map(p => {
+    const kind = p.groupKindRaw || p.group_kind || (p.isDefault ? 'category' : 'project');
+    const kindLabel = kind === 'inbox' ? '系统内置' : (kind === 'category' ? '常用类型' : '项目');
+    const cnt = activeEntriesList().filter(e => (e.projectId || e.project_id) === p.id).length;
+    const arch = (p.isArchived || p.is_archived) ? ' · 已归档' : '';
+    return `
+      <div class="settings-row">
+        <div>
+          <div class="settings-row-label">${escapeHtml(p.name)}</div>
+          <div class="settings-row-desc">${kindLabel} · ${cnt} 条词条${arch}</div>
+        </div>
+        <button class="mini-pill-btn" onclick="openGroupManagerModal('${p.id}')">编辑</button>
+      </div>
+    `;
+  }).join('');
 }
 
 function saveSyncSettings() {
@@ -1092,78 +3574,197 @@ function saveSyncSettings() {
   const tk = (document.getElementById('syncToken').value || '').trim();
   if (window.AndroidBridge && AndroidBridge.saveSettings) {
     AndroidBridge.saveSettings(ep, tk);
+    localStorage.removeItem('promptpanel_cloud_api_key');
+  } else {
+    localStorage.setItem('promptpanel_cloud_endpoint', ep);
+    localStorage.setItem('promptpanel_cloud_api_key', tk);
   }
-  localStorage.setItem('promptpanel_cloud_endpoint', ep);
-  localStorage.setItem('promptpanel_cloud_api_key', tk);
-  showToast('同步配置已保存');
+  showToast('同步配置已加密保存');
 }
 
-function createNewGroup() {
-  const name = (document.getElementById('newGroupName').value || '').trim();
-  const kind = document.getElementById('newGroupKind').value || 'project';
-  if (!name) {
-    showToast('请输入名称');
+function resolveSyncUrl(rawEndpoint) {
+  let u = rawEndpoint.trim();
+  if (!u) return '';
+  try {
+    const parsed = new URL(u);
+    if (!parsed.pathname || parsed.pathname === '/') {
+      parsed.pathname = '/v1/sync';
+    }
+    return parsed.toString();
+  } catch (e) {
+    return u;
+  }
+}
+
+function resolveHealthUrl(rawEndpoint) {
+  let u = rawEndpoint.trim();
+  if (!u) return '';
+  try {
+    const parsed = new URL(u);
+    let path = parsed.pathname.replace(/\/+$/, '');
+    if (!path || path === '/') {
+      parsed.pathname = '/v1/health';
+    } else if (path.endsWith('/v1/health') || path.endsWith('/health')) {
+      parsed.pathname = path;
+    } else {
+      for (const suffix of ['/v1/sync', '/v1/promptpanel', '/sync']) {
+        if (path.endsWith(suffix)) {
+          parsed.pathname = path.slice(0, -suffix.length) + '/v1/health';
+          return parsed.toString();
+        }
+      }
+      parsed.pathname = path + '/v1/health';
+    }
+    return parsed.toString();
+  } catch (e) {
+    return u;
+  }
+}
+
+function testCloudConnection() {
+  saveSyncSettings();
+  const { ep, tk } = getSyncCredentials();
+  if (!ep) {
+    showToast('请先填写云端同步地址');
     return;
   }
-  const now = new Date().toISOString();
-  const newProj = {
-    id: 'grp-' + Date.now(),
-    name: name,
-    isDefault: false,
-    groupKindRaw: kind,
-    isArchived: false,
-    iconName: kind === 'category' ? 'square.grid.2x2' : 'folder',
-    sortOrder: store.projects.length,
-    createdAt: now,
-    updatedAt: now,
-    deletedAt: null
-  };
-  store.projects.push(newProj);
-  persistStore();
-  document.getElementById('newGroupName').value = '';
-  selectedGroupId = newProj.id;
-  switchTab(kind === 'category' ? 1 : 2);
-  closeModals();
-  showToast('已创建：' + name);
+  const healthUrl = resolveHealthUrl(ep);
+  document.getElementById('syncBadgeText').textContent = '检测中…';
+  const t0 = Date.now();
+  setTimeout(() => {
+    try {
+      if (window.AndroidBridge && AndroidBridge.httpRequest) {
+        const res = AndroidBridge.httpRequest('GET', healthUrl, tk, '');
+        const nl = res.indexOf('\n');
+        const code = parseInt(res.slice(0, nl), 10);
+        const body = res.slice(nl + 1).trim();
+        const latency = Math.max(1, Date.now() - t0);
+        if (code >= 200 && code < 300) {
+          let info = {};
+          try { info = JSON.parse(body); } catch (e) {}
+          const pCnt = info.projectCount || 0;
+          const eCnt = info.entryCount || 0;
+          const vCnt = info.versionCount || 0;
+          const ns = info.namespace ? `空间 ${info.namespace}` : '已连接';
+          document.getElementById('syncBadgeText').textContent = '连接正常';
+          document.getElementById('syncStatusText').textContent = `连接正常 · ${latency} ms · ${ns}（云端 ${pCnt} 组 / ${eCnt} 条 / ${vCnt} 版）`;
+          showToast('连接正常 (' + latency + ' ms)');
+        } else {
+          document.getElementById('syncBadgeText').textContent = 'HTTP ' + code;
+          document.getElementById('syncStatusText').textContent = '连接失败：HTTP ' + code;
+          showToast('连接失败 (HTTP ' + code + ')');
+        }
+      } else {
+        showToast('请在 Android 客户端内测试连接');
+      }
+    } catch (e) {
+      document.getElementById('syncBadgeText').textContent = '连接异常';
+      showToast('检测异常: ' + e.message);
+    }
+  }, 30);
 }
 
 function mergeRemoteEnvelope(remote) {
-  if (!remote || typeof remote !== 'object') return;
+  const stats = { pNew: 0, pUpd: 0, eNew: 0, eUpd: 0, conflicts: 0 };
+  if (!remote || typeof remote !== 'object') return stats;
+
+  const remappedProjectIds = {};
+  const localDefault = (store.projects || []).find(p => p.isDefault || p.is_default);
+
   for (const rp of (remote.projects || [])) {
+    if (!rp || !rp.id) continue;
+    const isRemoteDefault = !!(rp.isDefault || rp.is_default);
     const idx = store.projects.findIndex(p => p.id === rp.id);
     if (idx >= 0) {
       if (new Date(rp.updatedAt || rp.updated_at) > new Date(store.projects[idx].updatedAt || store.projects[idx].updated_at)) {
         store.projects[idx] = rp;
+        stats.pUpd++;
       }
+    } else if (isRemoteDefault && localDefault && localDefault.id !== rp.id) {
+      remappedProjectIds[rp.id] = localDefault.id;
     } else {
       store.projects.push(rp);
+      if (!rp.deletedAt && !rp.deleted_at) stats.pNew++;
     }
   }
-  for (const re of (remote.entries || [])) {
+
+  for (const rawEntry of (remote.entries || [])) {
+    if (!rawEntry || !rawEntry.id) continue;
+    const re = Object.assign({}, rawEntry);
+    const rawPid = re.projectId || re.project_id;
+    if (rawPid && remappedProjectIds[rawPid]) {
+      re.projectId = remappedProjectIds[rawPid];
+      if ('project_id' in re) re.project_id = remappedProjectIds[rawPid];
+    }
     const idx = store.entries.findIndex(e => e.id === re.id);
     if (idx >= 0) {
       const local = store.entries[idx];
-      if (new Date(re.updatedAt || re.updated_at) > new Date(local.updatedAt || local.updated_at)) {
-        if (local.content !== re.content || local.title !== re.title) {
+      const remoteTime = new Date(re.updatedAt || re.updated_at || 0).getTime();
+      const localTime = new Date(local.updatedAt || local.updated_at || 0).getTime();
+      const hasTextDiff = (local.content || '') !== (re.content || '') || (local.title || '') !== (re.title || '');
+      if (remoteTime > localTime) {
+        if (hasTextDiff) {
           const vers = versionsForEntry(local.id);
           const maxVer = vers.length > 0 ? (vers[0].versionNumber || 1) : 0;
-          store.versions.push({
-            id: local.id + '-conflict-' + Date.now(),
-            entryId: local.id,
-            versionNumber: maxVer + 1,
-            title: local.title,
-            content: local.content,
-            changeNote: '云端同步冲突自动留存手机本地版本',
-            createdAt: local.updatedAt || new Date().toISOString()
-          });
+          const alreadySaved = vers.some(v => (v.content || '') === (local.content || '') && (v.title || '') === (local.title || ''));
+          if (!alreadySaved) {
+            store.versions.push({
+              id: local.id + '-conflict-' + Date.now(),
+              entryId: local.id,
+              versionNumber: maxVer + 1,
+              title: local.title,
+              content: local.content,
+              changeNote: '云端同步前本地版本自动留存',
+              createdAt: local.updatedAt || new Date().toISOString()
+            });
+            stats.conflicts++;
+          }
+        }
+        re.useCount = Math.max(local.useCount || local.use_count || 0, re.useCount || re.use_count || 0);
+        const lUsed = local.lastUsedAt || local.last_used_at;
+        const rUsed = re.lastUsedAt || re.last_used_at;
+        if (lUsed && rUsed) {
+          re.lastUsedAt = new Date(lUsed) > new Date(rUsed) ? lUsed : rUsed;
+        } else {
+          re.lastUsedAt = lUsed || rUsed || null;
         }
         store.entries[idx] = re;
+        stats.eUpd++;
+      } else {
+        if (remoteTime < localTime && hasTextDiff) {
+          const vers = versionsForEntry(local.id);
+          const alreadySaved = vers.some(v => (v.content || '') === (re.content || '') && (v.title || '') === (re.title || ''));
+          if (!alreadySaved) {
+            const maxVer = vers.length > 0 ? (vers[0].versionNumber || 1) : 0;
+            store.versions.push({
+              id: local.id + '-remote-conflict-' + Date.now(),
+              entryId: local.id,
+              versionNumber: maxVer + 1,
+              title: re.title,
+              content: re.content,
+              changeNote: '远端并发历史版本自动留存',
+              createdAt: re.updatedAt || re.updated_at || new Date().toISOString()
+            });
+            stats.conflicts++;
+          }
+        }
+        local.useCount = Math.max(local.useCount || local.use_count || 0, re.useCount || re.use_count || 0);
+        const lUsed = local.lastUsedAt || local.last_used_at;
+        const rUsed = re.lastUsedAt || re.last_used_at;
+        if (lUsed && rUsed) {
+          local.lastUsedAt = new Date(lUsed) > new Date(rUsed) ? lUsed : rUsed;
+        } else if (rUsed && !lUsed) {
+          local.lastUsedAt = rUsed;
+        }
       }
     } else {
       store.entries.push(re);
+      if (!re.deletedAt && !re.deleted_at) stats.eNew++;
     }
   }
+
   for (const rv of (remote.versions || [])) {
+    if (!rv || !rv.id) continue;
     const rvEntryId = rv.entryId || rv.entry_id;
     const rvNum = rv.versionNumber || rv.version_number;
     const exists = store.versions.some(v =>
@@ -1171,67 +3772,137 @@ function mergeRemoteEnvelope(remote) {
     );
     if (!exists) store.versions.push(rv);
   }
+  return stats;
 }
 
-function triggerCloudSync() {
-  let ep = '';
-  let tk = '';
-  if (window.AndroidBridge && AndroidBridge.getEndpoint) {
-    ep = AndroidBridge.getEndpoint() || '';
-    tk = AndroidBridge.getApiKey() || '';
-  } else {
-    ep = localStorage.getItem('promptpanel_cloud_endpoint') || '';
-    tk = localStorage.getItem('promptpanel_cloud_api_key') || '';
-  }
+function triggerCloudSync(silent = false) {
+  if (mainSegment === 'settings') saveSyncSettings();
+  const { ep, tk } = getSyncCredentials();
   if (!ep) {
-    openSettingsSheet();
-    showToast('请先填写云端同步地址');
+    if (!silent) {
+      switchMainSegment('settings');
+      showToast('请先填写云端同步地址');
+    }
     return;
   }
-  showToast('正在同步...');
+  const syncUrl = resolveSyncUrl(ep);
+  if (!silent) showToast('正在同步…');
+
   setTimeout(() => {
     try {
       if (window.AndroidBridge && AndroidBridge.httpRequest) {
-        const getRes = AndroidBridge.httpRequest('GET', ep, tk, '');
+        const getRes = AndroidBridge.httpRequest('GET', syncUrl, tk, '');
         const nl = getRes.indexOf('\n');
         const getCode = parseInt(getRes.slice(0, nl), 10);
         const getBody = getRes.slice(nl + 1).trim();
-        if (getCode >= 200 && getCode < 300 && getBody) {
-          mergeRemoteEnvelope(JSON.parse(getBody));
+        if (getCode === 401) {
+          if (!silent) showBanner('Token 鉴权未通过 (HTTP 401)，请确认不少于 12 位专属 Token');
+          return;
         }
-        persistStore();
-        const postRes = AndroidBridge.httpRequest('POST', ep, tk, JSON.stringify(store));
+        if ((getCode < 200 || getCode >= 300) && getCode !== 404) {
+          if (!silent) showToast('远端拉取失败 (HTTP ' + getCode + ')');
+          return;
+        }
+        let s1 = { pNew: 0, pUpd: 0, eNew: 0, eUpd: 0, conflicts: 0 };
+        if (getCode >= 200 && getCode < 300 && getBody) {
+          s1 = mergeRemoteEnvelope(JSON.parse(getBody));
+        }
+        persistStore(false);
+        const postRes = AndroidBridge.httpRequest('POST', syncUrl, tk, JSON.stringify(store));
         const pnl = postRes.indexOf('\n');
         const postCode = parseInt(postRes.slice(0, pnl), 10);
+        const postBody = postRes.slice(pnl + 1).trim();
         if (postCode >= 200 && postCode < 300) {
-          const msg = '同步成功 · ' + new Date().toLocaleTimeString();
-          document.getElementById('syncStatusText').textContent = msg;
-          showToast(msg);
+          if (postBody) {
+            const s2 = mergeRemoteEnvelope(JSON.parse(postBody));
+            s1.pNew += s2.pNew;
+            s1.pUpd += s2.pUpd;
+            s1.eNew += s2.eNew;
+            s1.eUpd += s2.eUpd;
+            s1.conflicts += s2.conflicts;
+            persistStore(false);
+          }
+          const summary = `上次同步：${new Date().toLocaleTimeString()}（项目 +${s1.pNew}/更${s1.pUpd}，词条 +${s1.eNew}/更${s1.eUpd}，冲突版本保护 ${s1.conflicts}）`;
+          document.getElementById('syncStatusText').textContent = summary;
+          document.getElementById('syncBadgeText').textContent = '已同步';
+          if (!silent) showBanner(summary);
           render();
-        } else {
+          if (mainSegment === 'settings') renderSettingsView();
+        } else if (!silent) {
           showToast('同步失败 (HTTP ' + postCode + ')');
         }
-      } else {
+      } else if (!silent) {
         showToast('请在 Android 客户端内执行同步');
       }
     } catch (e) {
-      showToast('同步异常: ' + e.message);
+      if (!silent) showToast('同步异常: ' + e.message);
     }
-  }, 50);
+  }, 40);
+}
+
+/* JSON Export & Import */
+function copyExportedJson() {
+  const json = JSON.stringify(store, null, 2);
+  writeSystemClipboard('PromptPanel Backup JSON', json);
+  showBanner('已将完整词库 JSON 复制到系统剪贴板');
+}
+
+function openImportJsonModal() {
+  document.getElementById('importJsonTextarea').value = '';
+  document.getElementById('importJsonModal').classList.add('open');
+  syncModalOpenBridge();
+}
+
+function confirmImportJson() {
+  const raw = (document.getElementById('importJsonTextarea').value || '').trim();
+  if (!raw) {
+    showToast('请粘贴 JSON 内容');
+    return;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    const s = mergeRemoteEnvelope(parsed);
+    persistStore(true);
+    closeModals();
+    renderSettingsView();
+    render();
+    showBanner(`导入完成：新增分组 ${s.pNew}，新增词条 ${s.eNew}，更新 ${s.eUpd}`);
+  } catch (e) {
+    showToast('JSON 格式无效：' + e.message);
+  }
+}
+
+function syncModalOpenBridge() {
+  const openCount = document.querySelectorAll('.modal-backdrop.open').length + (mainSegment === 'settings' ? 1 : 0);
+  if (window.AndroidBridge && AndroidBridge.setModalOpen) {
+    AndroidBridge.setModalOpen(openCount > 0);
+  }
 }
 
 function closeModals() {
-  document.getElementById('editorModal').classList.remove('open');
-  document.getElementById('settingsModal').classList.remove('open');
+  document.querySelectorAll('.modal-backdrop.open').forEach(el => el.classList.remove('open'));
+  syncModalOpenBridge();
 }
 
 window.__handleBackPress = function() {
-  if (document.getElementById('editorModal').classList.contains('open') ||
-      document.getElementById('settingsModal').classList.contains('open')) {
-    closeModals();
+  const openList = document.querySelectorAll('.modal-backdrop.open');
+  if (openList.length > 0) {
+    openList[openList.length - 1].classList.remove('open');
+    syncModalOpenBridge();
+    return true;
+  }
+  if (mainSegment === 'settings') {
+    switchMainSegment('library');
+    syncModalOpenBridge();
     return true;
   }
   return false;
+};
+
+window.__onAppResume = function() {
+  if (isAutoSyncEnabled()) {
+    triggerCloudSync(true);
+  }
 };
 
 function escapeHtml(str) {
@@ -1242,7 +3913,7 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
-loadStore();
+loadPreferencesAndStore();
 render();
 </script>
 </body>
