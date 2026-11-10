@@ -8,6 +8,9 @@ struct KeyAwareSearchField: NSViewRepresentable {
     let focusToken: Int
     let onMoveSelection: (QuickPanelViewModel.SelectionDirection) -> Void
     let onSubmit: () -> Void
+    var onQuickCreateNote: () -> Void = {}
+    var onQuickCreateTodo: () -> Void = {}
+    var onCycleScope: (Int) -> Void = { _ in }
     let onEscape: () -> Void
     let onFocusResolved: (PanelFocusResult) -> Void
 
@@ -26,23 +29,46 @@ struct KeyAwareSearchField: NSViewRepresentable {
         field.font = .systemFont(ofSize: Design.TextSize.title.rawValue)
         field.sendsSearchStringImmediately = true
         field.sendsWholeSearchString = false
-        // Arrow keys and Return only. ⌘-combinations and Esc are claimed by
-        // `PanelService`'s local event monitor, which runs ahead of this and
-        // keeps working after focus leaves the field; the cases below stay as a
-        // fallback for when the field itself is first responder.
-        field.keyHandler = { event in
+        // Arrow keys, Tab scope cycling, and Return variants. ⌘-combinations and
+        // Esc are claimed by `PanelService`'s local event monitor, which runs
+        // ahead of this and keeps working after focus leaves the field; the cases
+        // below stay as a fallback for when the field itself is first responder.
+        let coordinator = context.coordinator
+        field.keyHandler = { [weak field] event in
+            if (field?.currentEditor() as? NSTextView)?.hasMarkedText() == true {
+                return false
+            }
+            let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
             switch Int(event.keyCode) {
             case 126:
-                onMoveSelection(.up)
+                coordinator.onMoveSelection?(.up)
                 return true
             case 125:
-                onMoveSelection(.down)
+                coordinator.onMoveSelection?(.down)
                 return true
+            case 48:
+                if flags == [.shift] {
+                    coordinator.onCycleScope?(-1)
+                    return true
+                } else if flags.isEmpty {
+                    coordinator.onCycleScope?(1)
+                    return true
+                }
+                return false
             case 36, 76:
-                onSubmit()
-                return true
+                if flags == [.shift] {
+                    coordinator.onQuickCreateNote?()
+                    return true
+                } else if flags == [.option] {
+                    coordinator.onQuickCreateTodo?()
+                    return true
+                } else if flags.isEmpty {
+                    coordinator.onSubmit?()
+                    return true
+                }
+                return false
             case 53:
-                onEscape()
+                coordinator.onEscape?()
                 return true
             default:
                 return false
@@ -58,6 +84,9 @@ struct KeyAwareSearchField: NSViewRepresentable {
 
         context.coordinator.onMoveSelection = onMoveSelection
         context.coordinator.onSubmit = onSubmit
+        context.coordinator.onQuickCreateNote = onQuickCreateNote
+        context.coordinator.onQuickCreateTodo = onQuickCreateTodo
+        context.coordinator.onCycleScope = onCycleScope
         context.coordinator.onEscape = onEscape
         context.coordinator.focusResolveHandler = onFocusResolved
 
@@ -83,6 +112,9 @@ struct KeyAwareSearchField: NSViewRepresentable {
         var focusResolveHandler: ((PanelFocusResult) -> Void)?
         var onMoveSelection: ((QuickPanelViewModel.SelectionDirection) -> Void)?
         var onSubmit: (() -> Void)?
+        var onQuickCreateNote: (() -> Void)?
+        var onQuickCreateTodo: (() -> Void)?
+        var onCycleScope: ((Int) -> Void)?
         var onEscape: (() -> Void)?
         private var reportedSuccessfulFocusToken: Int = -1
 
@@ -109,6 +141,9 @@ struct KeyAwareSearchField: NSViewRepresentable {
             textView: NSTextView,
             doCommandBy commandSelector: Selector
         ) -> Bool {
+            if textView.hasMarkedText() {
+                return false
+            }
             switch commandSelector {
             case #selector(NSResponder.moveUp(_:)):
                 onMoveSelection?(.up)
@@ -116,7 +151,23 @@ struct KeyAwareSearchField: NSViewRepresentable {
             case #selector(NSResponder.moveDown(_:)):
                 onMoveSelection?(.down)
                 return true
-            case #selector(NSResponder.insertNewline(_:)):
+            case #selector(NSResponder.insertTab(_:)):
+                onCycleScope?(1)
+                return true
+            case #selector(NSResponder.insertBacktab(_:)):
+                onCycleScope?(-1)
+                return true
+            case #selector(NSResponder.insertNewline(_:)),
+                 #selector(NSResponder.insertLineBreak(_:)),
+                 #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
+                let flags = (NSApp.currentEvent?.modifierFlags ?? []).intersection([.command, .shift, .option, .control])
+                if flags == [.shift] {
+                    onQuickCreateNote?()
+                    return true
+                } else if flags == [.option] {
+                    onQuickCreateTodo?()
+                    return true
+                }
                 onSubmit?()
                 return true
             case #selector(NSResponder.cancelOperation(_:)):

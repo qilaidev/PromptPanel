@@ -73,6 +73,16 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
+    enum InlineAutoSaveState: Equatable {
+        case idle
+        case pending
+        case saving
+        case saved
+        case invalid
+    }
+
+    static let inlineAutoSaveDebounceMs: Int = 900
+
     struct EntryDraft: Identifiable {
         let id: String
         let existingEntry: Entry?
@@ -84,13 +94,17 @@ final class MainWindowViewModel: ObservableObject {
         var sortOrder: Int
         var tagsText: String
 
-        init(existingEntry: Entry?, defaultProjectId: String) {
+        init(
+            existingEntry: Entry?,
+            defaultProjectId: String,
+            defaultType: String = Constants.EntryType.prompt.rawValue
+        ) {
             self.id = existingEntry?.id ?? UUID().uuidString
             self.existingEntry = existingEntry
             self.title = existingEntry?.title ?? ""
             self.content = existingEntry?.content ?? ""
             self.projectId = existingEntry?.projectId ?? defaultProjectId
-            self.type = existingEntry?.type ?? Constants.EntryType.prompt.rawValue
+            self.type = existingEntry?.type ?? defaultType
             self.isPinned = existingEntry?.isPinned ?? false
             self.sortOrder = existingEntry?.sortOrder ?? 0
             self.tagsText = (existingEntry?.tags ?? []).joined(separator: ", ")
@@ -114,10 +128,20 @@ final class MainWindowViewModel: ObservableObject {
     @Published private(set) var updaterStatusMessage: String = "自动更新未初始化。"
     @Published private(set) var canCheckForUpdates: Bool = false
     @Published private(set) var currentProjectId: String = ""
-    @Published var selectedTab: Tab = .library
+    @Published var selectedTab: Tab = .library {
+        didSet {
+            if selectedTab != oldValue {
+                commitPendingInlineChangesIfNeeded()
+            }
+        }
+    }
     @Published var selectedSettingsArea: SettingsArea = .preferences
     @Published var selectedProjectId: String = MainWindowViewModel.allProjectsSelection {
         didSet {
+            if selectedProjectId != oldValue {
+                commitPendingInlineChangesIfNeeded()
+                quickCapturePreferInbox = false
+            }
             scheduleEntriesRefresh(delayMs: 0)
         }
     }
@@ -126,10 +150,23 @@ final class MainWindowViewModel: ObservableObject {
             scheduleEntriesRefresh(delayMs: Constants.mainWindowSearchDebounceMs)
         }
     }
+    @Published var quickCaptureText: String = ""
+    @Published var quickCapturePreferInbox: Bool = false
+    @Published var hideCompletedEntries: Bool = false {
+        didSet {
+            guard oldValue != hideCompletedEntries else { return }
+            refreshDisplayedEntriesUnlessBatching()
+        }
+    }
+    @Published private(set) var completedEntryCount: Int = 0
     @Published var selectedEntryId: String? {
         didSet {
             if selectedEntryId != oldValue {
-                if let oldId = oldValue {
+                pendingInlineAutoSaveWorkItem?.cancel()
+                pendingInlineAutoSaveWorkItem = nil
+                if !inlineDraftEntryId.isEmpty, inlineDraftEntryId != selectedEntryId {
+                    commitPendingInlineChangesIfNeeded(forEntryId: inlineDraftEntryId)
+                } else if let oldId = oldValue {
                     commitPendingInlineChangesIfNeeded(forEntryId: oldId)
                 }
                 refreshSelectedEntryVersions()
@@ -143,13 +180,30 @@ final class MainWindowViewModel: ObservableObject {
     @Published var isArchivedSectionExpanded: Bool = false
     @Published var isShowingVersionPopover: Bool = false
     @Published var inlineDraftEntryId: String = ""
-    @Published var inlineDraftTitle: String = ""
-    @Published var inlineDraftContent: String = ""
-    @Published var inlineDraftProjectId: String = ""
-    @Published var inlineDraftType: String = Constants.EntryType.prompt.rawValue
-    @Published var inlineDraftIsPinned: Bool = false
-    @Published var inlineDraftIsCompleted: Bool = false
-    @Published var inlineDraftTagsText: String = ""
+    @Published var inlineDraftTitle: String = "" {
+        didSet { handleInlineDraftFieldMutation() }
+    }
+    @Published var inlineDraftContent: String = "" {
+        didSet { handleInlineDraftFieldMutation() }
+    }
+    @Published var inlineDraftProjectId: String = "" {
+        didSet { handleInlineDraftFieldMutation() }
+    }
+    @Published var inlineDraftType: String = Constants.EntryType.prompt.rawValue {
+        didSet { handleInlineDraftFieldMutation() }
+    }
+    @Published var inlineDraftIsPinned: Bool = false {
+        didSet { handleInlineDraftFieldMutation() }
+    }
+    @Published var inlineDraftIsCompleted: Bool = false {
+        didSet { handleInlineDraftFieldMutation() }
+    }
+    @Published var inlineDraftTagsText: String = "" {
+        didSet { handleInlineDraftFieldMutation() }
+    }
+    @Published private(set) var inlineAutoSaveState: InlineAutoSaveState = .idle
+    private var pendingInlineAutoSaveWorkItem: DispatchWorkItem?
+    private var isSyncingInlineDraftProgrammatically = false
     @Published var referenceTargetProjectId: String = ""
     @Published var referenceSourceProjectId: String = MainWindowViewModel.allProjectsSelection
     @Published var referenceSearchText: String = ""
@@ -310,6 +364,7 @@ final class MainWindowViewModel: ObservableObject {
 
     deinit {
         pendingEntriesRefreshWorkItem?.cancel()
+        pendingInlineAutoSaveWorkItem?.cancel()
         bannerDismissWorkItem?.cancel()
     }
 
@@ -355,6 +410,55 @@ final class MainWindowViewModel: ObservableObject {
         projects.filter { $0.isArchived }
     }
 
+    /// Ordered non-archived projects for the top-left context switcher & scroll cycling.
+    var switchableProjects: [Project] {
+        var ordered: [Project] = []
+        var seen = Set<String>()
+        if let inbox = inboxProject, !inbox.isArchived, seen.insert(inbox.id).inserted {
+            ordered.append(inbox)
+        }
+        for category in categoryProjects where seen.insert(category.id).inserted {
+            ordered.append(category)
+        }
+        for project in activeProjects where seen.insert(project.id).inserted {
+            ordered.append(project)
+        }
+        for project in projects where !project.isArchived && seen.insert(project.id).inserted {
+            ordered.append(project)
+        }
+        return ordered
+    }
+
+    var quickCaptureTargetProjectId: String {
+        let resolvedInboxId = inboxProject?.id
+            ?? (try? projectRepository.fetchById(Constants.inboxProjectId))?.id
+            ?? (currentProjectId.isEmpty ? appState.effectiveProjectId : currentProjectId)
+        if quickCapturePreferInbox || selectedProjectId == Self.allProjectsSelection {
+            return resolvedInboxId
+        }
+        if let selected = selectedProject ?? (try? projectRepository.fetchById(selectedProjectId)) {
+            if selected.isArchived {
+                return resolvedInboxId
+            }
+            return selected.id
+        }
+        return resolvedInboxId
+    }
+
+    var quickCaptureDestinationName: String {
+        let targetId = quickCaptureTargetProjectId
+        if let known = projectNamesById[targetId] {
+            return known
+        }
+        if targetId == Constants.inboxProjectId {
+            return Constants.inboxProjectName
+        }
+        if let fetched = try? projectRepository.fetchById(targetId) {
+            return fetched.name
+        }
+        return Constants.inboxProjectName
+    }
+
     var selectedEntry: Entry? {
         let visibleEntries = displayedEntries
         guard let selectedEntryId else {
@@ -372,8 +476,12 @@ final class MainWindowViewModel: ObservableObject {
         var seenKinds = Set<String>()
         var kindCounts: [String: Int] = [:]
         var tagCounts: [String: Int] = [:]
+        var completedCount = 0
 
         for entry in entries {
+            if entry.isCompleted {
+                completedCount += 1
+            }
             let type = Constants.EntryType.resolve(entry.type)
             if seenKinds.insert(type.rawValue).inserted {
                 kinds.append(type)
@@ -384,6 +492,7 @@ final class MainWindowViewModel: ObservableObject {
             }
         }
 
+        completedEntryCount = completedCount
         availableEntryKinds = kinds
         entryKindCounts = kindCounts
         topTags = tagCounts
@@ -407,6 +516,9 @@ final class MainWindowViewModel: ObservableObject {
 
     private func sortedVisibleEntries() -> [Entry] {
         let filtered: [Entry] = entries.filter { entry in
+            if hideCompletedEntries && entry.isCompleted {
+                return false
+            }
             if let kind = entryKindFilter, entry.type != kind {
                 return false
             }
@@ -417,6 +529,9 @@ final class MainWindowViewModel: ObservableObject {
             return true
         }
         return filtered.sorted { lhs, rhs in
+            if lhs.isCompleted != rhs.isCompleted {
+                return !lhs.isCompleted
+            }
             if lhs.isPinned != rhs.isPinned {
                 return lhs.isPinned
             }
@@ -459,31 +574,138 @@ final class MainWindowViewModel: ObservableObject {
         }
         if let entry = selectedEntry {
             let shouldForceSync = inlineDraftEntryId != entry.id || !hasUnsavedInlineChanges(for: entry)
-            syncInlineDraft(with: entry, force: shouldForceSync)
+            syncInlineDraft(with: entry, force: shouldForceSync, preserveSavedState: inlineDraftEntryId == entry.id)
         }
         refreshSelectedEntryVersions()
         refreshReferenceEntries()
     }
 
-    func syncInlineDraft(with entry: Entry, force: Bool = false) {
+    private static func parseNormalizedInlineTags(from raw: String) -> [String] {
+        Entry.normalizeTags(
+            raw
+                .components(separatedBy: CharacterSet(charactersIn: ",，、"))
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        )
+    }
+
+    func syncInlineDraft(with entry: Entry, force: Bool = false, preserveSavedState: Bool = false) {
         guard force || inlineDraftEntryId != entry.id else { return }
+        let isSwitchingEntry = inlineDraftEntryId != entry.id
+        if isSwitchingEntry {
+            pendingInlineAutoSaveWorkItem?.cancel()
+            pendingInlineAutoSaveWorkItem = nil
+        }
+        isSyncingInlineDraftProgrammatically = true
+        defer { isSyncingInlineDraftProgrammatically = false }
+        let trimmedDraftTitle = inlineDraftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let shouldKeepLiveTitle = preserveSavedState
+            && !isSwitchingEntry
+            && !trimmedDraftTitle.isEmpty
+            && trimmedDraftTitle == entry.title
+        let currentParsedTags = Self.parseNormalizedInlineTags(from: inlineDraftTagsText)
+        let shouldKeepLiveTagsText = preserveSavedState
+            && !isSwitchingEntry
+            && currentParsedTags == entry.tags
+
         inlineDraftEntryId = entry.id
-        inlineDraftTitle = entry.title
+        if !shouldKeepLiveTitle {
+            inlineDraftTitle = entry.title
+        }
         inlineDraftContent = entry.content
         inlineDraftProjectId = entry.projectId
         inlineDraftType = entry.type
         inlineDraftIsPinned = entry.isPinned
         inlineDraftIsCompleted = entry.isCompleted
-        inlineDraftTagsText = entry.tags.joined(separator: ", ")
+        if !shouldKeepLiveTagsText {
+            inlineDraftTagsText = entry.tags.joined(separator: ", ")
+        }
+        if isSwitchingEntry || !preserveSavedState {
+            inlineAutoSaveState = .idle
+        }
+    }
+
+    private func handleInlineDraftFieldMutation() {
+        guard !isSyncingInlineDraftProgrammatically else { return }
+        scheduleInlineAutoSaveIfNeeded()
+    }
+
+    private func scheduleInlineAutoSaveIfNeeded() {
+        pendingInlineAutoSaveWorkItem?.cancel()
+        pendingInlineAutoSaveWorkItem = nil
+
+        guard !inlineDraftEntryId.isEmpty,
+              let entry = entries.first(where: { $0.id == inlineDraftEntryId })
+                  ?? (try? entryRepository.fetchById(inlineDraftEntryId)) else {
+            inlineAutoSaveState = .idle
+            return
+        }
+
+        guard hasUnsavedInlineChanges(for: entry) else {
+            if inlineAutoSaveState != .saved {
+                inlineAutoSaveState = .idle
+            }
+            return
+        }
+
+        let trimmedContent = inlineDraftContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedContent.isEmpty else {
+            inlineAutoSaveState = .invalid
+            return
+        }
+
+        inlineAutoSaveState = .pending
+        let targetEntryId = entry.id
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.performDebouncedInlineAutoSave(forEntryId: targetEntryId)
+        }
+        pendingInlineAutoSaveWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(Self.inlineAutoSaveDebounceMs),
+            execute: workItem
+        )
+    }
+
+    private func performDebouncedInlineAutoSave(forEntryId targetEntryId: String) {
+        pendingInlineAutoSaveWorkItem = nil
+        guard inlineDraftEntryId == targetEntryId,
+              let entry = entries.first(where: { $0.id == targetEntryId })
+                  ?? (try? entryRepository.fetchById(targetEntryId)),
+              hasUnsavedInlineChanges(for: entry) else {
+            return
+        }
+        let trimmedContent = inlineDraftContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedContent.isEmpty else {
+            inlineAutoSaveState = .invalid
+            return
+        }
+        let trimmedTitle = inlineDraftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveTitle = trimmedTitle.isEmpty
+            ? Self.deriveEntryTitle(from: inlineDraftContent, fallback: entry.title)
+            : trimmedTitle
+        if trimmedTitle.isEmpty {
+            isSyncingInlineDraftProgrammatically = true
+            inlineDraftTitle = effectiveTitle
+            isSyncingInlineDraftProgrammatically = false
+        }
+        inlineAutoSaveState = .saving
+        _ = saveInlineEntry(
+            entry,
+            title: effectiveTitle,
+            content: inlineDraftContent,
+            projectId: inlineDraftProjectId,
+            type: inlineDraftType,
+            isPinned: inlineDraftIsPinned,
+            isCompleted: inlineDraftIsCompleted,
+            tagsText: inlineDraftTagsText,
+            changeNote: "自动保存",
+            isAutoSave: true
+        )
     }
 
     func hasUnsavedInlineChanges(for entry: Entry) -> Bool {
         guard inlineDraftEntryId == entry.id else { return false }
-        let parsedTags = Entry.normalizeTags(
-            inlineDraftTagsText
-                .components(separatedBy: CharacterSet(charactersIn: ",，、"))
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        )
+        let parsedTags = Self.parseNormalizedInlineTags(from: inlineDraftTagsText)
         return inlineDraftTitle.trimmingCharacters(in: .whitespacesAndNewlines) != entry.title
             || inlineDraftContent != entry.content
             || inlineDraftProjectId != entry.projectId
@@ -491,6 +713,15 @@ final class MainWindowViewModel: ObservableObject {
             || inlineDraftIsPinned != entry.isPinned
             || inlineDraftIsCompleted != entry.isCompleted
             || parsedTags != entry.tags
+    }
+
+    private func flushAndResolveLatestEntry(_ entry: Entry) -> Entry {
+        if inlineDraftEntryId == entry.id {
+            commitPendingInlineChangesIfNeeded(forEntryId: entry.id)
+        }
+        return (try? entryRepository.fetchById(entry.id))
+            ?? entries.first(where: { $0.id == entry.id })
+            ?? entry
     }
 
     func hasUnsavedInlineContentChanges(for entry: Entry) -> Bool {
@@ -501,9 +732,15 @@ final class MainWindowViewModel: ObservableObject {
 
     @discardableResult
     func commitInlineChanges(for entry: Entry) -> Bool {
-        saveInlineEntry(
+        pendingInlineAutoSaveWorkItem?.cancel()
+        pendingInlineAutoSaveWorkItem = nil
+        let trimmedTitle = inlineDraftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveTitle = trimmedTitle.isEmpty
+            ? Self.deriveEntryTitle(from: inlineDraftContent, fallback: entry.title)
+            : trimmedTitle
+        return saveInlineEntry(
             entry,
-            title: inlineDraftTitle,
+            title: effectiveTitle,
             content: inlineDraftContent,
             projectId: inlineDraftProjectId,
             type: inlineDraftType,
@@ -518,18 +755,37 @@ final class MainWindowViewModel: ObservableObject {
     /// so switching selection or closing the window never silently discards user edits.
     func commitPendingInlineChangesIfNeeded(forEntryId targetId: String? = nil) {
         let entryId = targetId ?? inlineDraftEntryId
+        if targetId == nil || targetId == inlineDraftEntryId {
+            pendingInlineAutoSaveWorkItem?.cancel()
+            pendingInlineAutoSaveWorkItem = nil
+        }
         guard !entryId.isEmpty,
               inlineDraftEntryId == entryId,
-              let entry = entries.first(where: { $0.id == entryId }),
+              let entry = entries.first(where: { $0.id == entryId })
+                  ?? (try? entryRepository.fetchById(entryId)),
               hasUnsavedInlineChanges(for: entry) else {
             return
         }
-        let trimmedTitle = inlineDraftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedContent = inlineDraftContent.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedTitle.isEmpty, !trimmedContent.isEmpty else {
+        guard !trimmedContent.isEmpty else {
             return
         }
-        _ = commitInlineChanges(for: entry)
+        let trimmedTitle = inlineDraftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveTitle = trimmedTitle.isEmpty
+            ? Self.deriveEntryTitle(from: inlineDraftContent, fallback: entry.title)
+            : trimmedTitle
+        _ = saveInlineEntry(
+            entry,
+            title: effectiveTitle,
+            content: inlineDraftContent,
+            projectId: inlineDraftProjectId,
+            type: inlineDraftType,
+            isPinned: inlineDraftIsPinned,
+            isCompleted: inlineDraftIsCompleted,
+            tagsText: inlineDraftTagsText,
+            changeNote: "自动保存",
+            isAutoSave: true
+        )
     }
 
     func refreshReferenceEntries() {
@@ -830,13 +1086,20 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     func togglePin(_ entry: Entry) {
-        var updated = entry
+        var updated = flushAndResolveLatestEntry(entry)
         updated.isPinned.toggle()
         updated.updatedAt = Date()
         do {
             try entryRepository.update(updated)
-            if inlineDraftEntryId == entry.id {
+            if inlineDraftEntryId == updated.id {
+                isSyncingInlineDraftProgrammatically = true
                 inlineDraftIsPinned = updated.isPinned
+                isSyncingInlineDraftProgrammatically = false
+            }
+            if let idx = entries.firstIndex(where: { $0.id == updated.id }) {
+                entries[idx] = updated
+                refreshEntryFacets()
+                refreshDisplayedEntries()
             }
             NotificationCenter.default.post(name: .entriesDidChange, object: nil)
             bannerMessage = updated.isPinned ? "已置顶词条。" : "已取消置顶。"
@@ -1458,6 +1721,8 @@ final class MainWindowViewModel: ObservableObject {
     func cancelPendingBackgroundTasks() {
         pendingEntriesRefreshWorkItem?.cancel()
         pendingEntriesRefreshWorkItem = nil
+        pendingInlineAutoSaveWorkItem?.cancel()
+        pendingInlineAutoSaveWorkItem = nil
         pendingAutoCloudSyncWorkItem?.cancel()
         pendingAutoCloudSyncWorkItem = nil
     }
@@ -1562,6 +1827,23 @@ final class MainWindowViewModel: ObservableObject {
         persistCurrentProject(projectId)
         if let project = projects.first(where: { $0.id == projectId }) {
             bannerMessage = "当前项目已切换为 \(project.name)。"
+        }
+    }
+
+    func cycleCurrentProject(step: Int) {
+        guard step != 0 else { return }
+        let candidates = switchableProjects.isEmpty
+            ? ((try? projectRepository.fetchAll(includeArchived: false)) ?? [])
+            : switchableProjects
+        guard !candidates.isEmpty else { return }
+        let activeId = currentProjectId.isEmpty ? appState.effectiveProjectId : currentProjectId
+        let currentIndex = candidates.firstIndex(where: { $0.id == activeId }) ?? 0
+        let count = candidates.count
+        let normalizedStep = ((step % count) + count) % count
+        let nextIndex = (currentIndex + normalizedStep) % count
+        let nextProject = candidates[nextIndex]
+        if nextProject.id != activeId {
+            setCurrentProject(nextProject.id)
         }
     }
 
@@ -1706,9 +1988,73 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
-    func startCreateEntry() {
-        let defaultProjectId = selectedProjectId == Self.allProjectsSelection ? currentProjectId : selectedProjectId
-        entryDraft = EntryDraft(existingEntry: nil, defaultProjectId: defaultProjectId)
+    static func deriveEntryTitle(from content: String, fallback: String = "未命名词条") -> String {
+        let firstLine = content
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty }) ?? fallback
+        return String(firstLine.prefix(36))
+    }
+
+    static func extractQuickCaptureContentAndTags(from rawText: String) -> (content: String, tags: [String]) {
+        let trimmedRaw = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedRaw.isEmpty else {
+            return ("", [])
+        }
+
+        var collectedTags: [String] = []
+        var cleanedLines: [String] = []
+
+        for line in trimmedRaw.components(separatedBy: .newlines) {
+            var lineWords: [String] = []
+            for tokenSub in line.split(whereSeparator: \.isWhitespace) {
+                let token = String(tokenSub)
+                if token.hasPrefix("#"), token.count > 1 {
+                    let body = token.dropFirst().trimmingCharacters(in: CharacterSet(charactersIn: ",，、;；"))
+                    if !body.isEmpty, !body.allSatisfy({ $0 == "#" }) {
+                        collectedTags.append(String(body.prefix(10)))
+                        continue
+                    }
+                }
+                lineWords.append(token)
+            }
+            let reconstructedLine = lineWords.joined(separator: " ")
+            if !reconstructedLine.isEmpty || line.trimmingCharacters(in: .whitespaces).isEmpty {
+                cleanedLines.append(reconstructedLine)
+            }
+        }
+
+        let cleanedContent = cleanedLines
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalContent = cleanedContent.isEmpty ? trimmedRaw : cleanedContent
+        return (finalContent, Entry.normalizeTags(collectedTags))
+    }
+
+    func startCreateEntry(preferredType: Constants.EntryType? = nil) {
+        let resolvedCurrentId = currentProjectId.isEmpty ? appState.effectiveProjectId : currentProjectId
+        let defaultProjectId = selectedProjectId == Self.allProjectsSelection ? resolvedCurrentId : selectedProjectId
+        let isInboxTarget = defaultProjectId == Constants.inboxProjectId
+            || defaultProjectId == inboxProject?.id
+            || selectedProjectId == Constants.inboxProjectId
+            || selectedProjectId == inboxProject?.id
+        let resolvedType: Constants.EntryType = {
+            if let preferredType {
+                return preferredType
+            }
+            if isInboxTarget {
+                return .note
+            }
+            if let activeKind = entryKindFilter, let parsed = Constants.EntryType(rawValue: activeKind) {
+                return parsed
+            }
+            return .prompt
+        }()
+        entryDraft = EntryDraft(
+            existingEntry: nil,
+            defaultProjectId: defaultProjectId,
+            defaultType: resolvedType.rawValue
+        )
     }
 
     func startEditEntry(_ entry: Entry) {
@@ -1720,12 +2066,15 @@ final class MainWindowViewModel: ObservableObject {
             return false
         }
 
-        let trimmedTitle = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedContent = draft.content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedTitle.isEmpty, !trimmedContent.isEmpty else {
-            bannerMessage = "词条标题和内容都不能为空。"
+        guard !trimmedContent.isEmpty else {
+            bannerMessage = "词条内容不能为空。"
             return false
         }
+        let rawTrimmedTitle = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveTitle = rawTrimmedTitle.isEmpty
+            ? Self.deriveEntryTitle(from: draft.content)
+            : rawTrimmedTitle
 
         do {
             let parsedTags = draft.parsedTags
@@ -1733,7 +2082,7 @@ final class MainWindowViewModel: ObservableObject {
                 let updated = Entry(
                     id: existingEntry.id,
                     projectId: draft.projectId,
-                    title: trimmedTitle,
+                    title: effectiveTitle,
                     content: draft.content,
                     type: draft.type,
                     isPinned: draft.isPinned,
@@ -1748,6 +2097,11 @@ final class MainWindowViewModel: ObservableObject {
                     tags: parsedTags
                 )
                 try entryRepository.update(updated)
+                if let idx = entries.firstIndex(where: { $0.id == updated.id }) {
+                    entries[idx] = updated
+                    refreshEntryFacets()
+                    refreshDisplayedEntries()
+                }
                 if inlineDraftEntryId == updated.id {
                     syncInlineDraft(with: updated, force: true)
                 }
@@ -1755,7 +2109,7 @@ final class MainWindowViewModel: ObservableObject {
             } else {
                 let entry = Entry(
                     projectId: draft.projectId,
-                    title: trimmedTitle,
+                    title: effectiveTitle,
                     content: draft.content,
                     type: draft.type,
                     isPinned: draft.isPinned,
@@ -1763,6 +2117,12 @@ final class MainWindowViewModel: ObservableObject {
                     tags: parsedTags
                 )
                 try entryRepository.create(entry)
+                if selectedProjectId == Self.allProjectsSelection || selectedProjectId == entry.projectId {
+                    entries.insert(entry, at: 0)
+                    refreshEntryFacets()
+                    refreshDisplayedEntries()
+                }
+                selectedEntryId = entry.id
                 bannerMessage = "词条已创建。"
             }
 
@@ -1776,20 +2136,172 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
+    @discardableResult
+    func submitQuickCapture(text: String? = nil, type: Constants.EntryType = .note) -> Entry? {
+        let rawInput = (text ?? quickCaptureText).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawInput.isEmpty else {
+            return nil
+        }
+
+        let (cleanedContent, extractedTags) = Self.extractQuickCaptureContentAndTags(from: rawInput)
+        guard !cleanedContent.isEmpty else {
+            return nil
+        }
+
+        let targetProjectId = quickCaptureTargetProjectId
+        guard !targetProjectId.isEmpty else {
+            bannerMessage = "未找到可用的目标分组。"
+            return nil
+        }
+
+        let fallbackTitle = type == .todo ? "待办事项" : "随手速记"
+        let title = Self.deriveEntryTitle(from: cleanedContent, fallback: fallbackTitle)
+        let newEntry = Entry(
+            projectId: targetProjectId,
+            title: title,
+            content: cleanedContent,
+            type: type.rawValue,
+            tags: extractedTags
+        )
+
+        do {
+            try entryRepository.create(newEntry, changeNote: "快速速记")
+            if text == nil || quickCaptureText.trimmingCharacters(in: .whitespacesAndNewlines) == rawInput {
+                quickCaptureText = ""
+            }
+            if let activeKind = entryKindFilter, activeKind != newEntry.type {
+                entryKindFilter = nil
+            }
+            if selectedProjectId == Self.allProjectsSelection || selectedProjectId == targetProjectId {
+                entries.insert(newEntry, at: 0)
+                refreshEntryFacets()
+                refreshDisplayedEntries()
+            }
+            selectedEntryId = newEntry.id
+            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            let destName = quickCaptureDestinationName
+            let kindLabel = type == .todo ? "待办" : "便签"
+            bannerMessage = "已记\(kindLabel)至「\(destName)」：\(title)"
+            return newEntry
+        } catch {
+            PPLogger.entry.error("Failed to submit quick capture: \(error.localizedDescription)")
+            bannerMessage = "速记保存失败，请重试。"
+            return nil
+        }
+    }
+
+    @discardableResult
+    func quickJotFromClipboard(type: Constants.EntryType = .note) -> Entry? {
+        guard let rawText = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawText.isEmpty else {
+            bannerMessage = "当前剪贴板中没有可用的文本内容。"
+            return nil
+        }
+        return submitQuickCapture(text: rawText, type: type)
+    }
+
+    @discardableResult
+    func clearCompletedEntriesInVisibleScope() -> Int {
+        if selectedProjectId != Self.allProjectsSelection {
+            do {
+                let deletedCount = try entryRepository.deleteCompleted(projectId: selectedProjectId)
+                guard deletedCount > 0 else {
+                    bannerMessage = "当前分组没有已完成记录。"
+                    return 0
+                }
+                entries.removeAll { $0.isCompleted && $0.projectId == selectedProjectId }
+                refreshEntryFacets()
+                refreshDisplayedEntries()
+                NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+                bannerMessage = "已清理 \(deletedCount) 条已完成记录。"
+                return deletedCount
+            } catch {
+                PPLogger.entry.error("Failed to clear completed entries in project \(self.selectedProjectId): \(error.localizedDescription)")
+                bannerMessage = "清理已完成记录失败，请重试。"
+                return 0
+            }
+        }
+
+        let archivedIds = Set(archivedProjects.map(\.id))
+        if archivedIds.isEmpty {
+            do {
+                let deletedCount = try entryRepository.deleteCompleted(projectId: nil)
+                guard deletedCount > 0 else {
+                    bannerMessage = "当前分组没有已完成记录。"
+                    return 0
+                }
+                entries.removeAll(where: \.isCompleted)
+                refreshEntryFacets()
+                refreshDisplayedEntries()
+                NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+                bannerMessage = "已清理 \(deletedCount) 条已完成记录。"
+                return deletedCount
+            } catch {
+                PPLogger.entry.error("Failed to clear all completed entries: \(error.localizedDescription)")
+                bannerMessage = "清理已完成记录失败，请重试。"
+                return 0
+            }
+        }
+
+        let candidates: [Entry] = {
+            if let fetched = try? entryRepository.fetchAll(excludeArchivedProjects: true) {
+                return fetched.filter(\.isCompleted)
+            }
+            return entries.filter { $0.isCompleted && !archivedIds.contains($0.projectId) }
+        }()
+
+        guard !candidates.isEmpty else {
+            bannerMessage = "当前分组没有已完成记录。"
+            return 0
+        }
+
+        var deletedIds = Set<String>()
+        for entry in candidates {
+            do {
+                try entryRepository.delete(id: entry.id)
+                deletedIds.insert(entry.id)
+            } catch {
+                PPLogger.entry.error("Failed to clear completed entry \(entry.id): \(error.localizedDescription)")
+            }
+        }
+
+        guard !deletedIds.isEmpty else {
+            bannerMessage = "清理已完成记录失败，请重试。"
+            return 0
+        }
+
+        entries.removeAll { deletedIds.contains($0.id) }
+        refreshEntryFacets()
+        refreshDisplayedEntries()
+        NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+        bannerMessage = "已清理 \(deletedIds.count) 条已完成记录。"
+        return deletedIds.count
+    }
+
     func requestDeleteEntry(_ entry: Entry) {
         entryPendingDeletion = entry
     }
 
     func updateEntryProject(_ entry: Entry, toProjectId targetProjectId: String) {
-        guard entry.projectId != targetProjectId else { return }
-        var updated = entry
+        let latest = flushAndResolveLatestEntry(entry)
+        guard latest.projectId != targetProjectId else { return }
+        var updated = latest
         updated.projectId = targetProjectId
         updated.updatedAt = Date()
         do {
             try entryRepository.update(updated)
-            if inlineDraftEntryId == entry.id {
+            if inlineDraftEntryId == updated.id {
+                isSyncingInlineDraftProgrammatically = true
                 inlineDraftProjectId = targetProjectId
+                isSyncingInlineDraftProgrammatically = false
             }
+            if selectedProjectId != Self.allProjectsSelection && selectedProjectId != targetProjectId {
+                entries.removeAll { $0.id == updated.id }
+            } else if let idx = entries.firstIndex(where: { $0.id == updated.id }) {
+                entries[idx] = updated
+            }
+            refreshEntryFacets()
+            refreshDisplayedEntries()
             NotificationCenter.default.post(name: .entriesDidChange, object: nil)
             bannerMessage = "已移至「\(projectName(for: targetProjectId))」。"
         } catch {
@@ -1798,15 +2310,63 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
+    @discardableResult
+    func moveEntries(withIds ids: [String], toProjectId targetProjectId: String) -> Int {
+        let uniqueIds = Array(Set(ids))
+        guard !uniqueIds.isEmpty else { return 0 }
+        if !inlineDraftEntryId.isEmpty, uniqueIds.contains(inlineDraftEntryId) {
+            commitPendingInlineChangesIfNeeded(forEntryId: inlineDraftEntryId)
+        }
+        if uniqueIds.count == 1,
+           let singleId = uniqueIds.first,
+           let entry = entries.first(where: { $0.id == singleId }) ?? (try? entryRepository.fetchById(singleId)) {
+            guard entry.projectId != targetProjectId else { return 0 }
+            updateEntryProject(entry, toProjectId: targetProjectId)
+            return 1
+        }
+
+        var movedCount = 0
+        for id in uniqueIds {
+            guard var entry = (try? entryRepository.fetchById(id)) ?? entries.first(where: { $0.id == id }),
+                  entry.projectId != targetProjectId else {
+                continue
+            }
+            entry.projectId = targetProjectId
+            entry.updatedAt = Date()
+            if (try? entryRepository.update(entry)) != nil {
+                movedCount += 1
+                if inlineDraftEntryId == entry.id {
+                    isSyncingInlineDraftProgrammatically = true
+                    inlineDraftProjectId = targetProjectId
+                    isSyncingInlineDraftProgrammatically = false
+                }
+            }
+        }
+
+        if movedCount > 0 {
+            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            bannerMessage = "已将 \(movedCount) 条内容移至「\(projectName(for: targetProjectId))」。"
+        }
+        return movedCount
+    }
+
     func updateEntryType(_ entry: Entry, toType newType: String) {
-        guard entry.type != newType else { return }
-        var updated = entry
+        let latest = flushAndResolveLatestEntry(entry)
+        guard latest.type != newType else { return }
+        var updated = latest
         updated.type = newType
         updated.updatedAt = Date()
         do {
             try entryRepository.update(updated)
-            if inlineDraftEntryId == entry.id {
+            if inlineDraftEntryId == updated.id {
+                isSyncingInlineDraftProgrammatically = true
                 inlineDraftType = newType
+                isSyncingInlineDraftProgrammatically = false
+            }
+            if let idx = entries.firstIndex(where: { $0.id == updated.id }) {
+                entries[idx] = updated
+                refreshEntryFacets()
+                refreshDisplayedEntries()
             }
             NotificationCenter.default.post(name: .entriesDidChange, object: nil)
             let displayName = Constants.EntryType.resolve(newType).displayName
@@ -1818,14 +2378,23 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     func toggleEntryCompleted(_ entry: Entry) {
-        let nextState = !entry.isCompleted
+        let latest = flushAndResolveLatestEntry(entry)
+        let nextState = !latest.isCompleted
         do {
-            try entryRepository.setCompleted(id: entry.id, isCompleted: nextState)
-            if inlineDraftEntryId == entry.id {
+            try entryRepository.setCompleted(id: latest.id, isCompleted: nextState)
+            if inlineDraftEntryId == latest.id {
+                isSyncingInlineDraftProgrammatically = true
                 inlineDraftIsCompleted = nextState
+                isSyncingInlineDraftProgrammatically = false
+            }
+            if let idx = entries.firstIndex(where: { $0.id == latest.id }) {
+                entries[idx].isCompleted = nextState
+                entries[idx].updatedAt = Date()
+                refreshEntryFacets()
+                refreshDisplayedEntries()
             }
             NotificationCenter.default.post(name: .entriesDidChange, object: nil)
-            bannerMessage = nextState ? "已标记为完成：\(entry.title)" : "已恢复为待办：\(entry.title)"
+            bannerMessage = nextState ? "已标记为完成：\(latest.title)" : "已恢复为待办：\(latest.title)"
         } catch {
             PPLogger.entry.error("Failed to toggle entry completed state: \(error.localizedDescription)")
             bannerMessage = "更新完成状态失败，请重试。"
@@ -1842,12 +2411,17 @@ final class MainWindowViewModel: ObservableObject {
         isPinned: Bool,
         isCompleted: Bool,
         tagsText: String,
-        changeNote: String? = nil
+        changeNote: String? = nil,
+        isAutoSave: Bool = false
     ) -> Bool {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty, !trimmedContent.isEmpty else {
-            bannerMessage = "标题和内容都不能为空。"
+            if !isAutoSave {
+                bannerMessage = "标题和内容都不能为空。"
+            } else {
+                inlineAutoSaveState = .invalid
+            }
             return false
         }
 
@@ -1878,14 +2452,22 @@ final class MainWindowViewModel: ObservableObject {
         let didChangeContent = entry.title != trimmedTitle || entry.content != content
         do {
             try entryRepository.update(updated, changeNote: changeNote)
-            syncInlineDraft(with: updated, force: true)
+            if let idx = entries.firstIndex(where: { $0.id == updated.id }) {
+                entries[idx] = updated
+            }
+            inlineAutoSaveState = .saved
+            if !isAutoSave {
+                syncInlineDraft(with: updated, force: true, preserveSavedState: true)
+                bannerMessage = didChangeContent ? "已保存修改并留存历史版本。" : "已保存词条属性修改。"
+            }
             NotificationCenter.default.post(name: .entriesDidChange, object: nil)
             refreshSelectedEntryVersions()
-            bannerMessage = didChangeContent ? "已保存修改并留存历史版本。" : "已保存词条属性修改。"
             return true
         } catch {
             PPLogger.entry.error("Failed to save inline entry: \(error.localizedDescription)")
-            bannerMessage = "保存修改失败，请重试。"
+            if !isAutoSave {
+                bannerMessage = "保存修改失败，请重试。"
+            }
             return false
         }
     }
@@ -1906,11 +2488,12 @@ final class MainWindowViewModel: ObservableObject {
 
     @discardableResult
     func cloneEntry(_ entry: Entry, toProjectId targetProjectId: String) -> Entry? {
+        let latest = flushAndResolveLatestEntry(entry)
         do {
-            let cloned = try entryRepository.cloneEntry(id: entry.id, toProjectId: targetProjectId)
+            let cloned = try entryRepository.cloneEntry(id: latest.id, toProjectId: targetProjectId)
             NotificationCenter.default.post(name: .entriesDidChange, object: nil)
             let targetName = projectName(for: targetProjectId)
-            bannerMessage = "已将「\(entry.title)」复制到「\(targetName)」。"
+            bannerMessage = "已将「\(latest.title)」复制到「\(targetName)」。"
             return cloned
         } catch {
             PPLogger.entry.error("Failed to clone entry: \(error.localizedDescription)")
@@ -1925,11 +2508,7 @@ final class MainWindowViewModel: ObservableObject {
             bannerMessage = "当前剪贴板中没有可用的文本内容。"
             return
         }
-        let firstLine = rawText
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .first(where: { !$0.isEmpty }) ?? "剪贴板快贴"
-        let title = String(firstLine.prefix(36))
+        let title = Self.deriveEntryTitle(from: rawText, fallback: "剪贴板快贴")
         let newEntry = Entry(
             projectId: targetProjectId,
             title: title,
@@ -1938,6 +2517,11 @@ final class MainWindowViewModel: ObservableObject {
         )
         do {
             try entryRepository.create(newEntry, changeNote: "从剪贴板创建")
+            if selectedProjectId == Self.allProjectsSelection || selectedProjectId == targetProjectId {
+                entries.insert(newEntry, at: 0)
+                refreshEntryFacets()
+                refreshDisplayedEntries()
+            }
             selectedEntryId = newEntry.id
             NotificationCenter.default.post(name: .entriesDidChange, object: nil)
             bannerMessage = "已从剪贴板创建词条：\(title)"

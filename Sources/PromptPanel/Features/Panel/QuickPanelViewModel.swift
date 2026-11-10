@@ -4,6 +4,11 @@ import Foundation
 
 @MainActor
 final class QuickPanelViewModel: ObservableObject {
+    nonisolated static let allProjectsScopeId = EntrySearchService.allProjectsScopeId
+    nonisolated static let allProjectsScopeName = "全部内容"
+    nonisolated static let keyboardHoverLockCooldown: TimeInterval = 0.30
+    nonisolated private static let transientStatusDuration: TimeInterval = 2.8
+
     enum SelectionDirection {
         case up
         case down
@@ -13,6 +18,80 @@ final class QuickPanelViewModel: ObservableObject {
         case info
         case warning
         case error
+    }
+
+    enum KindFilter: String, CaseIterable, Equatable, Identifiable {
+        case all
+        case noteAndTodo
+        case note
+        case todo
+        case prompt
+        case code
+        case reply
+
+        static let barItems: [KindFilter] = [.all, .noteAndTodo, .prompt, .code, .reply]
+
+        var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .all: return "全部"
+            case .noteAndTodo: return "便签·待办"
+            case .note: return "便签"
+            case .todo: return "待办"
+            case .prompt: return "提示词"
+            case .code: return "代码"
+            case .reply: return "回复"
+            }
+        }
+
+        var symbolName: String? {
+            switch self {
+            case .all: return nil
+            case .noteAndTodo, .note: return "note.text"
+            case .todo: return "checklist"
+            case .prompt: return "text.bubble"
+            case .code: return "chevron.left.forwardslash.chevron.right"
+            case .reply: return "arrowshape.turn.up.left"
+            }
+        }
+
+        func matches(_ entry: Entry) -> Bool {
+            let resolved = Constants.EntryType.resolve(entry.type)
+            switch self {
+            case .all:
+                return true
+            case .noteAndTodo:
+                return resolved == .note || resolved == .todo
+            case .note:
+                return resolved == .note
+            case .todo:
+                return resolved == .todo
+            case .prompt:
+                return resolved == .prompt
+            case .code:
+                return resolved == .code
+            case .reply:
+                return resolved == .reply
+            }
+        }
+    }
+
+    struct QuickCaptureDraft: Equatable {
+        let type: Constants.EntryType
+        let matchedPrefix: String
+        let rawBody: String
+        let title: String
+        let cleanedContent: String
+        let tags: [String]
+
+        var hasContent: Bool {
+            !cleanedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        var modeBadgeText: String {
+            type == .todo ? "☑️ 待办速记 · 回车即存" : "📝 便签速记 · 回车即存"
+        }
     }
 
     /// Why a results refresh was requested — which decides whether incoming execution
@@ -39,24 +118,52 @@ final class QuickPanelViewModel: ObservableObject {
     }
 
     private var isSuppressingQueryDidSet = false
+    private var isSuppressingFilterDidSet = false
 
     @Published var query: String = "" {
         didSet {
             guard !isSuppressingQueryDidSet, query != oldValue else { return }
+            if !query.isEmpty, transientStatus != nil {
+                clearTransientStatus(reapplyBase: true)
+            }
+            if isPreviewPresented {
+                isPreviewPresented = false
+            }
+            lockHoverSelectionForKeyboardInput()
             scheduleEntriesRefresh(delayMs: Constants.panelSearchDebounceMs, reason: .scopeChanged)
         }
     }
+    @Published var activeKindFilter: KindFilter = .all {
+        didSet {
+            guard !isSuppressingFilterDidSet, activeKindFilter != oldValue else { return }
+            entries = Self.filterEntries(unfilteredEntries, by: activeKindFilter)
+            selectedIndex = 0
+            lastSelectionScrollToken += 1
+            if entries.isEmpty {
+                isPreviewPresented = false
+            }
+        }
+    }
+    @Published private(set) var unfilteredEntries: [Entry] = []
     @Published private(set) var entries: [Entry] = []
     @Published private(set) var projects: [Project] = []
     @Published private(set) var projectNamesById: [String: String] = [:]
     @Published private(set) var isShowingGlobalFallback: Bool = false
     @Published var currentProjectId: String = ""
     @Published var selectedIndex: Int = 0
+    @Published private(set) var lastSelectionScrollToken: Int = 0
     @Published var focusToken: Int = 0
     @Published var statusMessage: String?
     @Published private(set) var statusTone: StatusTone = .info
     @Published private(set) var isLoadingEntries: Bool = false
+    @Published var isPreviewPresented: Bool = false
+    @Published var isScopeDropdownOpen: Bool = false
+    @Published private(set) var hasClipboardText: Bool = false
     private(set) var isExecutionReady: Bool = false
+    private(set) var suppressHoverSelectionUntilMouseMoves: Bool = false
+    var clipboardTextProvider: () -> String? = {
+        NSPasteboard.general.string(forType: .string)
+    }
 
     private let appState: AppState
     private let projectRepository: ProjectRepository
@@ -73,6 +180,9 @@ final class QuickPanelViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private let searchQueue = DispatchQueue(label: "PromptPanel.quick-panel.search", qos: .userInteractive)
     private var pendingSearchWorkItem: DispatchWorkItem?
+    private var transientStatusResetWorkItem: DispatchWorkItem?
+    private var transientStatus: (message: String, tone: StatusTone, expiresAt: Date)?
+    private var keyboardNavigationLockUntil: Date = .distantPast
     private var searchGeneration: Int = 0
     private(set) var isScopeSearchInFlight: Bool = false
     private var deferredExecutionRequest: (target: DeferredExecutionTarget, force: Bool, triggerSource: Constants.ExecutionTrigger)?
@@ -110,6 +220,7 @@ final class QuickPanelViewModel: ObservableObject {
 
     deinit {
         pendingSearchWorkItem?.cancel()
+        transientStatusResetWorkItem?.cancel()
     }
 
     var selectedEntry: Entry? {
@@ -119,29 +230,89 @@ final class QuickPanelViewModel: ObservableObject {
         return entries[selectedIndex]
     }
 
+    var quickCaptureDraft: QuickCaptureDraft? {
+        Self.parseQuickCapture(from: query)
+    }
+
+    var isQuickCaptureMode: Bool {
+        quickCaptureDraft != nil
+    }
+
+    var isAllProjectsScope: Bool {
+        currentProjectId == Self.allProjectsScopeId
+    }
+
+    var availableScopeIds: [String] {
+        if projects.isEmpty {
+            loadProjects(preserveAllProjectsScope: true)
+        }
+        let inboxIds = projects.filter { $0.groupKind == .inbox }.map(\.id)
+        let categoryIds = projects.filter { $0.groupKind == .category }.map(\.id)
+        let projectIds = projects.filter { $0.groupKind == .project }.map(\.id)
+        return [Self.allProjectsScopeId] + inboxIds + categoryIds + projectIds
+    }
+
+    var defaultQuickCreateType: Constants.EntryType {
+        if let draft = quickCaptureDraft {
+            return draft.type
+        }
+        if currentProjectId == Constants.inboxProjectId
+            || projects.first(where: { $0.id == currentProjectId })?.groupKind == .inbox {
+            return .note
+        }
+        switch activeKindFilter {
+        case .noteAndTodo, .note, .todo:
+            return .note
+        case .code:
+            return .code
+        case .reply:
+            return .reply
+        case .all, .prompt:
+            return .prompt
+        }
+    }
+
     /// Pre-loads projects and initial entries at launch so the first panel open
     /// renders immediately without waiting for a cold database fetch.
     func warmUp() {
         currentProjectId = appState.effectiveProjectId
-        loadProjects()
+        refreshClipboardState()
+        loadProjects(preserveAllProjectsScope: false)
         scheduleEntriesRefresh(delayMs: 0, reason: .dataChanged)
     }
 
     func prepareForPresentation() {
         permissionService.refresh()
+        clearTransientStatus(reapplyBase: false)
         applyBaseStatus()
         if !query.isEmpty {
             isSuppressingQueryDidSet = true
             query = ""
             isSuppressingQueryDidSet = false
         }
+        if activeKindFilter != .all {
+            isSuppressingFilterDidSet = true
+            activeKindFilter = .all
+            isSuppressingFilterDidSet = false
+        }
+        isPreviewPresented = false
+        isScopeDropdownOpen = false
+        suppressHoverSelectionUntilMouseMoves = false
+        keyboardNavigationLockUntil = .distantPast
         selectedIndex = 0
+        lastSelectionScrollToken += 1
         currentProjectId = appState.effectiveProjectId
         isExecutionReady = false
         deferredExecutionRequest = nil
         focusToken += 1
-        loadProjects()
+        refreshClipboardState()
+        loadProjects(preserveAllProjectsScope: false)
         scheduleEntriesRefresh(delayMs: 0, reason: .scopeChanged)
+    }
+
+    func refreshClipboardState() {
+        let trimmed = clipboardTextProvider()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        hasClipboardText = !trimmed.isEmpty
     }
 
     func handleSearchFieldFocus(_ result: PanelFocusResult) {
@@ -161,9 +332,46 @@ final class QuickPanelViewModel: ObservableObject {
         focusToken += 1
     }
 
+    func handleEscape() {
+        if isPreviewPresented {
+            isPreviewPresented = false
+            return
+        }
+        if isScopeDropdownOpen {
+            isScopeDropdownOpen = false
+            return
+        }
+        closePanel()
+    }
+
     func closePanel() {
+        isPreviewPresented = false
+        isScopeDropdownOpen = false
         deferredExecutionRequest = nil
         onClosePanel()
+    }
+
+    func togglePreview() {
+        if isPreviewPresented {
+            isPreviewPresented = false
+            return
+        }
+        guard !isScopeSearchInFlight, selectedEntry != nil else {
+            return
+        }
+        isPreviewPresented = true
+    }
+
+    func openPreview(at index: Int) {
+        guard !isScopeSearchInFlight, entries.indices.contains(index) else {
+            return
+        }
+        selectedIndex = index
+        isPreviewPresented = true
+    }
+
+    func dismissPreview() {
+        isPreviewPresented = false
     }
 
     func setPanelPinned(_ isPinned: Bool) {
@@ -191,12 +399,15 @@ final class QuickPanelViewModel: ObservableObject {
             return
         }
 
+        lockHoverSelectionForKeyboardInput()
+
         switch direction {
         case .up:
             selectedIndex = max(0, selectedIndex - 1)
         case .down:
             selectedIndex = min(entries.count - 1, selectedIndex + 1)
         }
+        lastSelectionScrollToken += 1
     }
 
     func selectEntry(at index: Int) {
@@ -206,10 +417,45 @@ final class QuickPanelViewModel: ObservableObject {
         selectedIndex = index
     }
 
+    func notifyPointerMoved() {
+        suppressHoverSelectionUntilMouseMoves = false
+        keyboardNavigationLockUntil = .distantPast
+    }
+
+    func selectEntryByHover(at index: Int) {
+        if Date() >= keyboardNavigationLockUntil {
+            suppressHoverSelectionUntilMouseMoves = false
+        }
+        guard !suppressHoverSelectionUntilMouseMoves else {
+            return
+        }
+        guard entries.indices.contains(index), selectedIndex != index else {
+            return
+        }
+        selectedIndex = index
+    }
+
+    private func lockHoverSelectionForKeyboardInput() {
+        suppressHoverSelectionUntilMouseMoves = true
+        keyboardNavigationLockUntil = Date().addingTimeInterval(Self.keyboardHoverLockCooldown)
+    }
+
     func executeSelection(
         force: Bool = false,
         triggerSource: Constants.ExecutionTrigger = .keyboardSubmit
     ) {
+        if let draft = quickCaptureDraft {
+            guard draft.hasContent else {
+                setTransientStatus(
+                    draft.type == .todo ? "请输入待办内容后再按回车保存" : "请输入便签内容后再按回车保存",
+                    tone: .info
+                )
+                return
+            }
+            quickCreateEntryFromPanel(type: draft.type)
+            return
+        }
+
         PPLogger.panel.debug(
             "execute_selection_requested trigger=\(triggerSource.rawValue) ready=\(self.isExecutionReady) force=\(force) selected_index=\(self.selectedIndex) entry_count=\(self.entries.count)"
         )
@@ -239,11 +485,32 @@ final class QuickPanelViewModel: ObservableObject {
             return
         }
 
+        isPreviewPresented = false
+        let executionProjectId = currentProjectId == Self.allProjectsScopeId ? entry.projectId : currentProjectId
         executeService.execute(
             entry: entry,
-            currentProjectId: currentProjectId,
+            currentProjectId: executionProjectId,
             triggerSource: triggerSource
         )
+    }
+
+    func activateScope(_ id: String) {
+        activateProject(id)
+    }
+
+    func cycleScope(_ step: Int) {
+        guard step != 0 else { return }
+        let scopes = availableScopeIds
+        guard !scopes.isEmpty else { return }
+        guard scopes.count > 1 else {
+            activateProject(scopes[0])
+            return
+        }
+        let currentIndex = scopes.firstIndex(of: currentProjectId) ?? 0
+        let count = scopes.count
+        let offset = ((step % count) + count) % count
+        let nextIndex = (currentIndex + offset) % count
+        activateProject(scopes[nextIndex])
     }
 
     func activateProject(_ id: String) {
@@ -251,11 +518,21 @@ final class QuickPanelViewModel: ObservableObject {
             return
         }
 
+        if isPreviewPresented {
+            isPreviewPresented = false
+        }
+
+        if id == Self.allProjectsScopeId {
+            currentProjectId = Self.allProjectsScopeId
+            scheduleEntriesRefresh(delayMs: 0, reason: .scopeChanged)
+            return
+        }
+
         do {
             try settingsRepository.setCurrentProjectId(id)
             appState.currentProjectId = id
             currentProjectId = id
-            NotificationCenter.default.post(name: .currentProjectDidChange, object: nil)
+            NotificationCenter.default.post(name: .currentProjectDidChange, object: self)
             scheduleEntriesRefresh(delayMs: 0, reason: .scopeChanged)
         } catch {
             PPLogger.project.error("Failed to switch current project: \(error.localizedDescription)")
@@ -265,24 +542,39 @@ final class QuickPanelViewModel: ObservableObject {
 
     private func observeChanges() {
         NotificationCenter.default.publisher(for: .projectsDidChange)
-            .merge(with: NotificationCenter.default.publisher(for: .currentProjectDidChange))
             .sink { [weak self] _ in
-                self?.loadProjects()
-                self?.scheduleEntriesRefresh(delayMs: 0, reason: .scopeChanged)
+                guard let self else { return }
+                self.loadProjects(preserveAllProjectsScope: true)
+                self.scheduleEntriesRefresh(delayMs: 0, reason: .scopeChanged)
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .currentProjectDidChange)
+            .sink { [weak self] notification in
+                guard let self else { return }
+                guard (notification.object as AnyObject?) !== self else { return }
+                self.currentProjectId = self.appState.effectiveProjectId
+                self.loadProjects(preserveAllProjectsScope: false)
+                self.scheduleEntriesRefresh(delayMs: 0, reason: .scopeChanged)
             }
             .store(in: &cancellables)
 
         NotificationCenter.default.publisher(for: .entriesDidChange)
-            .sink { [weak self] _ in
-                self?.scheduleEntriesRefresh(delayMs: 0, reason: .dataChanged)
+            .sink { [weak self] notification in
+                guard let self else { return }
+                guard (notification.object as AnyObject?) !== self else { return }
+                self.scheduleEntriesRefresh(delayMs: 0, reason: .dataChanged)
             }
             .store(in: &cancellables)
     }
 
-    private func loadProjects() {
+    private func loadProjects(preserveAllProjectsScope: Bool = true) {
         do {
             projects = try projectRepository.fetchAll(includeArchived: false)
             projectNamesById = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0.name) })
+            if preserveAllProjectsScope, currentProjectId == Self.allProjectsScopeId {
+                return
+            }
             if currentProjectId.isEmpty || !projects.contains(where: { $0.id == currentProjectId }) {
                 currentProjectId = appState.effectiveProjectId
             }
@@ -295,29 +587,104 @@ final class QuickPanelViewModel: ObservableObject {
     }
 
     func projectName(for projectId: String) -> String? {
-        projectNamesById[projectId]
+        if projectId == Self.allProjectsScopeId {
+            return Self.allProjectsScopeName
+        }
+        return projectNamesById[projectId]
+    }
+
+    /// Saves the current clipboard text directly as a scratchpad note in `速记与待办`.
+    func quickCreateNoteFromClipboard() {
+        let clipboardText = clipboardTextProvider()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        refreshClipboardState()
+        guard !clipboardText.isEmpty else {
+            setTransientStatus("剪贴板暂无可保存的文本", tone: .info)
+            return
+        }
+        guard let entryRepository else {
+            onOpenSettings()
+            return
+        }
+        if projects.isEmpty {
+            loadProjects(preserveAllProjectsScope: true)
+        }
+
+        let targetProjectId = resolveTargetProjectId(for: .note)
+        guard !targetProjectId.isEmpty else {
+            onOpenSettings()
+            return
+        }
+
+        let firstLine = clipboardText
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty }) ?? "剪贴板便签"
+        let title = String(firstLine.prefix(36))
+        let newEntry = Entry(
+            projectId: targetProjectId,
+            title: title,
+            content: clipboardText,
+            type: Constants.EntryType.note.rawValue
+        )
+
+        do {
+            try entryRepository.create(newEntry, changeNote: "剪贴板一键速记")
+            if currentProjectId.isEmpty {
+                activateProject(targetProjectId)
+            } else {
+                scheduleEntriesRefresh(delayMs: 0, reason: .dataChanged)
+            }
+            NotificationCenter.default.post(name: .entriesDidChange, object: self)
+            setTransientStatus("已记入「速记与待办」：\(title)", tone: .info)
+        } catch {
+            PPLogger.entry.error("Failed to create note from clipboard in panel: \(error.localizedDescription)")
+            setStatus("保存剪贴板便签失败，请重试。", tone: .error)
+        }
     }
 
     /// Creates a new entry from the current search query (or clipboard if the query is empty)
     /// directly inside the quick panel, or opens the main window's entry editor when `entryRepository` is unavailable.
     func quickCreateEntryFromPanel(type: Constants.EntryType = .prompt) {
-        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let (cleanedQuery, inlineTag) = Self.extractTagFilter(from: trimmedQuery)
-        let effectiveQueryContent = cleanedQuery.isEmpty ? trimmedQuery : cleanedQuery
-        let clipboardText = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let rawContent = !effectiveQueryContent.isEmpty ? effectiveQueryContent : clipboardText
+        if projects.isEmpty {
+            loadProjects(preserveAllProjectsScope: true)
+        }
+
+        let hadQuery = !query.isEmpty
+        let resolvedType: Constants.EntryType
+        let rawContent: String
+        let tags: [String]
+
+        if let draft = quickCaptureDraft {
+            resolvedType = (type == .note || type == .todo) ? type : draft.type
+            if draft.hasContent {
+                rawContent = draft.cleanedContent
+                tags = draft.tags
+            } else {
+                let clipboardText = clipboardTextProvider()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                rawContent = clipboardText
+                tags = []
+            }
+        } else {
+            resolvedType = type
+            let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedQuery.isEmpty {
+                let extracted = Self.extractAllTags(from: trimmedQuery)
+                rawContent = extracted.cleanedText.isEmpty ? trimmedQuery : extracted.cleanedText
+                tags = extracted.tags
+            } else {
+                let clipboardText = clipboardTextProvider()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                rawContent = clipboardText
+                tags = []
+            }
+        }
+
+        refreshClipboardState()
         guard !rawContent.isEmpty, let entryRepository else {
             onOpenSettings()
             return
         }
 
-        let targetProjectId: String = {
-            if type == .todo || type == .note,
-               let inbox = projects.first(where: { $0.groupKind == .inbox }) {
-                return inbox.id
-            }
-            return currentProjectId.isEmpty ? appState.effectiveProjectId : currentProjectId
-        }()
+        let targetProjectId = resolveTargetProjectId(for: resolvedType)
         guard !targetProjectId.isEmpty else {
             onOpenSettings()
             return
@@ -328,16 +695,12 @@ final class QuickPanelViewModel: ObservableObject {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first(where: { !$0.isEmpty }) ?? "快捷新建"
         let title = String(firstLine.prefix(36))
-        let tags: [String] = {
-            guard let inlineTag, !inlineTag.isEmpty else { return [] }
-            return Entry.normalizeTags([inlineTag])
-        }()
 
         let newEntry = Entry(
             projectId: targetProjectId,
             title: title,
             content: rawContent,
-            type: type.rawValue,
+            type: resolvedType.rawValue,
             tags: tags
         )
 
@@ -346,17 +709,51 @@ final class QuickPanelViewModel: ObservableObject {
             isSuppressingQueryDidSet = true
             query = ""
             isSuppressingQueryDidSet = false
-            if targetProjectId != currentProjectId && targetProjectId != appState.defaultProjectId {
+            isPreviewPresented = false
+
+            let isInboxCapture = (resolvedType == .todo || resolvedType == .note)
+            if currentProjectId.isEmpty {
+                activateProject(targetProjectId)
+            } else if !isInboxCapture,
+                      currentProjectId != Self.allProjectsScopeId,
+                      targetProjectId != currentProjectId,
+                      targetProjectId != appState.defaultProjectId {
                 activateProject(targetProjectId)
             } else {
-                scheduleEntriesRefresh(delayMs: 0, reason: .dataChanged)
+                scheduleEntriesRefresh(delayMs: 0, reason: hadQuery ? .scopeChanged : .dataChanged)
             }
-            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
-            setStatus("已新建词条：\(title)", tone: .info)
+            NotificationCenter.default.post(name: .entriesDidChange, object: self)
+
+            let targetIsInbox = targetProjectId == Constants.inboxProjectId
+                || projects.first(where: { $0.id == targetProjectId })?.groupKind == .inbox
+            if isInboxCapture && targetIsInbox {
+                setTransientStatus("已记入「速记与待办」：\(title)", tone: .info)
+            } else {
+                setTransientStatus("已新建词条：\(title)", tone: .info)
+            }
         } catch {
             PPLogger.entry.error("Failed to quick-create entry from panel: \(error.localizedDescription)")
             setStatus("新建词条失败，请重试。", tone: .error)
         }
+    }
+
+    private func resolveTargetProjectId(for type: Constants.EntryType) -> String {
+        if type == .todo || type == .note {
+            if let inbox = projects.first(where: { $0.groupKind == .inbox }) {
+                return inbox.id
+            }
+            if let persistedInbox = try? projectRepository.fetchById(Constants.inboxProjectId) {
+                return persistedInbox.id
+            }
+        }
+        if !currentProjectId.isEmpty, currentProjectId != Self.allProjectsScopeId {
+            return currentProjectId
+        }
+        let effective = appState.effectiveProjectId
+        if !effective.isEmpty, effective != Self.allProjectsScopeId {
+            return effective
+        }
+        return appState.defaultProjectId ?? projects.first?.id ?? ""
     }
 
     func toggleEntryCompleted(_ entry: Entry) {
@@ -364,7 +761,7 @@ final class QuickPanelViewModel: ObservableObject {
         let nextState = !entry.isCompleted
         do {
             try entryRepository.setCompleted(id: entry.id, isCompleted: nextState)
-            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            NotificationCenter.default.post(name: .entriesDidChange, object: self)
             scheduleEntriesRefresh(delayMs: 0, reason: .dataChanged)
         } catch {
             PPLogger.entry.error("Failed to toggle entry completed in panel: \(error.localizedDescription)")
@@ -379,7 +776,7 @@ final class QuickPanelViewModel: ObservableObject {
         updated.updatedAt = Date()
         do {
             try entryRepository.update(updated)
-            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            NotificationCenter.default.post(name: .entriesDidChange, object: self)
             scheduleEntriesRefresh(delayMs: 0, reason: .dataChanged)
         } catch {
             PPLogger.entry.error("Failed to toggle entry pin in panel: \(error.localizedDescription)")
@@ -387,11 +784,33 @@ final class QuickPanelViewModel: ObservableObject {
         }
     }
 
+    func countForFilter(_ filter: KindFilter) -> Int {
+        guard filter != .all else { return unfilteredEntries.count }
+        return unfilteredEntries.reduce(into: 0) { count, entry in
+            if filter.matches(entry) {
+                count += 1
+            }
+        }
+    }
+
+    nonisolated static func filterEntries(_ entries: [Entry], by filter: KindFilter) -> [Entry] {
+        guard filter != .all else { return entries }
+        return entries.filter { filter.matches($0) }
+    }
+
     private func scheduleEntriesRefresh(delayMs: Int, reason: EntriesRefreshReason) {
         pendingSearchWorkItem?.cancel()
         pendingSearchWorkItem = nil
 
+        if Self.parseQuickCapture(from: self.query) != nil {
+            isLoadingEntries = false
+            isScopeSearchInFlight = false
+            deferredExecutionRequest = nil
+            return
+        }
+
         guard !appState.effectiveProjectId.isEmpty || !currentProjectId.isEmpty else {
+            unfilteredEntries = []
             entries = []
             selectedIndex = 0
             isLoadingEntries = false
@@ -407,7 +826,9 @@ final class QuickPanelViewModel: ObservableObject {
         let searchService = self.searchService
         let searchQueue = self.searchQueue
 
-        appState.currentProjectId = effectiveCurrentProjectId
+        if effectiveCurrentProjectId != Self.allProjectsScopeId {
+            appState.currentProjectId = effectiveCurrentProjectId
+        }
         if reason == .scopeChanged {
             isScopeSearchInFlight = true
             deferredExecutionRequest = nil
@@ -448,21 +869,27 @@ final class QuickPanelViewModel: ObservableObject {
                     self.deferredExecutionRequest = nil
 
                     switch result {
-                    case .success(let (entries, isGlobalFallback)):
+                    case .success(let (sortedEntries, isGlobalFallback)):
                         self.isLoadingEntries = false
                         self.isShowingGlobalFallback = isGlobalFallback
                         let previousSelectionId = self.selectedEntry?.id
-                        self.entries = entries
-                        if entries.isEmpty || reason == .scopeChanged {
+                        self.unfilteredEntries = sortedEntries
+                        let visibleEntries = Self.filterEntries(sortedEntries, by: self.activeKindFilter)
+                        self.entries = visibleEntries
+                        if visibleEntries.isEmpty || reason == .scopeChanged {
                             self.selectedIndex = 0
+                            self.lastSelectionScrollToken += 1
                         } else if let previousSelectionId,
-                                  let index = entries.firstIndex(where: { $0.id == previousSelectionId }) {
+                                  let index = visibleEntries.firstIndex(where: { $0.id == previousSelectionId }) {
                             self.selectedIndex = index
                         } else {
-                            self.selectedIndex = min(self.selectedIndex, entries.count - 1)
+                            self.selectedIndex = min(self.selectedIndex, visibleEntries.count - 1)
+                        }
+                        if visibleEntries.isEmpty {
+                            self.isPreviewPresented = false
                         }
                         self.applyBaseStatus()
-                        if let pendingExecution, !entries.isEmpty {
+                        if let pendingExecution, !visibleEntries.isEmpty {
                             switch pendingExecution.target {
                             case .selected:
                                 self.executeSelection(
@@ -470,7 +897,7 @@ final class QuickPanelViewModel: ObservableObject {
                                     triggerSource: pendingExecution.triggerSource
                                 )
                             case .index(let targetIndex):
-                                guard entries.indices.contains(targetIndex) else {
+                                guard visibleEntries.indices.contains(targetIndex) else {
                                     break
                                 }
                                 self.selectedIndex = targetIndex
@@ -484,8 +911,10 @@ final class QuickPanelViewModel: ObservableObject {
                         PPLogger.search.error("Panel search failed: \(error.localizedDescription)")
                         self.isLoadingEntries = false
                         self.isShowingGlobalFallback = false
+                        self.unfilteredEntries = []
                         self.entries = []
                         self.selectedIndex = 0
+                        self.isPreviewPresented = false
                         self.setStatus("搜索失败，请稍后重试。", tone: .error)
                     }
                 }
@@ -521,6 +950,13 @@ final class QuickPanelViewModel: ObservableObject {
     }
 
     private func applyBaseStatus() {
+        if let transientStatus, Date() < transientStatus.expiresAt {
+            statusMessage = transientStatus.message
+            statusTone = transientStatus.tone
+            return
+        }
+        transientStatus = nil
+
         guard permissionService.isAccessibilityGranted == false else {
             statusMessage = nil
             statusTone = .info
@@ -532,20 +968,58 @@ final class QuickPanelViewModel: ObservableObject {
     }
 
     private func setStatus(_ message: String, tone: StatusTone) {
+        transientStatusResetWorkItem?.cancel()
+        transientStatusResetWorkItem = nil
+        transientStatus = nil
         statusMessage = message
         statusTone = tone
     }
 
+    private func setTransientStatus(
+        _ message: String,
+        tone: StatusTone,
+        duration: TimeInterval = transientStatusDuration
+    ) {
+        transientStatusResetWorkItem?.cancel()
+        let expiresAt = Date().addingTimeInterval(duration)
+        transientStatus = (message: message, tone: tone, expiresAt: expiresAt)
+        statusMessage = message
+        statusTone = tone
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.transientStatus = nil
+            self.applyBaseStatus()
+        }
+        transientStatusResetWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: workItem)
+    }
+
+    private func clearTransientStatus(reapplyBase: Bool) {
+        transientStatusResetWorkItem?.cancel()
+        transientStatusResetWorkItem = nil
+        transientStatus = nil
+        if reapplyBase {
+            applyBaseStatus()
+        }
+    }
+
     /// Order panel results by the same stable keys as the repository so shortcut
     /// numbers do not drift between browsing, searching, and project switching.
-    /// `EntryRanking` owns the keys; this only supplies the panel's context.
+    /// Completed items always sink below incomplete items.
     nonisolated static func applyPanelRankingSort(
         _ entries: [Entry],
         currentProjectId: String,
         now: Date = Date()
     ) -> [Entry] {
-        entries.sorted { lhs, rhs in
-            EntryRanking.isOrderedBefore(lhs, rhs, currentProjectId: currentProjectId, now: now)
+        let priorityProjectId: String? = (currentProjectId == allProjectsScopeId || currentProjectId.isEmpty)
+            ? nil
+            : currentProjectId
+        return entries.sorted { lhs, rhs in
+            if lhs.isCompleted != rhs.isCompleted {
+                return !lhs.isCompleted
+            }
+            return EntryRanking.isOrderedBefore(lhs, rhs, currentProjectId: priorityProjectId, now: now)
         }
     }
 
@@ -565,11 +1039,92 @@ final class QuickPanelViewModel: ObservableObject {
         return (parts.joined(separator: " "), extractedTag)
     }
 
+    /// Extracts all `#tag` tokens from free-form capture text while preserving multi-line structure.
+    nonisolated static func extractAllTags(from text: String) -> (cleanedText: String, tags: [String]) {
+        var rawTags: [String] = []
+        var cleanedLines: [String] = []
+
+        for line in text.components(separatedBy: .newlines) {
+            var lineWords: [String] = []
+            for token in line.split(whereSeparator: { $0.isWhitespace }) {
+                if token.hasPrefix("#"), token.count > 1, !token.dropFirst().hasPrefix("#") {
+                    rawTags.append(String(token.dropFirst()))
+                } else {
+                    lineWords.append(String(token))
+                }
+            }
+            cleanedLines.append(lineWords.joined(separator: " "))
+        }
+
+        let normalizedTags = Entry.normalizeTags(rawTags)
+        let joined = cleanedLines
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if joined.isEmpty, !normalizedTags.isEmpty {
+            return (normalizedTags.joined(separator: " "), normalizedTags)
+        }
+        return (joined, normalizedTags)
+    }
+
+    /// Detects instant note / todo capture prefixes in the panel search query.
+    nonisolated static func parseQuickCapture(from query: String) -> QuickCaptureDraft? {
+        let leadingTrimmed = String(query.drop(while: { $0 == " " || $0 == "\t" }))
+        guard !leadingTrimmed.isEmpty else {
+            return nil
+        }
+
+        let lowercased = leadingTrimmed.lowercased()
+        let prefixRules: [(prefix: String, type: Constants.EntryType, caseInsensitive: Bool)] = [
+            ("[ ] ", .todo, false),
+            ("[] ", .todo, false),
+            ("todo:", .todo, true),
+            ("todo：", .todo, true),
+            ("待办:", .todo, false),
+            ("待办：", .todo, false),
+            ("t ", .todo, true),
+            ("note:", .note, true),
+            ("note：", .note, true),
+            ("便签:", .note, false),
+            ("便签：", .note, false),
+            ("; ", .note, false),
+            ("；", .note, false),
+            ("n ", .note, true)
+        ]
+
+        for rule in prefixRules {
+            let matches = rule.caseInsensitive
+                ? lowercased.hasPrefix(rule.prefix)
+                : leadingTrimmed.hasPrefix(rule.prefix)
+            guard matches else { continue }
+
+            let matchedPrefix = String(leadingTrimmed.prefix(rule.prefix.count))
+            let rawBody = String(leadingTrimmed.dropFirst(rule.prefix.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let (cleanedContent, tags) = extractAllTags(from: rawBody)
+            let firstLine = cleanedContent
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first(where: { !$0.isEmpty }) ?? ""
+            let title = String(firstLine.prefix(36))
+
+            return QuickCaptureDraft(
+                type: rule.type,
+                matchedPrefix: matchedPrefix,
+                rawBody: rawBody,
+                title: title,
+                cleanedContent: cleanedContent,
+                tags: tags
+            )
+        }
+        return nil
+    }
+
     // MARK: - Panel shortcuts
 
-    /// A ⌘-combination the quick panel owns.
+    /// A shortcut combination the quick panel owns.
     ///
-    /// These cannot be expressed as SwiftUI `keyboardShortcut`s or as a
+    /// These cannot be expressed as SwiftUI `keyboardShortcut`s or solely as a
     /// `keyDown` handler on the search field: while the field is being edited
     /// the field editor is first responder, and AppKit resolves ⌘-combinations
     /// through key-equivalent dispatch (main menu included) before any
@@ -579,29 +1134,42 @@ final class QuickPanelViewModel: ObservableObject {
         case executeEntry(number: Int)
         case copySelection
         case togglePin
+        case togglePreview
         case quickCreateEntry
+        case quickCreateNote
+        case quickCreateTodo
         case closePanel
     }
 
     private static let escapeKeyCode: UInt16 = 53
+    private static let returnKeyCode: UInt16 = 36
+    private static let keypadEnterKeyCode: UInt16 = 76
 
-    /// Pure mapping from a key event to a panel command. Only a bare ⌘ counts —
-    /// ⌘⇧1 / ⌥⌘1 stay available to the system.
+    /// Pure mapping from a key event to a panel command.
     static func panelKeyCommand(
         keyCode: UInt16 = .max,
         modifierFlags: NSEvent.ModifierFlags,
         charactersIgnoringModifiers: String?
     ) -> PanelKeyCommand? {
+        let flags = modifierFlags.intersection([.command, .shift, .option, .control])
+
         // Esc is handled here rather than only on the search field: once focus
-        // moves off the field (a background click, a closed menu) the field's
+        // moves off the field (a background click, a preview pane) the field's
         // key handling stops running and the panel would have no way out.
-        if keyCode == escapeKeyCode, modifierFlags.isDisjoint(with: [.command, .shift, .option, .control]) {
+        if keyCode == escapeKeyCode, flags.isEmpty {
             return .closePanel
         }
-        guard modifierFlags.contains(.command) else {
-            return nil
+
+        if keyCode == returnKeyCode || keyCode == keypadEnterKeyCode {
+            if flags == [.shift] {
+                return .quickCreateNote
+            }
+            if flags == [.option] {
+                return .quickCreateTodo
+            }
         }
-        guard modifierFlags.isDisjoint(with: [.shift, .option, .control]) else {
+
+        guard flags == [.command] else {
             return nil
         }
         guard let characters = charactersIgnoringModifiers?.lowercased(), characters.count == 1 else {
@@ -615,6 +1183,8 @@ final class QuickPanelViewModel: ObservableObject {
             return .copySelection
         case "p":
             return .togglePin
+        case "y":
+            return .togglePreview
         case "n":
             return .quickCreateEntry
         default:
@@ -629,7 +1199,7 @@ final class QuickPanelViewModel: ObservableObject {
     func handlePanelKeyCommand(_ command: PanelKeyCommand) -> Bool {
         switch command {
         case .executeEntry(let number):
-            guard (1...9).contains(number) else {
+            guard !isQuickCaptureMode, (1...9).contains(number) else {
                 return false
             }
             if isScopeSearchInFlight {
@@ -641,16 +1211,29 @@ final class QuickPanelViewModel: ObservableObject {
             }
             executeEntry(atNumber: number)
         case .copySelection:
-            guard !isScopeSearchInFlight, selectedEntry != nil else {
+            guard !isQuickCaptureMode, !isScopeSearchInFlight, selectedEntry != nil else {
                 return false
             }
             copySelectionOnly()
         case .togglePin:
             togglePanelPinned()
+        case .togglePreview:
+            if isPreviewPresented {
+                dismissPreview()
+                return true
+            }
+            guard !isQuickCaptureMode, !isScopeSearchInFlight, selectedEntry != nil else {
+                return false
+            }
+            togglePreview()
         case .quickCreateEntry:
-            quickCreateEntryFromPanel()
+            quickCreateEntryFromPanel(type: defaultQuickCreateType)
+        case .quickCreateNote:
+            quickCreateEntryFromPanel(type: .note)
+        case .quickCreateTodo:
+            quickCreateEntryFromPanel(type: .todo)
         case .closePanel:
-            closePanel()
+            handleEscape()
         }
         return true
     }
@@ -706,6 +1289,7 @@ final class QuickPanelViewModel: ObservableObject {
                     PPLogger.execute.error("Failed to record usage on copy: \(error.localizedDescription)")
                 }
             }
+            isPreviewPresented = false
             setStatus("已复制到剪贴板：\(entry.title)", tone: .info)
             executeService.onShowNotification?("已复制：\(entry.title)", true)
             onClosePanel()

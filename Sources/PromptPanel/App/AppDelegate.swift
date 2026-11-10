@@ -235,6 +235,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         PPLogger.app.info("Application will terminate")
     }
 
+    static func hasActiveMarkedText(firstResponder: NSResponder?) -> Bool {
+        if let textView = firstResponder as? NSTextView {
+            return textView.hasMarkedText()
+        }
+        if let control = firstResponder as? NSControl,
+           let editor = control.currentEditor() as? NSTextView {
+            return editor.hasMarkedText()
+        }
+        return false
+    }
+
+    static func shouldDeferPanelCommandForActiveMarkedText(
+        _ command: QuickPanelViewModel.PanelKeyCommand,
+        firstResponder: NSResponder?
+    ) -> Bool {
+        guard hasActiveMarkedText(firstResponder: firstResponder) else {
+            return false
+        }
+        switch command {
+        case .closePanel, .quickCreateNote, .quickCreateTodo:
+            return true
+        default:
+            return false
+        }
+    }
+
     /// Resolve a raw key event from the quick panel into a panel command.
     /// Returns `true` when the event was consumed.
     private func handlePanelKeyEvent(_ event: NSEvent) -> Bool {
@@ -243,6 +269,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             modifierFlags: event.modifierFlags,
             charactersIgnoringModifiers: event.charactersIgnoringModifiers
         ) else {
+            return false
+        }
+        if Self.shouldDeferPanelCommandForActiveMarkedText(
+            command,
+            firstResponder: event.window?.firstResponder
+        ) {
             return false
         }
         if command == .copySelection, PanelService.hasActiveTextSelection(in: event.window) {
@@ -460,6 +492,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             onToggleQuickPanel: { [weak self] in
                 self?.panelService.toggle()
             },
+            onQuickNoteFromClipboard: { [weak self] in
+                self?.handleQuickNoteFromClipboard()
+            },
             onOpenMainWindow: { [weak self] in
                 self?.openMainWindow(targetTab: .library)
             },
@@ -495,6 +530,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             PPLogger.hotkey.notice(
                 "Skipping global hotkey registration: secondary instance (\(AppLaunchCoordinator.allowExistingInstanceEnvironmentKey)=1)"
             )
+        }
+    }
+
+    @discardableResult
+    static func saveQuickNoteFromClipboard(
+        clipboardText: String?,
+        projectRepository: ProjectRepository,
+        entryRepository: EntryRepository
+    ) throws -> Entry? {
+        let rawText = clipboardText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !rawText.isEmpty else {
+            return nil
+        }
+        let (cleanedContent, extractedTags) = MainWindowViewModel.extractQuickCaptureContentAndTags(from: rawText)
+        guard !cleanedContent.isEmpty else {
+            return nil
+        }
+        let targetProjectId = (try? projectRepository.fetchInbox())?.id
+            ?? (try? projectRepository.fetchById(Constants.inboxProjectId))?.id
+            ?? (try? projectRepository.fetchDefault())?.id
+            ?? Constants.inboxProjectId
+        let title = MainWindowViewModel.deriveEntryTitle(from: cleanedContent, fallback: "剪贴板便签")
+        let entry = Entry(
+            projectId: targetProjectId,
+            title: title,
+            content: cleanedContent,
+            type: Constants.EntryType.note.rawValue,
+            tags: extractedTags
+        )
+        try entryRepository.create(entry, changeNote: "菜单栏剪贴板速记")
+        return entry
+    }
+
+    private func handleQuickNoteFromClipboard() {
+        let rawClipboard = NSPasteboard.general.string(forType: .string)
+        do {
+            if let entry = try Self.saveQuickNoteFromClipboard(
+                clipboardText: rawClipboard,
+                projectRepository: projectRepository,
+                entryRepository: entryRepository
+            ) {
+                NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+                mainWindowViewModel?.bannerMessage = "已记入「速记与待办」：\(entry.title)"
+                toastService?.show(message: "已记入「速记与待办」：\(entry.title)", isSuccess: true)
+            } else {
+                panelService?.show()
+                quickPanelViewModel?.query = "; "
+                toastService?.show(message: "剪贴板暂无文本，已打开速记面板", isSuccess: false)
+            }
+        } catch {
+            PPLogger.entry.error("Failed to create quick note from tray clipboard: \(error.localizedDescription)")
+            toastService?.show(message: "速记保存失败，请重试。", isSuccess: false)
         }
     }
 

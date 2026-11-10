@@ -3,6 +3,8 @@ import Foundation
 /// Search service for entries: handles FTS search, mixed project results, and PRD-compliant sorting.
 final class EntrySearchService: @unchecked Sendable {
 
+    static let allProjectsScopeId = "__all_projects__"
+
     private let entryRepository: EntryRepository
 
     init(entryRepository: EntryRepository) {
@@ -31,6 +33,9 @@ final class EntrySearchService: @unchecked Sendable {
             defaultProjectId: defaultProjectId,
             tag: tag
         )
+        guard currentProjectId != Self.allProjectsScopeId else {
+            return SearchResult(entries: scoped, isGlobalFallback: false)
+        }
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard scoped.isEmpty, (!normalizedQuery.isEmpty || (tag != nil && !(tag?.isEmpty ?? true))) else {
             return SearchResult(entries: scoped, isGlobalFallback: false)
@@ -57,9 +62,19 @@ final class EntrySearchService: @unchecked Sendable {
         do {
             let results: [Entry]
             let scope: String
+            let includesDefaultProject: Bool
 
-            if currentId == defaultId {
+            if currentId == Self.allProjectsScopeId {
+                scope = (normalizedQuery.isEmpty && tag == nil) ? "all_projects_browse" : "all_projects_search"
+                includesDefaultProject = true
+                results = try entryRepository.searchAll(
+                    query: normalizedQuery,
+                    tag: tag,
+                    excludeArchivedProjects: true
+                )
+            } else if currentId == defaultId {
                 scope = "default_only"
+                includesDefaultProject = false
                 if normalizedQuery.isEmpty, tag == nil {
                     results = try entryRepository.fetchByProject(currentId)
                 } else {
@@ -72,9 +87,11 @@ final class EntrySearchService: @unchecked Sendable {
                 }
             } else if normalizedQuery.isEmpty, tag == nil {
                 scope = "mixed_browse"
+                includesDefaultProject = true
                 results = try entryRepository.fetchMixed(currentProjectId: currentId, defaultProjectId: defaultId)
             } else {
                 scope = "mixed_search"
+                includesDefaultProject = true
                 results = try entryRepository.search(
                     query: normalizedQuery,
                     currentProjectId: currentId,
@@ -89,12 +106,17 @@ final class EntrySearchService: @unchecked Sendable {
                 query: normalizedQuery,
                 resultCount: results.count,
                 durationMs: durationMs,
-                includesDefaultProject: currentId != defaultId
+                includesDefaultProject: includesDefaultProject
             )
             return results
         } catch {
             let durationMs = elapsedMilliseconds(since: startTime)
-            let failureScope = currentId == defaultId ? "default_only" : "mixed"
+            let failureScope: String = {
+                if currentId == Self.allProjectsScopeId {
+                    return "all_projects"
+                }
+                return currentId == defaultId ? "default_only" : "mixed"
+            }()
             let queryTokenCount = tokenCount(for: normalizedQuery)
             PPLogger.search.error(
                 "Search failed scope=\(failureScope) duration_ms=\(durationMs) query_length=\(normalizedQuery.count) token_count=\(queryTokenCount) error=\(error.localizedDescription)"

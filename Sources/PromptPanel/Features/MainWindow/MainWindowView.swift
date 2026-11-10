@@ -2,11 +2,46 @@ import AppKit
 import Foundation
 import SwiftUI
 
+private final class ContextDropdownInteractionState: ObservableObject {
+    @Published var isOpen: Bool = false
+    @Published var isHoveringPill: Bool = false
+    @Published var isHoveringDropdown: Bool = false
+    @Published var hoveredProjectId: String?
+
+    var pendingOpenWorkItem: DispatchWorkItem?
+    var pendingCloseWorkItem: DispatchWorkItem?
+    var pendingHoverSelectWorkItem: DispatchWorkItem?
+
+    deinit {
+        cancelAllTimers()
+    }
+
+    func cancelAllTimers() {
+        pendingOpenWorkItem?.cancel()
+        pendingOpenWorkItem = nil
+        pendingCloseWorkItem?.cancel()
+        pendingCloseWorkItem = nil
+        pendingHoverSelectWorkItem?.cancel()
+        pendingHoverSelectWorkItem = nil
+    }
+
+    func resetDropdownHoverState() {
+        cancelAllTimers()
+        isHoveringDropdown = false
+        hoveredProjectId = nil
+    }
+}
+
 struct MainWindowView: View {
     @ObservedObject var viewModel: MainWindowViewModel
+    @StateObject private var dropdownState = ContextDropdownInteractionState()
+
+    private static let hoverOpenDelayMs: Int = 110
+    private static let hoverCloseDelayMs: Int = 170
+    private static let hoverSelectDelayMs: Int = 70
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .topLeading) {
             Constants.VisualStyle.surface
                 .ignoresSafeArea()
 
@@ -33,6 +68,20 @@ struct MainWindowView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+
+            if dropdownState.isOpen {
+                Color.black.opacity(0.001)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        closeContextDropdownImmediately()
+                    }
+                    .zIndex(10)
+
+                contextSwitcherDropdown
+                    .padding(.leading, Design.Space.lg)
+                    .padding(.top, Constants.Layout.headerHeight + 4)
+                    .zIndex(20)
+            }
         }
         .preferredColorScheme(viewModel.appTheme.preferredColorScheme)
         .tint(Constants.VisualStyle.accent)
@@ -41,6 +90,15 @@ struct MainWindowView: View {
             minHeight: Constants.MainWindowLayout.minContentSize.height
         )
         .transaction { $0.animation = nil }
+        .onChange(of: dropdownState.isOpen) { _, isOpen in
+            if !isOpen {
+                dropdownState.resetDropdownHoverState()
+            }
+        }
+        .onDisappear {
+            dropdownState.resetDropdownHoverState()
+            dropdownState.isHoveringPill = false
+        }
         .sheet(isPresented: Binding(
             get: { viewModel.projectDraft != nil },
             set: { if !$0 { viewModel.projectDraft = nil } }
@@ -95,88 +153,14 @@ struct MainWindowView: View {
         }
     }
 
-    // MARK: - Header
+    // MARK: - Header & Floating Context Switcher
 
     private var windowHeader: some View {
         ZStack {
             segmentedControl
 
             HStack(alignment: .center, spacing: 8) {
-                HStack(spacing: 5) {
-                    Image(systemName: "scope")
-                        .font(.icon(.micro, weight: .semibold))
-                        .foregroundStyle(Constants.VisualStyle.accent)
-                    Text("当前面板：\(viewModel.projectName(for: viewModel.currentProjectId))")
-                        .font(.ui(.caption, weight: .medium))
-                        .foregroundStyle(Constants.VisualStyle.textSecondary)
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.icon(.micro, weight: .semibold))
-                        .foregroundStyle(Constants.VisualStyle.textTertiary)
-                }
-                .padding(.horizontal, 8)
-                .frame(height: 24)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(Constants.VisualStyle.tintSubtle)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
-                )
-                .overlay {
-                    Menu {
-                        if let inbox = viewModel.inboxProject {
-                            Button {
-                                viewModel.setCurrentProject(inbox.id)
-                            } label: {
-                                if inbox.id == viewModel.currentProjectId {
-                                    Label(inbox.name, systemImage: "checkmark")
-                                } else {
-                                    Text(inbox.name)
-                                }
-                            }
-                            Divider()
-                        }
-                        if !viewModel.categoryProjects.isEmpty {
-                            Section("常用类型") {
-                                ForEach(viewModel.categoryProjects) { project in
-                                    Button {
-                                        viewModel.setCurrentProject(project.id)
-                                    } label: {
-                                        if project.id == viewModel.currentProjectId {
-                                            Label(project.name, systemImage: "checkmark")
-                                        } else {
-                                            Text(project.name)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if !viewModel.activeProjects.isEmpty {
-                            Section("具体项目") {
-                                ForEach(viewModel.activeProjects) { project in
-                                    Button {
-                                        viewModel.setCurrentProject(project.id)
-                                    } label: {
-                                        if project.id == viewModel.currentProjectId {
-                                            Label(project.name, systemImage: "checkmark")
-                                        } else {
-                                            Text(project.name)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } label: {
-                        Color.clear
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .opacity(0.02)
-                }
-                .clipped()
-                .help("切换快捷面板默认绑定的项目")
+                contextSwitcherPill
 
                 Spacer(minLength: 0)
 
@@ -198,6 +182,267 @@ struct MainWindowView: View {
                     alignment: .bottom
                 )
         )
+    }
+
+    private var contextSwitcherPill: some View {
+        let isHighlighted = dropdownState.isOpen || dropdownState.isHoveringPill
+        return Button {
+            if dropdownState.isOpen {
+                closeContextDropdownImmediately()
+            } else {
+                dropdownState.pendingOpenWorkItem?.cancel()
+                dropdownState.pendingOpenWorkItem = nil
+                dropdownState.pendingCloseWorkItem?.cancel()
+                dropdownState.pendingCloseWorkItem = nil
+                dropdownState.isOpen = true
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "scope")
+                    .font(.icon(.micro, weight: .semibold))
+                    .foregroundStyle(Constants.VisualStyle.accent)
+                Text("当前面板：\(viewModel.projectName(for: viewModel.currentProjectId))")
+                    .font(.ui(.caption, weight: .medium))
+                    .foregroundStyle(isHighlighted ? Constants.VisualStyle.text : Constants.VisualStyle.textSecondary)
+                    .lineLimit(1)
+                Image(systemName: dropdownState.isOpen ? "chevron.up" : "chevron.down")
+                    .font(.icon(.micro, weight: .semibold))
+                    .foregroundStyle(isHighlighted ? Constants.VisualStyle.accent : Constants.VisualStyle.textTertiary)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 24)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isHighlighted ? Constants.VisualStyle.surfaceHover : Constants.VisualStyle.tintSubtle)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(
+                        dropdownState.isOpen ? Constants.VisualStyle.accentBorder : Constants.VisualStyle.border,
+                        lineWidth: Constants.Layout.hairline
+                    )
+            )
+            .roundedHitTarget(cornerRadius: 6)
+        }
+        .buttonStyle(.plain)
+        .onVerticalScrollStep { step in
+            viewModel.cycleCurrentProject(step: step)
+        }
+        .onHover { hovering in
+            dropdownState.isHoveringPill = hovering
+            if hovering {
+                dropdownState.pendingCloseWorkItem?.cancel()
+                dropdownState.pendingCloseWorkItem = nil
+                if !dropdownState.isOpen {
+                    scheduleContextDropdownOpen()
+                }
+            } else {
+                dropdownState.pendingOpenWorkItem?.cancel()
+                dropdownState.pendingOpenWorkItem = nil
+                scheduleContextDropdownCloseIfOutside()
+            }
+        }
+        .help("悬停展开并滑过即切 · 滚轮上下轮换当前快捷面板分组")
+    }
+
+    private var contextSwitcherDropdown: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let inbox = viewModel.inboxProject {
+                        VStack(alignment: .leading, spacing: 2) {
+                            dropdownSectionTitle("速记与待办")
+                            contextDropdownRow(for: inbox, iconName: "checklist")
+                        }
+                    }
+
+                    if !viewModel.categoryProjects.isEmpty {
+                        VStack(alignment: .leading, spacing: 2) {
+                            dropdownSectionTitle("常用类型")
+                            ForEach(viewModel.categoryProjects) { category in
+                                contextDropdownRow(for: category, iconName: category.effectiveIconName)
+                            }
+                        }
+                    }
+
+                    if !viewModel.activeProjects.isEmpty {
+                        VStack(alignment: .leading, spacing: 2) {
+                            dropdownSectionTitle("具体项目")
+                            ForEach(viewModel.activeProjects) { project in
+                                contextDropdownRow(for: project, iconName: project.effectiveIconName)
+                            }
+                        }
+                    }
+                }
+                .padding(8)
+            }
+            .frame(maxHeight: 320)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Rectangle()
+                .fill(Constants.VisualStyle.divider)
+                .frame(height: Constants.Layout.hairline)
+
+            HStack(spacing: 4) {
+                Image(systemName: "cursorarrow.motionlines")
+                    .font(.icon(.micro))
+                Text("滑过即切 · 点击收起 · 顶部滚轮轮换")
+                    .font(.ui(.micro))
+            }
+            .foregroundStyle(Constants.VisualStyle.textTertiary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+        }
+        .frame(width: 244)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Constants.VisualStyle.surfaceRaised)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(Constants.VisualStyle.borderStrong, lineWidth: Constants.Layout.hairline)
+        )
+        .shadow(color: Color.black.opacity(0.22), radius: 16, x: 0, y: 8)
+        .onHover { hovering in
+            dropdownState.isHoveringDropdown = hovering
+            if hovering {
+                dropdownState.pendingCloseWorkItem?.cancel()
+                dropdownState.pendingCloseWorkItem = nil
+            } else {
+                dropdownState.hoveredProjectId = nil
+                dropdownState.pendingHoverSelectWorkItem?.cancel()
+                dropdownState.pendingHoverSelectWorkItem = nil
+                scheduleContextDropdownCloseIfOutside()
+            }
+        }
+    }
+
+    private func dropdownSectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.ui(.micro, weight: .semibold))
+            .foregroundStyle(Constants.VisualStyle.textTertiary)
+            .padding(.horizontal, 6)
+            .padding(.top, 2)
+    }
+
+    private func contextDropdownRow(for project: Project, iconName: String) -> some View {
+        let isActive = project.id == viewModel.currentProjectId
+        let isHovered = dropdownState.hoveredProjectId == project.id
+        return Button {
+            dropdownState.pendingHoverSelectWorkItem?.cancel()
+            dropdownState.pendingHoverSelectWorkItem = nil
+            if viewModel.currentProjectId != project.id {
+                viewModel.setCurrentProject(project.id)
+            }
+            closeContextDropdownImmediately()
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: iconName)
+                    .font(.icon(.small, weight: .medium))
+                    .foregroundStyle(isActive ? Constants.VisualStyle.accent : Constants.VisualStyle.textSecondary)
+                    .frame(width: 15)
+
+                Text(project.name)
+                    .font(.ui(.body, weight: isActive ? .semibold : .regular))
+                    .foregroundStyle(Constants.VisualStyle.text)
+                    .lineLimit(1)
+
+                Spacer(minLength: 4)
+
+                Text("\(viewModel.entryCount(forProjectId: project.id))")
+                    .font(.ui(.micro, mono: true))
+                    .foregroundStyle(isActive ? Constants.VisualStyle.accent : Constants.VisualStyle.textTertiary)
+
+                if isActive {
+                    Image(systemName: "checkmark")
+                        .font(.icon(.micro, weight: .bold))
+                        .foregroundStyle(Constants.VisualStyle.accent)
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(
+                        isActive
+                            ? Constants.VisualStyle.accentDim
+                            : (isHovered ? Constants.VisualStyle.surfaceHover : Color.clear)
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(
+                        isActive ? Constants.VisualStyle.accent.opacity(0.3) : Color.clear,
+                        lineWidth: Constants.Layout.hairline
+                    )
+            )
+            .roundedHitTarget(cornerRadius: 6)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            if hovering {
+                dropdownState.hoveredProjectId = project.id
+                scheduleHoverSelectProject(project.id)
+            } else if dropdownState.hoveredProjectId == project.id {
+                dropdownState.hoveredProjectId = nil
+                dropdownState.pendingHoverSelectWorkItem?.cancel()
+                dropdownState.pendingHoverSelectWorkItem = nil
+            }
+        }
+    }
+
+    private func scheduleContextDropdownOpen() {
+        dropdownState.pendingOpenWorkItem?.cancel()
+        let state = dropdownState
+        let workItem = DispatchWorkItem { [weak state] in
+            guard let state, state.isHoveringPill else { return }
+            state.isOpen = true
+        }
+        dropdownState.pendingOpenWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(Self.hoverOpenDelayMs),
+            execute: workItem
+        )
+    }
+
+    private func scheduleContextDropdownCloseIfOutside() {
+        dropdownState.pendingCloseWorkItem?.cancel()
+        let state = dropdownState
+        let workItem = DispatchWorkItem { [weak state] in
+            guard let state, !state.isHoveringPill && !state.isHoveringDropdown else { return }
+            state.isOpen = false
+            state.hoveredProjectId = nil
+        }
+        dropdownState.pendingCloseWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(Self.hoverCloseDelayMs),
+            execute: workItem
+        )
+    }
+
+    private func scheduleHoverSelectProject(_ projectId: String) {
+        dropdownState.pendingHoverSelectWorkItem?.cancel()
+        guard viewModel.currentProjectId != projectId else { return }
+        let state = dropdownState
+        let viewModel = self.viewModel
+        let workItem = DispatchWorkItem { [weak state, weak viewModel] in
+            guard let state, let viewModel,
+                  state.hoveredProjectId == projectId,
+                  state.isOpen else { return }
+            if viewModel.currentProjectId != projectId {
+                viewModel.setCurrentProject(projectId)
+            }
+        }
+        dropdownState.pendingHoverSelectWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(Self.hoverSelectDelayMs),
+            execute: workItem
+        )
+    }
+
+    private func closeContextDropdownImmediately() {
+        dropdownState.resetDropdownHoverState()
+        dropdownState.isOpen = false
     }
 
     private var segmentedControl: some View {
@@ -355,7 +600,7 @@ private struct EntryEditorSheet: View {
 
             VStack(alignment: .leading, spacing: Design.Space.lg) {
                 SheetField(label: "标题") {
-                    TextField("输入标题", text: $draft.title)
+                    TextField("输入标题（留空自动取首行）", text: $draft.title)
                         .textFieldStyle(.roundedBorder)
                         .font(.ui(.title))
                         .focused($focusedField, equals: .title)
@@ -415,7 +660,7 @@ private struct EntryEditorSheet: View {
         }
         .frame(width: 620)
         .onAppear {
-            focusedField = draft.title.isEmpty ? .title : .content
+            focusedField = .content
         }
     }
 
@@ -439,7 +684,7 @@ private struct EntryEditorSheet: View {
                     .focused($focusedField, equals: .content)
 
                 if draft.content.isEmpty {
-                    Text("粘贴或输入要执行的内容")
+                    Text("粘贴或输入要记录/执行的内容")
                         .font(.ui(.title))
                         .foregroundStyle(Constants.VisualStyle.textQuaternary)
                         .padding(.horizontal, Design.Space.md)
@@ -466,8 +711,7 @@ private struct EntryEditorSheet: View {
     }
 
     private var isEntryDraftValid: Bool {
-        draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            && draft.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        draft.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
     private func saveAndDismiss() {

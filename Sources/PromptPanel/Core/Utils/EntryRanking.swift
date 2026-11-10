@@ -14,7 +14,7 @@ import GRDB
 ///    from an import were nailed above the list forever, no matter how little they were
 ///    used, with no way to clear them.
 ///
-/// The order is now `是否置顶 → frecency → 最近使用时间 → 使用次数 → …`, where frecency decays
+/// The order is now `是否完成(未完成优先) → 是否置顶 → frecency → 最近使用时间 → 使用次数 → …`, where frecency decays
 /// an entry's use count by how long it has been sitting untouched:
 ///
 ///     score = use_count × 2 ^ (−age_in_days / halfLifeDays)
@@ -99,6 +99,7 @@ enum EntryRanking {
         let projectPriority = includeProjectPriority ? "\n    project_priority ASC," : ""
         return """
             ORDER BY
+                entries.is_completed ASC,
                 entries.is_pinned DESC,
                 \(sqlFunctionName)(entries.use_count, entries.last_used_at, ?) DESC,
                 entries.last_used_at DESC,
@@ -110,6 +111,9 @@ enum EntryRanking {
 
     /// The comparator behind `sqlOrderByClause`, for the panel's in-memory re-sort.
     static func isOrderedBefore(_ lhs: Entry, _ rhs: Entry, currentProjectId: String?, now: Date) -> Bool {
+        if lhs.isCompleted != rhs.isCompleted {
+            return !lhs.isCompleted
+        }
         if lhs.isPinned != rhs.isPinned {
             return lhs.isPinned
         }

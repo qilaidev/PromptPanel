@@ -39,13 +39,16 @@ final class EntryRepository: @unchecked Sendable {
         }
     }
 
-    /// Fetch all non-deleted entries for management views.
-    func fetchAll() throws -> [Entry] {
+    /// Fetch all non-deleted entries for management and all-projects views.
+    func fetchAll(excludeArchivedProjects: Bool = false) throws -> [Entry] {
         try dbQueue.read { db in
+            let archiveClause = excludeArchivedProjects
+                ? "\n  AND entries.project_id IN (SELECT id FROM projects WHERE deleted_at IS NULL AND is_archived = 0)"
+                : ""
             let sql = """
                 SELECT entries.*
                 FROM entries
-                WHERE entries.deleted_at IS NULL
+                WHERE entries.deleted_at IS NULL\(archiveClause)
                 \(EntryRanking.sqlOrderByClause(includeProjectPriority: false))
                 """
             return try Entry.fetchAll(db, sql: sql, arguments: [Date()])
@@ -97,16 +100,8 @@ final class EntryRepository: @unchecked Sendable {
     func searchAll(query: String, tag: String? = nil, excludeArchivedProjects: Bool = false) throws -> [Entry] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            let entries = try fetchAll()
-            let filtered = Self.applyTagFilter(entries, tag: tag)
-            guard excludeArchivedProjects else { return filtered }
-            return try dbQueue.read { db in
-                let activeProjectIds = Set(try String.fetchAll(
-                    db,
-                    sql: "SELECT id FROM projects WHERE deleted_at IS NULL AND is_archived = 0"
-                ))
-                return filtered.filter { activeProjectIds.contains($0.projectId) }
-            }
+            let entries = try fetchAll(excludeArchivedProjects: excludeArchivedProjects)
+            return Self.applyTagFilter(entries, tag: tag)
         }
 
         return try dbQueue.read { db in
@@ -444,6 +439,41 @@ final class EntryRepository: @unchecked Sendable {
             try Self.requireChangedRow(in: db, entity: "Entry \(id)")
         }
         PPLogger.entry.debug("Completion state updated for entry: \(id) completed=\(isCompleted)")
+    }
+
+    /// Soft-delete all active completed entries (optionally scoped to a specific project), returning the count of updated rows.
+    @discardableResult
+    func deleteCompleted(projectId: String? = nil) throws -> Int {
+        let deletedCount = try dbQueue.write { db -> Int in
+            let now = Date()
+            if let projectId {
+                try db.execute(
+                    sql: """
+                        UPDATE entries
+                        SET deleted_at = ?,
+                            updated_at = ?
+                        WHERE deleted_at IS NULL
+                          AND is_completed = 1
+                          AND project_id = ?
+                        """,
+                    arguments: [now, now, projectId]
+                )
+            } else {
+                try db.execute(
+                    sql: """
+                        UPDATE entries
+                        SET deleted_at = ?,
+                            updated_at = ?
+                        WHERE deleted_at IS NULL
+                          AND is_completed = 1
+                        """,
+                    arguments: [now, now]
+                )
+            }
+            return db.changesCount
+        }
+        PPLogger.entry.debug("Soft-deleted \(deletedCount) completed entries (projectId=\(projectId ?? "all"))")
+        return deletedCount
     }
 
     /// Soft-delete an entry by ID so cloud sync propagates a tombstone instead of resurrecting it.

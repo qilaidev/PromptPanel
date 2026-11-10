@@ -6,6 +6,7 @@ final class TrayManager {
 
     private var statusItem: NSStatusItem?
     private let onToggleQuickPanel: () -> Void
+    private let onQuickNoteFromClipboard: () -> Void
     private let onOpenMainWindow: () -> Void
     private let onOpenReferenceWindow: () -> Void
     private let onOpenSettings: () -> Void
@@ -13,12 +14,14 @@ final class TrayManager {
 
     init(
         onToggleQuickPanel: @escaping () -> Void = {},
+        onQuickNoteFromClipboard: @escaping () -> Void = {},
         onOpenMainWindow: @escaping () -> Void,
         onOpenReferenceWindow: @escaping () -> Void = {},
         onOpenSettings: @escaping () -> Void = {},
         onQuit: @escaping () -> Void
     ) {
         self.onToggleQuickPanel = onToggleQuickPanel
+        self.onQuickNoteFromClipboard = onQuickNoteFromClipboard
         self.onOpenMainWindow = onOpenMainWindow
         self.onOpenReferenceWindow = onOpenReferenceWindow
         self.onOpenSettings = onOpenSettings
@@ -42,6 +45,10 @@ final class TrayManager {
         let panelItem = NSMenuItem(title: "呼出快捷面板", action: #selector(handleTogglePanel), keyEquivalent: "")
         panelItem.target = self
         menu.addItem(panelItem)
+
+        let quickNoteItem = NSMenuItem(title: "从剪贴板速记便签", action: #selector(handleQuickNoteFromClipboard), keyEquivalent: "")
+        quickNoteItem.target = self
+        menu.addItem(quickNoteItem)
 
         let openItem = NSMenuItem(title: "打开主界面", action: #selector(handleOpen), keyEquivalent: "")
         openItem.target = self
@@ -69,6 +76,10 @@ final class TrayManager {
 
     @objc private func handleTogglePanel() {
         onToggleQuickPanel()
+    }
+
+    @objc private func handleQuickNoteFromClipboard() {
+        onQuickNoteFromClipboard()
     }
 
     @objc private func handleOpen() {

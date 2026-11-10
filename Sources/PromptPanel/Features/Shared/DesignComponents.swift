@@ -101,6 +101,187 @@ extension View {
     func roundedHitTarget(cornerRadius: CGFloat) -> some View {
         contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     }
+
+    /// Subtle macOS pointer hover surface feedback without stealing clicks or focus.
+    func hoverHighlight(cornerRadius: CGFloat = 6, isEnabled: Bool = true) -> some View {
+        modifier(HoverHighlightModifier(cornerRadius: cornerRadius, isEnabled: isEnabled))
+    }
+
+    /// Converts vertical mouse-wheel / trackpad scroll gestures over this view into discrete
+    /// `-1` (up / previous) and `+1` (down / next) steps without stealing clicks or key focus.
+    func onVerticalScrollStep(perform action: @escaping (Int) -> Void) -> some View {
+        modifier(ScrollWheelModifier(onStep: action))
+    }
+}
+
+private final class HoverTrackingState: ObservableObject {
+    @Published var isHovered = false
+}
+
+struct HoverHighlightModifier: ViewModifier {
+    let cornerRadius: CGFloat
+    let isEnabled: Bool
+    @StateObject private var state = HoverTrackingState()
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(state.isHovered && isEnabled ? Constants.VisualStyle.surfaceHover : Color.clear)
+            )
+            .onHover { hovering in
+                if state.isHovered != hovering {
+                    state.isHovered = hovering
+                }
+            }
+    }
+}
+
+/// Lightweight AppKit-backed vertical scroll-wheel modifier that observes `.scrollWheel` events
+/// over the modified view's bounds and emits `-1` / `+1` steps without intercepting mouse clicks
+/// or altering `NSPanel` / search field first-responder state.
+struct ScrollWheelModifier: ViewModifier {
+    let onStep: (Int) -> Void
+
+    init(onStep: @escaping (Int) -> Void) {
+        self.onStep = onStep
+    }
+
+    func body(content: Content) -> some View {
+        content.background(
+            VerticalScrollWheelRepresentable(onStep: onStep)
+                .allowsHitTesting(false)
+        )
+    }
+}
+
+private struct VerticalScrollWheelRepresentable: NSViewRepresentable {
+    let onStep: (Int) -> Void
+
+    func makeNSView(context: Context) -> VerticalScrollTrackingView {
+        let view = VerticalScrollTrackingView()
+        view.onStep = onStep
+        return view
+    }
+
+    func updateNSView(_ nsView: VerticalScrollTrackingView, context: Context) {
+        nsView.onStep = onStep
+    }
+}
+
+private final class VerticalScrollTrackingView: NSView {
+    var onStep: ((Int) -> Void)?
+    private var eventMonitor: Any?
+    private var accumulatedDeltaY: CGFloat = 0
+    private var lastEventTimestamp: TimeInterval = 0
+    private var lastStepTimestamp: TimeInterval = 0
+
+    private static let preciseThreshold: CGFloat = 18
+    private static let discreteThreshold: CGFloat = 0.75
+    private static let gestureResetInterval: TimeInterval = 0.25
+    private static let stepCooldownInterval: TimeInterval = 0.065
+
+    override var acceptsFirstResponder: Bool { false }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        installMonitorIfNeeded()
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil {
+            removeMonitor()
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    deinit {
+        if let eventMonitor {
+            NSEvent.removeMonitor(eventMonitor)
+        }
+    }
+
+    private func installMonitorIfNeeded() {
+        guard window != nil else {
+            removeMonitor()
+            return
+        }
+        guard eventMonitor == nil else { return }
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self else { return event }
+            return self.handleScrollWheel(event)
+        }
+    }
+
+    private func removeMonitor() {
+        if let eventMonitor {
+            NSEvent.removeMonitor(eventMonitor)
+            self.eventMonitor = nil
+        }
+        accumulatedDeltaY = 0
+    }
+
+    private func handleScrollWheel(_ event: NSEvent) -> NSEvent? {
+        guard let window,
+              window.isVisible,
+              event.window === window,
+              !isHiddenOrHasHiddenAncestor,
+              bounds.width > 0,
+              bounds.height > 0 else {
+            return event
+        }
+
+        let localPoint = convert(event.locationInWindow, from: nil)
+        guard bounds.contains(localPoint) else {
+            return event
+        }
+
+        // Swallow post-flick trackpad momentum over the control so inertia doesn't spin endlessly.
+        if !event.momentumPhase.isEmpty {
+            return nil
+        }
+
+        if event.phase == .began {
+            accumulatedDeltaY = 0
+        } else if event.phase == .ended || event.phase == .cancelled {
+            accumulatedDeltaY = 0
+            return nil
+        }
+
+        // Ignore predominantly horizontal gestures.
+        if abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) {
+            return nil
+        }
+
+        let now = event.timestamp
+        if now - lastEventTimestamp > Self.gestureResetInterval {
+            accumulatedDeltaY = 0
+        }
+        lastEventTimestamp = now
+
+        let rawDelta = event.scrollingDeltaY != 0 ? event.scrollingDeltaY : event.deltaY
+        guard rawDelta != 0 else {
+            return nil
+        }
+
+        if (accumulatedDeltaY > 0 && rawDelta < 0) || (accumulatedDeltaY < 0 && rawDelta > 0) {
+            accumulatedDeltaY = 0
+        }
+
+        accumulatedDeltaY += rawDelta
+        let threshold = event.hasPreciseScrollingDeltas ? Self.preciseThreshold : Self.discreteThreshold
+
+        if abs(accumulatedDeltaY) >= threshold, now - lastStepTimestamp >= Self.stepCooldownInterval {
+            let step = accumulatedDeltaY < 0 ? 1 : -1
+            accumulatedDeltaY = 0
+            lastStepTimestamp = now
+            onStep?(step)
+        }
+
+        return nil
+    }
 }
 
 struct KbdLabel: View {

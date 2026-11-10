@@ -6,6 +6,9 @@ import GRDB
 #if canImport(XCTest)
 import XCTest
 #endif
+#if canImport(Testing) && PROMPTPANEL_SWIFT_TESTING
+import Testing
+#endif
 
 private struct TestAssertionError: LocalizedError {
     let message: String
@@ -103,6 +106,9 @@ public enum CoreTestSuite {
         try verifyWorkspaceKindsArchiveVersionsAndCloning()
         try verifyReferenceWindowAndCloudSyncConflictPreservation()
         try verifyCloudSyncDataLossProtectionAndThrottledBackups()
+        try verifyCompletedRankingCleanupAndArchivedExclusion()
+        try verifyQuickPanelAllScopeCaptureFilterHoverAndPreview()
+        try verifyMainWindowQuickJotAutoTitleCleanupAndDebouncedAutoSave()
     }
 
     private static func makeTempDatabaseURL() -> URL {
@@ -117,6 +123,59 @@ public enum CoreTestSuite {
         defer { try? FileManager.default.removeItem(at: rootDir) }
         let manager = try DatabaseManager(url: dbURL)
         try body(manager, dbURL)
+    }
+
+    private static func withTempDatabaseAsync(_ body: @MainActor (DatabaseManager, URL) async throws -> Void) async throws {
+        let dbURL = makeTempDatabaseURL()
+        let rootDir = dbURL.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: rootDir) }
+        let manager = try DatabaseManager(url: dbURL)
+        try await body(manager, dbURL)
+    }
+
+    private static func waitUntilAsync(
+        timeout: TimeInterval = 1.5,
+        _ condition: @MainActor () -> Bool
+    ) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+    }
+
+    private static func sleepMainActor(_ seconds: TimeInterval) async {
+        let nanoseconds = UInt64(max(0, seconds) * 1_000_000_000)
+        try? await Task.sleep(nanoseconds: nanoseconds)
+    }
+
+    private static func runAsyncOnMainRunLoop(
+        _ operation: @escaping @MainActor () async throws -> Void
+    ) throws {
+        var outcome: Result<Void, Error>?
+        Task { @MainActor in
+            do {
+                try await operation()
+                outcome = .success(())
+            } catch {
+                outcome = .failure(error)
+            }
+        }
+        let deadline = Date().addingTimeInterval(15)
+        while outcome == nil && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.005))
+        }
+        switch outcome {
+        case .success:
+            return
+        case .failure(let error):
+            throw error
+        case nil:
+            throw TestAssertionError(
+                message: "Timed out waiting for async main-actor test operation",
+                file: #filePath,
+                line: #line
+            )
+        }
     }
 
     static func verifyDatabaseAndMigrations() throws {
@@ -446,7 +505,13 @@ public enum CoreTestSuite {
     }
 
     static func verifyQuickPanelScopeSafetyAndCopyUsage() throws {
-        try withTempDatabase { manager, _ in
+        try runAsyncOnMainRunLoop {
+            try await verifyQuickPanelScopeSafetyAndCopyUsageAsync()
+        }
+    }
+
+    static func verifyQuickPanelScopeSafetyAndCopyUsageAsync() async throws {
+        try await withTempDatabaseAsync { manager, _ in
             let projectRepo = ProjectRepository(dbQueue: manager.dbQueue)
             let entryRepo = EntryRepository(dbQueue: manager.dbQueue)
             let settingsRepo = SettingsRepository(dbQueue: manager.dbQueue)
@@ -488,9 +553,8 @@ public enum CoreTestSuite {
             )
 
             viewModel.prepareForPresentation()
-            let loadDeadline = Date().addingTimeInterval(1)
-            while (viewModel.isScopeSearchInFlight || viewModel.entries.count != 2) && Date() < loadDeadline {
-                RunLoop.main.run(until: Date().addingTimeInterval(0.005))
+            await waitUntilAsync(timeout: 1.5) {
+                !viewModel.isScopeSearchInFlight && viewModel.entries.count == 2
             }
             try check(viewModel.entries.count == 2)
 
@@ -502,9 +566,8 @@ public enum CoreTestSuite {
             try check(spyClipboard.writtenTexts.isEmpty)
 
             _ = viewModel.handlePanelKeyCommand(.executeEntry(number: 1))
-            let searchDeadline = Date().addingTimeInterval(1)
-            while viewModel.isScopeSearchInFlight && Date() < searchDeadline {
-                RunLoop.main.run(until: Date().addingTimeInterval(0.005))
+            await waitUntilAsync(timeout: 1.5) {
+                !viewModel.isScopeSearchInFlight
             }
             try check(viewModel.entries.map(\.id) == [entryB.id])
             try check(spyClipboard.writtenTexts == ["Beta body"])
@@ -540,24 +603,21 @@ public enum CoreTestSuite {
             try entryRepo.create(archivedEntry)
 
             viewModel.query = "Kubernetes"
-            let fallbackDeadline = Date().addingTimeInterval(1)
-            while viewModel.isScopeSearchInFlight && Date() < fallbackDeadline {
-                RunLoop.main.run(until: Date().addingTimeInterval(0.005))
+            await waitUntilAsync(timeout: 1.5) {
+                !viewModel.isScopeSearchInFlight
             }
             try check(viewModel.isShowingGlobalFallback)
             try check(viewModel.entries.map(\.id) == [crossProjectEntry.id])
 
             // Verify ⌘N quickCreateEntryFromPanel creates an entry directly from the non-matching query
             viewModel.query = "快速记录新想法 #idea"
-            let noMatchDeadline = Date().addingTimeInterval(1)
-            while viewModel.isScopeSearchInFlight && Date() < noMatchDeadline {
-                RunLoop.main.run(until: Date().addingTimeInterval(0.005))
+            await waitUntilAsync(timeout: 1.5) {
+                !viewModel.isScopeSearchInFlight
             }
             try check(viewModel.entries.isEmpty)
             _ = viewModel.handlePanelKeyCommand(.quickCreateEntry)
-            let createDeadline = Date().addingTimeInterval(1)
-            while (viewModel.isScopeSearchInFlight || !viewModel.query.isEmpty) && Date() < createDeadline {
-                RunLoop.main.run(until: Date().addingTimeInterval(0.005))
+            await waitUntilAsync(timeout: 1.5) {
+                !viewModel.isScopeSearchInFlight && viewModel.query.isEmpty
             }
             let createdFromPanel = try entryRepo.fetchByProject(defaultProject.id).first(where: { $0.content.contains("快速记录新想法") })
             try check(createdFromPanel != nil)
@@ -1086,6 +1146,604 @@ public enum CoreTestSuite {
             try check(try entryRepo.fetchById("protected-entry-1") != nil, "Soft-deleted entry must be restored by recoverDeletedAndSync")
         }
     }
+
+    static func verifyCompletedRankingCleanupAndArchivedExclusion() throws {
+        try withTempDatabase { manager, _ in
+            let projectRepo = ProjectRepository(dbQueue: manager.dbQueue)
+            let entryRepo = EntryRepository(dbQueue: manager.dbQueue)
+            let inbox = try unwrap(projectRepo.fetchInbox())
+            let activeProject = Project(id: "proj-active-rank", name: "活跃项目", groupKind: .project)
+            let archivedProject = Project(id: "proj-archived-rank", name: "归档项目", groupKind: .project, isArchived: true)
+            try projectRepo.create(activeProject)
+            try projectRepo.create(archivedProject)
+
+            let oldDate = Date(timeIntervalSinceNow: -86_400)
+            let now = Date()
+
+            // Unfinished entry is unpinned and older; completed entry is pinned, heavily used, and updated right now!
+            let unfinishedTodo = Entry(
+                id: "todo-open",
+                projectId: inbox.id,
+                title: "未完成待办",
+                content: "必须排在前面",
+                type: Constants.EntryType.todo.rawValue,
+                isPinned: false,
+                isCompleted: false,
+                useCount: 0,
+                createdAt: oldDate,
+                updatedAt: oldDate
+            )
+            let completedPinnedNote = Entry(
+                id: "note-done-pinned",
+                projectId: inbox.id,
+                title: "已完成置顶便签",
+                content: "即便置顶且刚更新也应下沉",
+                type: Constants.EntryType.note.rawValue,
+                isPinned: true,
+                isCompleted: true,
+                useCount: 50,
+                lastUsedAt: now,
+                createdAt: oldDate,
+                updatedAt: now
+            )
+            let activeCompleted = Entry(
+                id: "active-done",
+                projectId: activeProject.id,
+                title: "活跃项目已完成项",
+                content: "active completed",
+                type: Constants.EntryType.todo.rawValue,
+                isCompleted: true
+            )
+            let archivedEntry = Entry(
+                id: "archived-note",
+                projectId: archivedProject.id,
+                title: "归档项目词条",
+                content: "archived body",
+                type: Constants.EntryType.note.rawValue,
+                isCompleted: false
+            )
+
+            try entryRepo.create(completedPinnedNote)
+            try entryRepo.create(unfinishedTodo)
+            try entryRepo.create(activeCompleted)
+            try entryRepo.create(archivedEntry)
+
+            // 1. EntryRanking in-memory & SQL order: unfinished always ranks before completed (even pinned + newer)
+            try check(EntryRanking.isOrderedBefore(unfinishedTodo, completedPinnedNote, currentProjectId: inbox.id, now: now))
+            try check(!EntryRanking.isOrderedBefore(completedPinnedNote, unfinishedTodo, currentProjectId: inbox.id, now: now))
+
+            let inboxFetched = try entryRepo.fetchByProject(inbox.id)
+            try check(inboxFetched.map(\.id) == [unfinishedTodo.id, completedPinnedNote.id])
+
+            // Toggle unfinishedTodo to completed -> updatedAt = now; add a new unfinished item and verify ranking
+            let secondUnfinished = Entry(
+                id: "todo-open-2",
+                projectId: inbox.id,
+                title: "第二条未完成",
+                content: "保持在顶部",
+                type: Constants.EntryType.todo.rawValue,
+                createdAt: oldDate,
+                updatedAt: oldDate
+            )
+            try entryRepo.create(secondUnfinished)
+            try entryRepo.setCompleted(id: unfinishedTodo.id, isCompleted: true)
+
+            let reFetchedInbox = try entryRepo.fetchByProject(inbox.id)
+            try check(reFetchedInbox.first?.id == secondUnfinished.id, "Toggling completion must sink item below unfinished entries")
+            let panelSorted = QuickPanelViewModel.applyPanelRankingSort(reFetchedInbox, currentProjectId: inbox.id, now: Date())
+            try check(panelSorted.first?.id == secondUnfinished.id)
+
+            // 2. fetchAll(excludeArchivedProjects:)
+            let allIncludingArchived = try entryRepo.fetchAll(excludeArchivedProjects: false)
+            try check(allIncludingArchived.contains(where: { $0.id == archivedEntry.id }))
+            let nonArchivedOnly = try entryRepo.fetchAll(excludeArchivedProjects: true)
+            try check(!nonArchivedOnly.contains(where: { $0.id == archivedEntry.id }))
+            try check(nonArchivedOnly.contains(where: { $0.id == secondUnfinished.id }))
+
+            // 3. deleteCompleted(projectId:) scoped & global
+            let scopedDeleted = try entryRepo.deleteCompleted(projectId: inbox.id)
+            try check(scopedDeleted == 2, "Expected 2 completed entries soft-deleted in inbox")
+            try check(try entryRepo.fetchByProject(inbox.id).map(\.id) == [secondUnfinished.id])
+            try check(try entryRepo.fetchById(activeCompleted.id) != nil, "Completed entry in another project must remain untouched")
+
+            let globalDeleted = try entryRepo.deleteCompleted(projectId: nil)
+            try check(globalDeleted == 1, "Expected remaining 1 completed entry soft-deleted globally")
+            try check(try entryRepo.fetchById(activeCompleted.id) == nil)
+        }
+    }
+
+    static func verifyQuickPanelAllScopeCaptureFilterHoverAndPreview() throws {
+        try runAsyncOnMainRunLoop {
+            try await verifyQuickPanelAllScopeCaptureFilterHoverAndPreviewAsync()
+        }
+    }
+
+    static func verifyQuickPanelAllScopeCaptureFilterHoverAndPreviewAsync() async throws {
+        try await withTempDatabaseAsync { manager, _ in
+            let projectRepo = ProjectRepository(dbQueue: manager.dbQueue)
+            let entryRepo = EntryRepository(dbQueue: manager.dbQueue)
+            let settingsRepo = SettingsRepository(dbQueue: manager.dbQueue)
+            let logRepo = LogRepository(dbQueue: manager.dbQueue)
+            let defaultProject = try unwrap(projectRepo.fetchDefault())
+            let inboxProject = try unwrap(projectRepo.fetchInbox())
+
+            let projectAlpha = Project(id: "proj-alpha", name: "前端工程", groupKind: .project)
+            let archivedProject = Project(id: "proj-old", name: "归档老工程", groupKind: .project, isArchived: true)
+            try projectRepo.create(projectAlpha)
+            try projectRepo.create(archivedProject)
+
+            let promptEntry = Entry(
+                id: "qp-prompt",
+                projectId: defaultProject.id,
+                title: "系统架构评审 Prompt",
+                content: "请评审以下微服务边界与容错方案",
+                type: Constants.EntryType.prompt.rawValue
+            )
+            let codeEntry = Entry(
+                id: "qp-code",
+                projectId: projectAlpha.id,
+                title: "Debounce Hook",
+                content: "function useDebounce(value, delay) { return value; }",
+                type: Constants.EntryType.code.rawValue
+            )
+            let archivedSecret = Entry(
+                id: "qp-archived",
+                projectId: archivedProject.id,
+                title: "Debounce Legacy",
+                content: "archived legacy snippet",
+                type: Constants.EntryType.code.rawValue
+            )
+            try entryRepo.create(promptEntry)
+            try entryRepo.create(codeEntry)
+            try entryRepo.create(archivedSecret)
+
+            let appState = AppState()
+            appState.loadPersistedState(currentProjectId: defaultProject.id, defaultProjectId: defaultProject.id)
+
+            let spyClipboard = SpyClipboardService()
+            let spyPaste = SpyPasteService()
+            let stubPermission = StubPermissionService()
+            let executeService = ExecuteService(
+                clipboardService: spyClipboard,
+                pasteService: spyPaste,
+                entryRepository: entryRepo,
+                logRepository: logRepo,
+                permissionService: stubPermission,
+                targetApplicationProvider: { nil },
+                currentFrontApplicationProvider: { nil }
+            )
+
+            var panelCloseCount = 0
+            let viewModel = QuickPanelViewModel(
+                appState: appState,
+                projectRepository: projectRepo,
+                entryRepository: entryRepo,
+                settingsRepository: settingsRepo,
+                searchService: EntrySearchService(entryRepository: entryRepo),
+                executeService: executeService,
+                clipboardService: spyClipboard,
+                permissionService: PermissionService(),
+                onClosePanel: { panelCloseCount += 1 }
+            )
+            var mockClipboardText: String? = "剪贴板临时灵感\n第二行补充 #clip"
+            viewModel.clipboardTextProvider = { mockClipboardText }
+
+            viewModel.prepareForPresentation()
+            viewModel.handleSearchFieldFocus(
+                PanelFocusResult(token: viewModel.focusToken, succeeded: true, attempt: 1)
+            )
+            await waitUntilAsync(timeout: 1.0) {
+                viewModel.isExecutionReady && !viewModel.isScopeSearchInFlight
+            }
+
+            // 1. All-projects scope ("__all_projects__") browse & search excludes archived projects and preserves persisted project ID
+            viewModel.activateScope(QuickPanelViewModel.allProjectsScopeId)
+            await waitUntilAsync(timeout: 1.5) { !viewModel.isScopeSearchInFlight }
+            try check(viewModel.isAllProjectsScope)
+            try check(!viewModel.isShowingGlobalFallback)
+            try check(try settingsRepo.getCurrentProjectId() == defaultProject.id)
+            try check(viewModel.entries.contains(where: { $0.id == promptEntry.id }))
+            try check(viewModel.entries.contains(where: { $0.id == codeEntry.id }))
+            try check(!viewModel.entries.contains(where: { $0.id == archivedSecret.id }))
+
+            viewModel.query = "Debounce"
+            await waitUntilAsync(timeout: 1.5) { !viewModel.isScopeSearchInFlight }
+            try check(viewModel.entries.map(\.id) == [codeEntry.id])
+            viewModel.query = ""
+            await waitUntilAsync(timeout: 1.5) { !viewModel.isScopeSearchInFlight }
+
+            // 2. Tab / Shift+Tab scope cycling (`cycleScope`)
+            let scopes = viewModel.availableScopeIds
+            try check(scopes.first == QuickPanelViewModel.allProjectsScopeId)
+            try check(scopes.contains(inboxProject.id))
+            try check(scopes.contains(projectAlpha.id))
+            viewModel.activateScope(scopes[0])
+            await waitUntilAsync(timeout: 1.5) { !viewModel.isScopeSearchInFlight }
+            viewModel.cycleScope(1)
+            try check(viewModel.currentProjectId == scopes[1])
+            viewModel.cycleScope(-1)
+            try check(viewModel.currentProjectId == scopes[0])
+            viewModel.cycleScope(-1)
+            try check(viewModel.currentProjectId == scopes.last)
+
+            // 3. Quick-capture prefixes (`; `, `n `, `t `, `todo:`) enter capture mode and save on Enter without pasting old entries
+            viewModel.activateScope(projectAlpha.id)
+            await waitUntilAsync(timeout: 1.5) { !viewModel.isScopeSearchInFlight }
+            let clipboardWritesBeforeCapture = spyClipboard.writtenTexts.count
+
+            try check(QuickPanelViewModel.parseQuickCapture(from: "n 会议纪要 #sync")?.type == .note)
+            try check(QuickPanelViewModel.parseQuickCapture(from: "todo: 修复样式细节 #ui")?.type == .todo)
+
+            viewModel.query = "; 周五发版检查清单 #release #mac"
+            try check(viewModel.isQuickCaptureMode)
+            let noteDraft = try unwrap(viewModel.quickCaptureDraft)
+            try check(noteDraft.type == .note)
+            try check(noteDraft.tags == ["release", "mac"])
+            viewModel.executeSelection(triggerSource: .keyboardSubmit)
+            await waitUntilAsync(timeout: 1.5) { !viewModel.isScopeSearchInFlight }
+            try check(spyClipboard.writtenTexts.count == clipboardWritesBeforeCapture, "Enter in quick-capture mode must save note, not execute/copy stale entry")
+            try check(viewModel.query.isEmpty)
+            try check(viewModel.currentProjectId == projectAlpha.id, "Quick capture into inbox must keep current project scope unchanged")
+            let savedQuickNote = try unwrap(
+                entryRepo.fetchByProject(inboxProject.id).first(where: { $0.content.contains("周五发版检查清单") })
+            )
+            try check(savedQuickNote.type == Constants.EntryType.note.rawValue)
+            try check(savedQuickNote.tags == ["release", "mac"])
+
+            viewModel.query = "t 补充回归单测 #qa"
+            try check(viewModel.quickCaptureDraft?.type == .todo)
+            viewModel.executeSelection(triggerSource: .keyboardSubmit)
+            await waitUntilAsync(timeout: 1.5) { !viewModel.isScopeSearchInFlight }
+            let savedQuickTodo = try unwrap(
+                entryRepo.fetchByProject(inboxProject.id).first(where: { $0.content.contains("补充回归单测") })
+            )
+            try check(savedQuickTodo.type == Constants.EntryType.todo.rawValue)
+            try check(savedQuickTodo.tags == ["qa"])
+
+            // 4. Shift+Enter (.quickCreateNote) & Option+Enter (.quickCreateTodo) key commands + clipboard quick-note
+            try check(
+                QuickPanelViewModel.panelKeyCommand(
+                    keyCode: 36,
+                    modifierFlags: [.shift],
+                    charactersIgnoringModifiers: "\r"
+                ) == .quickCreateNote
+            )
+            try check(
+                QuickPanelViewModel.panelKeyCommand(
+                    keyCode: 36,
+                    modifierFlags: [.option],
+                    charactersIgnoringModifiers: "\r"
+                ) == .quickCreateTodo
+            )
+            try check(
+                QuickPanelViewModel.panelKeyCommand(
+                    modifierFlags: [.command],
+                    charactersIgnoringModifiers: "y"
+                ) == .togglePreview
+            )
+
+            viewModel.query = "快捷键直存便签 #fast"
+            _ = viewModel.handlePanelKeyCommand(.quickCreateNote)
+            await waitUntilAsync(timeout: 1.5) { !viewModel.isScopeSearchInFlight }
+            try check(
+                try entryRepo.fetchByProject(inboxProject.id).contains(where: {
+                    $0.content == "快捷键直存便签" && $0.type == Constants.EntryType.note.rawValue && $0.tags == ["fast"]
+                })
+            )
+
+            viewModel.query = "快捷键直存待办 #next"
+            _ = viewModel.handlePanelKeyCommand(.quickCreateTodo)
+            await waitUntilAsync(timeout: 1.5) { !viewModel.isScopeSearchInFlight }
+            try check(
+                try entryRepo.fetchByProject(inboxProject.id).contains(where: {
+                    $0.content == "快捷键直存待办" && $0.type == Constants.EntryType.todo.rawValue && $0.tags == ["next"]
+                })
+            )
+
+            viewModel.quickCreateNoteFromClipboard()
+            await waitUntilAsync(timeout: 1.5) { !viewModel.isScopeSearchInFlight }
+            try check(
+                try entryRepo.fetchByProject(inboxProject.id).contains(where: {
+                    $0.title == "剪贴板临时灵感" && $0.type == Constants.EntryType.note.rawValue
+                })
+            )
+            mockClipboardText = nil
+            viewModel.refreshClipboardState()
+            try check(!viewModel.hasClipboardText)
+
+            // 5. Kind filter (`activeKindFilter`) + smart `defaultQuickCreateType`
+            viewModel.activateScope(QuickPanelViewModel.allProjectsScopeId)
+            await waitUntilAsync(timeout: 1.5) { !viewModel.isScopeSearchInFlight }
+            let totalUnfiltered = viewModel.unfilteredEntries.count
+            try check(totalUnfiltered >= 5)
+
+            viewModel.activeKindFilter = .code
+            try check(viewModel.entries.allSatisfy { $0.type == Constants.EntryType.code.rawValue })
+            try check(viewModel.defaultQuickCreateType == .code)
+
+            viewModel.activeKindFilter = .noteAndTodo
+            try check(viewModel.entries.allSatisfy {
+                $0.type == Constants.EntryType.note.rawValue || $0.type == Constants.EntryType.todo.rawValue
+            })
+            try check(viewModel.defaultQuickCreateType == .note)
+
+            viewModel.activeKindFilter = .all
+            try check(viewModel.entries.count == totalUnfiltered)
+
+            // 6. Hover selection with keyboard-navigation lock
+            try check(viewModel.entries.count >= 3)
+            viewModel.selectEntry(at: 0)
+            viewModel.notifyPointerMoved()
+            viewModel.selectEntryByHover(at: 2)
+            try check(viewModel.selectedIndex == 2, "Hover should select row when keyboard lock is inactive")
+
+            viewModel.moveSelection(.up)
+            try check(viewModel.selectedIndex == 1)
+            try check(viewModel.suppressHoverSelectionUntilMouseMoves)
+            viewModel.selectEntryByHover(at: 0)
+            try check(viewModel.selectedIndex == 1, "Stationary cursor hover must not hijack keyboard arrow selection")
+
+            viewModel.notifyPointerMoved()
+            try check(!viewModel.suppressHoverSelectionUntilMouseMoves)
+            viewModel.selectEntryByHover(at: 0)
+            try check(viewModel.selectedIndex == 0, "Real pointer movement must re-enable hover selection")
+
+            // 7. Full-text preview (`⌘Y`) & layered `Esc` dismissal (preview -> scope dropdown -> panel)
+            try check(!viewModel.isPreviewPresented)
+            _ = viewModel.handlePanelKeyCommand(.togglePreview)
+            try check(viewModel.isPreviewPresented)
+
+            viewModel.isScopeDropdownOpen = true
+            _ = viewModel.handlePanelKeyCommand(.closePanel) // Esc #1 closes preview first
+            try check(!viewModel.isPreviewPresented)
+            try check(viewModel.isScopeDropdownOpen)
+            try check(panelCloseCount == 0)
+
+            _ = viewModel.handlePanelKeyCommand(.closePanel) // Esc #2 closes scope dropdown
+            try check(!viewModel.isScopeDropdownOpen)
+            try check(panelCloseCount == 0)
+
+            _ = viewModel.handlePanelKeyCommand(.closePanel) // Esc #3 closes panel
+            try check(panelCloseCount == 1)
+
+            // 8. Chinese IME (`hasMarkedText()`) guard prevents swallowing Esc / Return / Shift+Enter / Option+Enter during Pinyin composition
+            let imeTextView = NSTextView(frame: NSRect(x: 0, y: 0, width: 240, height: 28))
+            imeTextView.setMarkedText(
+                "zhongwen",
+                selectedRange: NSRange(location: 8, length: 0),
+                replacementRange: NSRange(location: NSNotFound, length: 0)
+            )
+            try check(imeTextView.hasMarkedText())
+            try check(AppDelegate.shouldDeferPanelCommandForActiveMarkedText(.closePanel, firstResponder: imeTextView))
+            try check(AppDelegate.shouldDeferPanelCommandForActiveMarkedText(.quickCreateNote, firstResponder: imeTextView))
+            try check(AppDelegate.shouldDeferPanelCommandForActiveMarkedText(.quickCreateTodo, firstResponder: imeTextView))
+
+            var searchText = ""
+            let searchCoordinator = KeyAwareSearchField.Coordinator(
+                text: .init(get: { searchText }, set: { searchText = $0 })
+            )
+            var didTriggerEscape = false
+            var didTriggerSubmit = false
+            searchCoordinator.onEscape = { didTriggerEscape = true }
+            searchCoordinator.onSubmit = { didTriggerSubmit = true }
+            let dummyField = PromptSearchField()
+            try check(
+                !searchCoordinator.control(
+                    dummyField,
+                    textView: imeTextView,
+                    doCommandBy: #selector(NSResponder.cancelOperation(_:))
+                )
+            )
+            try check(
+                !searchCoordinator.control(
+                    dummyField,
+                    textView: imeTextView,
+                    doCommandBy: #selector(NSResponder.insertNewline(_:))
+                )
+            )
+            try check(!didTriggerEscape && !didTriggerSubmit)
+
+            imeTextView.unmarkText()
+            try check(!imeTextView.hasMarkedText())
+            try check(!AppDelegate.shouldDeferPanelCommandForActiveMarkedText(.closePanel, firstResponder: imeTextView))
+            try check(
+                searchCoordinator.control(
+                    dummyField,
+                    textView: imeTextView,
+                    doCommandBy: #selector(NSResponder.cancelOperation(_:))
+                )
+            )
+            try check(didTriggerEscape)
+        }
+    }
+
+    static func verifyMainWindowQuickJotAutoTitleCleanupAndDebouncedAutoSave() throws {
+        try runAsyncOnMainRunLoop {
+            try await verifyMainWindowQuickJotAutoTitleCleanupAndDebouncedAutoSaveAsync()
+        }
+    }
+
+    static func verifyMainWindowQuickJotAutoTitleCleanupAndDebouncedAutoSaveAsync() async throws {
+        try await withTempDatabaseAsync { manager, dbURL in
+            let projectRepo = ProjectRepository(dbQueue: manager.dbQueue)
+            let entryRepo = EntryRepository(dbQueue: manager.dbQueue)
+            let settingsRepo = SettingsRepository(dbQueue: manager.dbQueue)
+            let logRepo = LogRepository(dbQueue: manager.dbQueue)
+            let maintenance = StorageMaintenanceService(
+                dbQueue: manager.dbQueue,
+                logRepository: logRepo,
+                databaseURL: dbURL
+            )
+            let defaultProject = try unwrap(projectRepo.fetchDefault())
+            let inboxProject = try unwrap(projectRepo.fetchInbox())
+            let featureProject = Project(id: "proj-feature", name: "客户端专项", groupKind: .project)
+            try projectRepo.create(featureProject)
+
+            let appState = AppState()
+            appState.loadPersistedState(currentProjectId: defaultProject.id, defaultProjectId: defaultProject.id)
+
+            let viewModel = MainWindowViewModel(
+                appState: appState,
+                projectRepository: projectRepo,
+                entryRepository: entryRepo,
+                settingsRepository: settingsRepo,
+                logRepository: logRepo,
+                permissionService: PermissionService(),
+                loginItemService: LoginItemService(),
+                storageMaintenanceService: maintenance,
+                updaterService: UpdaterService(),
+                launchRecoveryReport: nil
+            )
+            defer { viewModel.cancelPendingBackgroundTasks() }
+
+            viewModel.load()
+            await waitUntilAsync(timeout: 1.5) { !viewModel.projects.isEmpty }
+            await sleepMainActor(0.06)
+
+            // 1. Inline Quick Jot (`submitQuickCapture`) in All Projects routes to `builtin-inbox` with #tags & auto-title
+            viewModel.selectedProjectId = MainWindowViewModel.allProjectsSelection
+            await sleepMainActor(0.06)
+            viewModel.quickCaptureText = "记录线上压测结论\n峰值 QPS 稳定在 4200 #perf #report"
+            let createdNote = try unwrap(viewModel.submitQuickCapture(type: .note))
+            try check(createdNote.projectId == inboxProject.id)
+            try check(createdNote.type == Constants.EntryType.note.rawValue)
+            try check(createdNote.title == "记录线上压测结论")
+            try check(createdNote.tags == ["perf", "report"])
+            try check(viewModel.quickCaptureText.isEmpty)
+
+            let createdTodo = try unwrap(
+                viewModel.submitQuickCapture(text: "跟进压测监控告警阈值 #ops", type: .todo)
+            )
+            try check(createdTodo.projectId == inboxProject.id)
+            try check(createdTodo.type == Constants.EntryType.todo.rawValue)
+            try check(createdTodo.tags == ["ops"])
+
+            // 2. EntryEditorSheet blank-title auto-derivation + `.note` default when in `builtin-inbox`
+            viewModel.selectedProjectId = inboxProject.id
+            await waitUntilAsync(timeout: 1.5) { viewModel.entries.count >= 2 }
+            viewModel.startCreateEntry()
+            let draftInInbox = try unwrap(viewModel.entryDraft)
+            try check(draftInInbox.projectId == inboxProject.id)
+            try check(draftInInbox.type == Constants.EntryType.note.rawValue, "Creating entry in Inbox must default to .note")
+
+            viewModel.entryDraft?.title = "   "
+            viewModel.entryDraft?.content = "   \n第一行自动生成标题测试内容\n第二行详细描述"
+            try check(viewModel.saveEntryDraft())
+            let autoTitledEntry = try unwrap(
+                entryRepo.fetchByProject(inboxProject.id).first(where: { $0.title == "第一行自动生成标题测试内容" })
+            )
+            try check(autoTitledEntry.type == Constants.EntryType.note.rawValue)
+
+            // 3. Completed entries sink below unfinished entries in MainWindowViewModel + hideCompletedEntries + clearCompletedEntriesInVisibleScope
+            viewModel.togglePin(createdTodo) // Pin the todo, then mark it completed -> must STILL sink below unfinished entries!
+            viewModel.toggleEntryCompleted(try unwrap(entryRepo.fetchById(createdTodo.id)))
+            await waitUntilAsync(timeout: 1.5) { viewModel.completedEntryCount == 1 }
+
+            try check(viewModel.completedEntryCount == 1)
+            try check(viewModel.displayedEntries.last?.id == createdTodo.id, "Completed pinned entry must sink below unfinished entries")
+
+            viewModel.hideCompletedEntries = true
+            try check(!viewModel.displayedEntries.contains(where: { $0.id == createdTodo.id }))
+            viewModel.hideCompletedEntries = false
+            try check(viewModel.displayedEntries.contains(where: { $0.id == createdTodo.id }))
+
+            let clearedCount = viewModel.clearCompletedEntriesInVisibleScope()
+            try check(clearedCount == 1)
+            try check(try entryRepo.fetchById(createdTodo.id) == nil)
+            try check(try entryRepo.fetchById(createdNote.id) != nil)
+            await waitUntilAsync(timeout: 1.5) { viewModel.completedEntryCount == 0 }
+
+            // 4. Debounced inline auto-save (900ms) + zero-data-loss flush on entry switch
+            viewModel.selectedEntryId = createdNote.id
+            await waitUntilAsync(timeout: 1.5) { viewModel.inlineDraftEntryId == createdNote.id }
+            try check(viewModel.inlineDraftEntryId == createdNote.id)
+
+            viewModel.inlineDraftContent = "   "
+            try check(viewModel.inlineAutoSaveState == .invalid, "Blank inline content must mark auto-save state .invalid without overwriting DB")
+
+            viewModel.inlineDraftTitle = ""
+            viewModel.inlineDraftContent = "自动保存首行新标题\n已通过 900ms 防抖自动落盘"
+            try check(viewModel.inlineAutoSaveState == .pending)
+
+            await waitUntilAsync(timeout: 2.0) { viewModel.inlineAutoSaveState == .saved }
+            try check(viewModel.inlineAutoSaveState == .saved)
+            let autoSavedFromDB = try unwrap(entryRepo.fetchById(createdNote.id))
+            try check(autoSavedFromDB.title == "自动保存首行新标题")
+            try check(autoSavedFromDB.content == "自动保存首行新标题\n已通过 900ms 防抖自动落盘")
+
+            // 4b. Mid-typing trailing spaces / tag separators must NOT be clobbered when auto-save posts .entriesDidChange
+            viewModel.inlineDraftTitle = "Project "
+            viewModel.inlineDraftTagsText = "alpha, "
+            viewModel.inlineDraftContent = "正文同步更新以触发防抖保存"
+            try check(viewModel.inlineAutoSaveState == .pending)
+            await waitUntilAsync(timeout: 2.0) { viewModel.inlineAutoSaveState == .saved }
+            await sleepMainActor(0.1) // allow .entriesDidChange -> refreshDisplayedEntries() to settle
+            try check(viewModel.inlineDraftTitle == "Project ", "Trailing space in title must survive auto-save refresh mid-typing")
+            try check(viewModel.inlineDraftTagsText == "alpha, ", "Trailing separator in tags must survive auto-save refresh mid-typing")
+            let midTypingSaved = try unwrap(entryRepo.fetchById(createdNote.id))
+            try check(midTypingSaved.title == "Project")
+            try check(midTypingSaved.tags == ["alpha"])
+
+            // 4c. Toolbar mutations during 900ms debounce window must flush pending inline edits first (never overwrite with stale entry)
+            let staleEntrySnapshot = try unwrap(entryRepo.fetchById(createdNote.id))
+            viewModel.inlineDraftTitle = "防抖期内工具栏操作标题"
+            viewModel.inlineDraftContent = "防抖期内点击置顶/类型/克隆/完成都不应丢失这段新正文"
+            viewModel.inlineDraftTagsText = "debounce, safe"
+            try check(viewModel.inlineAutoSaveState == .pending)
+            viewModel.togglePin(staleEntrySnapshot)
+            let afterPin = try unwrap(entryRepo.fetchById(createdNote.id))
+            try check(afterPin.isPinned)
+            try check(afterPin.title == "防抖期内工具栏操作标题")
+            try check(afterPin.content == "防抖期内点击置顶/类型/克隆/完成都不应丢失这段新正文")
+            try check(afterPin.tags == ["debounce", "safe"])
+
+            viewModel.inlineDraftContent = "防抖期内克隆与改类型正文"
+            try check(viewModel.inlineAutoSaveState == .pending)
+            let clonedDuringDebounce = try unwrap(viewModel.cloneEntry(staleEntrySnapshot, toProjectId: featureProject.id))
+            try check(clonedDuringDebounce.content == "防抖期内克隆与改类型正文")
+
+            viewModel.inlineDraftContent = "防抖期内切换类型正文"
+            try check(viewModel.inlineAutoSaveState == .pending)
+            viewModel.updateEntryType(staleEntrySnapshot, toType: Constants.EntryType.todo.rawValue)
+            let afterTypeChange = try unwrap(entryRepo.fetchById(createdNote.id))
+            try check(afterTypeChange.type == Constants.EntryType.todo.rawValue)
+            try check(afterTypeChange.content == "防抖期内切换类型正文")
+
+            // Edit again and switch selection BEFORE 900ms elapses -> must flush immediately without losing edits!
+            viewModel.inlineDraftContent = "切换词条前尚未到 900ms 的修改内容"
+            try check(viewModel.inlineAutoSaveState == .pending)
+            viewModel.selectedEntryId = autoTitledEntry.id
+            let flushedOnSwitch = try unwrap(entryRepo.fetchById(createdNote.id))
+            try check(flushedOnSwitch.content == "切换词条前尚未到 900ms 的修改内容", "Switching entries must immediately flush pending inline edits")
+
+            // 5. Context cycling (`cycleCurrentProject`), drag-and-drop move (`moveEntries`), and Tray clipboard quick-note helper
+            let initialContextId = viewModel.currentProjectId
+            viewModel.cycleCurrentProject(step: 1)
+            try check(viewModel.currentProjectId != initialContextId)
+
+            let movedCount = viewModel.moveEntries(withIds: [autoTitledEntry.id], toProjectId: featureProject.id)
+            try check(movedCount == 1)
+            try check(try entryRepo.fetchById(autoTitledEntry.id)?.projectId == featureProject.id)
+
+            let traySaved = try unwrap(
+                AppDelegate.saveQuickNoteFromClipboard(
+                    clipboardText: "菜单栏一键剪贴板便签 #tray",
+                    projectRepository: projectRepo,
+                    entryRepository: entryRepo
+                )
+            )
+            try check(traySaved.projectId == inboxProject.id)
+            try check(traySaved.type == Constants.EntryType.note.rawValue)
+            try check(traySaved.tags == ["tray"])
+            try check(
+                try AppDelegate.saveQuickNoteFromClipboard(
+                    clipboardText: "   \n  ",
+                    projectRepository: projectRepo,
+                    entryRepository: entryRepo
+                ) == nil
+            )
+        }
+    }
 }
 
 #if canImport(XCTest)
@@ -1142,12 +1800,94 @@ final class PromptPanelTests: XCTestCase {
     func testCloudSyncDataLossProtectionAndThrottledBackups() throws {
         try CoreTestSuite.verifyCloudSyncDataLossProtectionAndThrottledBackups()
     }
+
+    func testCompletedRankingCleanupAndArchivedExclusion() throws {
+        try CoreTestSuite.verifyCompletedRankingCleanupAndArchivedExclusion()
+    }
+
+    func testQuickPanelAllScopeCaptureFilterHoverAndPreview() throws {
+        try CoreTestSuite.verifyQuickPanelAllScopeCaptureFilterHoverAndPreview()
+    }
+
+    func testMainWindowQuickJotAutoTitleCleanupAndDebouncedAutoSave() throws {
+        try CoreTestSuite.verifyMainWindowQuickJotAutoTitleCleanupAndDebouncedAutoSave()
+    }
 }
 #else
 @MainActor
 enum PromptPanelTests {
     static func runAll() throws {
         try CoreTestSuite.runAll()
+    }
+}
+#endif
+
+#if canImport(Testing) && PROMPTPANEL_SWIFT_TESTING
+@Suite(.serialized)
+@MainActor
+struct PromptPanelSwiftTestingSuite {
+    @Test func databaseAndMigrations() throws {
+        try CoreTestSuite.verifyDatabaseAndMigrations()
+    }
+
+    @Test func projectAndEntryRepositories() throws {
+        try CoreTestSuite.verifyProjectAndEntryRepositories()
+    }
+
+    @Test func searchAndRanking() throws {
+        try CoreTestSuite.verifySearchAndRanking()
+    }
+
+    @Test func settingsAndWindowPlacement() throws {
+        try CoreTestSuite.verifySettingsAndWindowPlacement()
+    }
+
+    @Test func executeAndVisibilityServices() throws {
+        try CoreTestSuite.verifyExecuteAndVisibilityServices()
+    }
+
+    @Test func keyCommands() throws {
+        try CoreTestSuite.verifyKeyCommands()
+    }
+
+    @Test func quickPanelScopeSafetyAndCopyUsage() async throws {
+        try await CoreTestSuite.verifyQuickPanelScopeSafetyAndCopyUsageAsync()
+    }
+
+    @Test func transferAndStorageMaintenance() throws {
+        try CoreTestSuite.verifyTransferAndStorageMaintenance()
+    }
+
+    @Test func libraryJSONImportRollback() throws {
+        try CoreTestSuite.verifyLibraryJSONImportRollback()
+    }
+
+    @Test func manualBackupRetention() throws {
+        try CoreTestSuite.verifyManualBackupRetention()
+    }
+
+    @Test func workspaceKindsArchiveVersionsAndCloning() throws {
+        try CoreTestSuite.verifyWorkspaceKindsArchiveVersionsAndCloning()
+    }
+
+    @Test func referenceWindowAndCloudSyncConflictPreservation() throws {
+        try CoreTestSuite.verifyReferenceWindowAndCloudSyncConflictPreservation()
+    }
+
+    @Test func cloudSyncDataLossProtectionAndThrottledBackups() throws {
+        try CoreTestSuite.verifyCloudSyncDataLossProtectionAndThrottledBackups()
+    }
+
+    @Test func completedRankingCleanupAndArchivedExclusion() throws {
+        try CoreTestSuite.verifyCompletedRankingCleanupAndArchivedExclusion()
+    }
+
+    @Test func quickPanelAllScopeCaptureFilterHoverAndPreview() async throws {
+        try await CoreTestSuite.verifyQuickPanelAllScopeCaptureFilterHoverAndPreviewAsync()
+    }
+
+    @Test func mainWindowQuickJotAutoTitleCleanupAndDebouncedAutoSave() async throws {
+        try await CoreTestSuite.verifyMainWindowQuickJotAutoTitleCleanupAndDebouncedAutoSaveAsync()
     }
 }
 #endif
