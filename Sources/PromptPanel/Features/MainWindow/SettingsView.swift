@@ -1325,6 +1325,11 @@ private struct CloudSyncSection: View {
                 .padding(.top, 2)
                 .disabled(isBusy)
 
+                SettingsPillButton("恢复误删并回推云端", systemImage: "arrow.uturn.backward.circle", fillsAvailableWidth: true) {
+                    viewModel.recoverDeletedAndPushToCloud()
+                }
+                .disabled(isBusy)
+
                 if isConfigured || viewModel.cloudSyncLastStatus != "尚未执行云端同步" {
                     HStack(spacing: 6) {
                         Text(viewModel.cloudSyncConnectionStatus)

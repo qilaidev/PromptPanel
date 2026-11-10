@@ -93,11 +93,37 @@ final class StorageMaintenanceService: @unchecked Sendable {
         return backupURL
     }
 
+    /// Creates a throttled pre-sync safety snapshot so high-frequency auto-syncs (every 2.5s)
+    /// do not flood the disk or evict historical backups, while still guaranteeing a clean
+    /// local restore point before remote mutations or anomaly circuit-breaker events.
+    @discardableResult
+    func createSyncSafetyBackupIfNeeded(isGuardTrigger: Bool = false) throws -> URL? {
+        let reason = isGuardTrigger ? "sync-guard" : "sync"
+        let minInterval = isGuardTrigger
+            ? Constants.syncGuardBackupMinimumInterval
+            : Constants.syncBackupMinimumInterval
+
+        let existing = try backupFiles(reason: reason)
+        if let latest = existing.first,
+           let modifiedAt = try latest.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+           Date().timeIntervalSince(modifiedAt) < minInterval {
+            return nil
+        }
+
+        try ensureStorageDirectories()
+        try checkpointWal()
+        let backupURL = try createBackup(reason: reason)
+        try pruneCollectableBackups()
+        return backupURL
+    }
+
     /// Prune only the backup classes the app creates on its own initiative.
     /// `-manual-` is absent on purpose — see `createManualBackup()`.
     private func pruneCollectableBackups() throws {
         try pruneBackups(reason: "launch", keeping: Constants.automaticBackupRetentionCount)
         try pruneBackups(reason: "import", keeping: Constants.importBackupRetentionCount)
+        try pruneBackups(reason: "sync", keeping: Constants.syncBackupRetentionCount)
+        try pruneBackups(reason: "sync-guard", keeping: Constants.syncGuardBackupRetentionCount)
     }
 
     /// Read-only: it reports what is on disk and must not create or chmod
@@ -141,7 +167,8 @@ final class StorageMaintenanceService: @unchecked Sendable {
 
     private func shouldCreateAutomaticBackup() throws -> Bool {
         let launchOrManualBackups = try backupFiles().filter { url in
-            !url.lastPathComponent.contains("-import-")
+            let name = url.lastPathComponent
+            return name.contains("-launch-") || name.contains("-manual-")
         }
         guard let latestBackupURL = launchOrManualBackups.first else {
             return true

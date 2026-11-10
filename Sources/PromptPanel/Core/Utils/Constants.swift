@@ -222,7 +222,20 @@ enum Constants {
     /// get their own bounded retention. Backups from the 立即备份 button are still
     /// never pruned; see `StorageMaintenanceService.pruneCollectableBackups()`.
     static let importBackupRetentionCount = 5
+    /// Time-throttled safety snapshots taken before cloud sync merges remote changes.
+    /// Kept in dedicated retention buckets so high-frequency (2.5s) auto-syncs neither
+    /// thrash the disk nor evict launch/manual/guard backups.
+    static let syncBackupRetentionCount = 6
+    static let syncGuardBackupRetentionCount = 5
     static let automaticBackupMinimumInterval: TimeInterval = 12 * 60 * 60
+    static let syncBackupMinimumInterval: TimeInterval = 30 * 60
+    static let syncGuardBackupMinimumInterval: TimeInterval = 5 * 60
+    /// Anti-data-loss circuit breaker thresholds for cloud sync: if a single remote sync
+    /// attempts to soft-delete >= 3 active local entries AND >= 25% of the active library
+    /// (or all active entries when >= 2), remote deletions are blocked and local entries
+    /// self-heal back to the cloud.
+    static let syncMassDeleteMinEntryCount = 3
+    static let syncMassDeleteRatioThreshold = 0.25
     static let executionLogRetentionDays = 30
     static let recoveryDirectoryRetentionCount = 5
     static let secureDirectoryPermissions = 0o700

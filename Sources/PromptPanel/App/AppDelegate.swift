@@ -317,7 +317,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             entryRepository: entryRepository,
             storageMaintenanceService: storageMaintenanceService
         )
-        cloudSyncService = CloudSyncService(dbQueue: databaseManager.dbQueue)
+        cloudSyncService = CloudSyncService(
+            dbQueue: databaseManager.dbQueue,
+            storageMaintenanceService: storageMaintenanceService
+        )
 
         let initializedProjectRepository = projectRepository!
         let defaultProject = try initializedProjectRepository.fetchDefault()

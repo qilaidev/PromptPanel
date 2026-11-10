@@ -207,6 +207,23 @@ struct CloudSyncEnvelope: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let snakeContainer = try decoder.container(keyedBy: SnakeCodingKeys.self)
+        let hasRecognizedEnvelopeKey = container.contains(.schemaVersion)
+            || snakeContainer.contains(.schemaVersion)
+            || container.contains(.deviceId)
+            || snakeContainer.contains(.deviceId)
+            || container.contains(.exportedAt)
+            || snakeContainer.contains(.exportedAt)
+            || container.contains(.projects)
+            || container.contains(.entries)
+            || container.contains(.versions)
+        guard hasRecognizedEnvelopeKey else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "JSON payload is not a valid PromptPanel sync envelope"
+                )
+            )
+        }
         self.schemaVersion = (try? container.decodeIfPresent(Int.self, forKey: .schemaVersion))
             ?? (try? snakeContainer.decodeIfPresent(Int.self, forKey: .schemaVersion))
             ?? CloudSyncEnvelope.currentSchemaVersion
@@ -220,9 +237,9 @@ struct CloudSyncEnvelope: Codable, Equatable {
         } else {
             self.exportedAt = Date()
         }
-        self.projects = (try? container.decodeIfPresent([Project].self, forKey: .projects)) ?? []
-        self.entries = (try? container.decodeIfPresent([Entry].self, forKey: .entries)) ?? []
-        self.versions = (try? container.decodeIfPresent([EntryVersion].self, forKey: .versions)) ?? []
+        self.projects = try container.decodeIfPresent([Project].self, forKey: .projects) ?? []
+        self.entries = try container.decodeIfPresent([Entry].self, forKey: .entries) ?? []
+        self.versions = try container.decodeIfPresent([EntryVersion].self, forKey: .versions) ?? []
     }
 }
 
@@ -232,7 +249,33 @@ struct CloudSyncSummary: Equatable, Sendable {
     let entriesCreated: Int
     let entriesUpdated: Int
     let conflictsPreservedInVersions: Int
+    let protectedEntriesCount: Int
+    let protectedProjectsCount: Int
     let syncedAt: Date
+
+    init(
+        projectsCreated: Int,
+        projectsUpdated: Int,
+        entriesCreated: Int,
+        entriesUpdated: Int,
+        conflictsPreservedInVersions: Int,
+        protectedEntriesCount: Int = 0,
+        protectedProjectsCount: Int = 0,
+        syncedAt: Date
+    ) {
+        self.projectsCreated = projectsCreated
+        self.projectsUpdated = projectsUpdated
+        self.entriesCreated = entriesCreated
+        self.entriesUpdated = entriesUpdated
+        self.conflictsPreservedInVersions = conflictsPreservedInVersions
+        self.protectedEntriesCount = protectedEntriesCount
+        self.protectedProjectsCount = protectedProjectsCount
+        self.syncedAt = syncedAt
+    }
+
+    var totalProtectedCount: Int {
+        protectedEntriesCount + protectedProjectsCount
+    }
 }
 
 struct CloudSyncHealthReport: Equatable, Sendable {
@@ -268,9 +311,11 @@ enum CloudSyncError: LocalizedError, Equatable {
 
 final class CloudSyncService: @unchecked Sendable {
     private let dbQueue: DatabaseQueue
+    private let storageMaintenanceService: StorageMaintenanceService?
 
-    init(dbQueue: DatabaseQueue) {
+    init(dbQueue: DatabaseQueue, storageMaintenanceService: StorageMaintenanceService? = nil) {
         self.dbQueue = dbQueue
+        self.storageMaintenanceService = storageMaintenanceService
     }
 
     // MARK: - Device & Sync Metadata
@@ -326,20 +371,120 @@ final class CloudSyncService: @unchecked Sendable {
     }
 
     /// Merges a remote sync envelope into the local database using Last-Write-Wins on `updatedAt`,
-    /// while automatically archiving any overwritten local entry content into `entry_versions`
-    /// so concurrent edits on mobile and macOS never lose text.
+    /// while automatically archiving any overwritten local entry content into `entry_versions`,
+    /// blocking abnormal mass-tombstone wipes via a high-water-mark circuit breaker, and
+    /// rescuing active entries whose parent project was soft-deleted remotely.
     @discardableResult
-    func mergeRemoteEnvelope(_ envelope: CloudSyncEnvelope, syncedAt: Date = Date()) throws -> CloudSyncSummary {
+    func mergeRemoteEnvelope(
+        _ envelope: CloudSyncEnvelope,
+        allowMassDeletions: Bool = false,
+        syncedAt: Date = Date()
+    ) throws -> CloudSyncSummary {
+        // Pre-flight inspection (read-only) to evaluate circuit breaker & throttled backup triggers
+        let preflight = try dbQueue.read { db -> (
+            localActiveEntries: Int,
+            remoteDeletingEntries: Int,
+            remoteDeletingProjects: Int,
+            remoteHasMutatingChanges: Bool,
+            highWaterEntries: Int
+        ) in
+            let localProjects = try Project.fetchAll(db)
+            let localProjectsById = Dictionary(uniqueKeysWithValues: localProjects.map { ($0.id, $0) })
+            let localEntries = try Entry.fetchAll(db)
+            let localEntriesById = Dictionary(uniqueKeysWithValues: localEntries.map { ($0.id, $0) })
+
+            let localActiveEntries = localEntries.filter { $0.deletedAt == nil }.count
+            let highWaterRaw = try String.fetchOne(
+                db,
+                sql: "SELECT value FROM sync_metadata WHERE key = 'high_water_active_entries'"
+            )
+            let highWaterEntries = max(Int(highWaterRaw ?? "") ?? 0, localActiveEntries)
+
+            var remoteDeletingEntries = 0
+            var remoteDeletingProjects = 0
+            var remoteHasMutatingChanges = false
+
+            for remoteProject in envelope.projects {
+                if let localProject = localProjectsById[remoteProject.id] {
+                    if remoteProject.updatedAt > localProject.updatedAt {
+                        remoteHasMutatingChanges = true
+                        if localProject.deletedAt == nil && remoteProject.deletedAt != nil && !localProject.isSystemProtected {
+                            remoteDeletingProjects += 1
+                        }
+                    }
+                } else if !remoteProject.isDefault && remoteProject.deletedAt == nil {
+                    remoteHasMutatingChanges = true
+                }
+            }
+
+            for remoteEntry in envelope.entries {
+                if let localEntry = localEntriesById[remoteEntry.id] {
+                    if remoteEntry.updatedAt > localEntry.updatedAt {
+                        remoteHasMutatingChanges = true
+                        if localEntry.deletedAt == nil && remoteEntry.deletedAt != nil {
+                            remoteDeletingEntries += 1
+                        }
+                    }
+                } else if remoteEntry.deletedAt == nil {
+                    remoteHasMutatingChanges = true
+                }
+            }
+
+            return (
+                localActiveEntries: localActiveEntries,
+                remoteDeletingEntries: remoteDeletingEntries,
+                remoteDeletingProjects: remoteDeletingProjects,
+                remoteHasMutatingChanges: remoteHasMutatingChanges,
+                highWaterEntries: highWaterEntries
+            )
+        }
+
+        let shouldBlockMassDeletions: Bool = {
+            guard !allowMassDeletions else { return false }
+            let active = preflight.localActiveEntries
+            let deleting = preflight.remoteDeletingEntries
+            if deleting >= Constants.syncMassDeleteMinEntryCount,
+               Double(deleting) / Double(max(active, 1)) >= Constants.syncMassDeleteRatioThreshold {
+                return true
+            }
+            if active >= 2 && deleting == active {
+                return true
+            }
+            if preflight.highWaterEntries >= Constants.syncMassDeleteMinEntryCount,
+               deleting >= 2,
+               (active - deleting) < Int(Double(preflight.highWaterEntries) * 0.5) {
+                return true
+            }
+            return false
+        }()
+
+        let remoteActiveEntriesCount = envelope.entries.filter { $0.deletedAt == nil }.count
+        let isGuardBackupTrigger = shouldBlockMassDeletions
+            || preflight.remoteDeletingEntries > 0
+            || preflight.remoteDeletingProjects > 0
+            || (preflight.localActiveEntries >= Constants.syncMassDeleteMinEntryCount && remoteActiveEntriesCount == 0)
+
+        if isGuardBackupTrigger {
+            _ = try? storageMaintenanceService?.createSyncSafetyBackupIfNeeded(isGuardTrigger: true)
+        } else if preflight.remoteHasMutatingChanges && preflight.localActiveEntries > 0 {
+            _ = try? storageMaintenanceService?.createSyncSafetyBackupIfNeeded(isGuardTrigger: false)
+        }
+
         var projectsCreated = 0
         var projectsUpdated = 0
         var entriesCreated = 0
         var entriesUpdated = 0
         var conflictsPreserved = 0
+        var protectedEntriesCount = 0
+        var protectedProjectsCount = 0
 
         try dbQueue.write { db in
             var remappedProjectIds: [String: String] = [:]
             let localDefaultProject = try Project
                 .filter(Project.Columns.isDefault == true)
+                .fetchOne(db)
+            let localInboxProject = try Project
+                .filter(Project.Columns.groupKind == Project.GroupKind.inbox.rawValue)
                 .fetchOne(db)
 
             // 1. Merge Projects
@@ -352,12 +497,22 @@ final class CloudSyncService: @unchecked Sendable {
                             merged.groupKind = localProject.groupKind
                             merged.isArchived = false
                             merged.deletedAt = nil
+                        } else if localProject.deletedAt == nil && remoteProject.deletedAt != nil && shouldBlockMassDeletions {
+                            // Anti-data-loss circuit breaker: preserve local active project and bump updatedAt to heal cloud
+                            merged = localProject
+                            merged.deletedAt = nil
+                            merged.updatedAt = max(syncedAt, remoteProject.updatedAt.addingTimeInterval(1))
+                            try merged.update(db)
+                            protectedProjectsCount += 1
+                            continue
                         }
                         try merged.update(db)
                         projectsUpdated += 1
                     }
                 } else if remoteProject.isDefault, let localDefault = localDefaultProject {
                     remappedProjectIds[remoteProject.id] = localDefault.id
+                } else if remoteProject.groupKind == .inbox, let localInbox = localInboxProject {
+                    remappedProjectIds[remoteProject.id] = localInbox.id
                 } else {
                     try remoteProject.insert(db)
                     if remoteProject.deletedAt == nil {
@@ -366,17 +521,13 @@ final class CloudSyncService: @unchecked Sendable {
                 }
             }
 
-            // Ensure every remote entry's project exists (active entries fall back to default project if target was deleted)
             let allProjectIds = Set(try String.fetchAll(db, sql: "SELECT id FROM projects"))
-            let activeProjectIds = Set(try String.fetchAll(db, sql: "SELECT id FROM projects WHERE deleted_at IS NULL"))
             let fallbackProjectId = localDefaultProject?.id ?? Constants.inboxProjectId
 
-            // 2. Merge Entries with Conflict-to-Version-History protection
+            // 2. Merge Entries with Conflict-to-Version-History & Mass-Deletion Circuit Breaker protection
             for var remoteEntry in envelope.entries {
                 if let mappedId = remappedProjectIds[remoteEntry.projectId] {
                     remoteEntry.projectId = mappedId
-                } else if remoteEntry.deletedAt == nil && !activeProjectIds.contains(remoteEntry.projectId) {
-                    remoteEntry.projectId = fallbackProjectId
                 } else if !allProjectIds.contains(remoteEntry.projectId) {
                     remoteEntry.projectId = fallbackProjectId
                 }
@@ -430,14 +581,34 @@ final class CloudSyncService: @unchecked Sendable {
                         }
 
                         // Keep the higher usage count and more recent lastUsedAt across devices
-                        remoteEntry.useCount = max(localEntry.useCount, remoteEntry.useCount)
-                        if let localUsed = localEntry.lastUsedAt {
-                            if let remoteUsed = remoteEntry.lastUsedAt {
-                                remoteEntry.lastUsedAt = max(localUsed, remoteUsed)
-                            } else {
-                                remoteEntry.lastUsedAt = localUsed
+                        let mergedUseCount = max(localEntry.useCount, remoteEntry.useCount)
+                        let mergedLastUsedAt: Date? = {
+                            if let localUsed = localEntry.lastUsedAt {
+                                if let remoteUsed = remoteEntry.lastUsedAt {
+                                    return max(localUsed, remoteUsed)
+                                }
+                                return localUsed
                             }
+                            return remoteEntry.lastUsedAt
+                        }()
+
+                        if isRemoteDeletion && shouldBlockMassDeletions {
+                            // Circuit breaker tripped: block remote mass tombstone and bump updatedAt so local heals cloud on push
+                            var healedLocal = localEntry
+                            healedLocal.deletedAt = nil
+                            healedLocal.useCount = mergedUseCount
+                            healedLocal.lastUsedAt = mergedLastUsedAt
+                            healedLocal.updatedAt = max(syncedAt, remoteEntry.updatedAt.addingTimeInterval(1))
+                            if !allProjectIds.contains(healedLocal.projectId) {
+                                healedLocal.projectId = fallbackProjectId
+                            }
+                            try healedLocal.update(db)
+                            protectedEntriesCount += 1
+                            continue
                         }
+
+                        remoteEntry.useCount = mergedUseCount
+                        remoteEntry.lastUsedAt = mergedLastUsedAt
                         try remoteEntry.update(db)
                         entriesUpdated += 1
                     } else if remoteEntry.updatedAt < localEntry.updatedAt {
@@ -509,7 +680,32 @@ final class CloudSyncService: @unchecked Sendable {
                 }
             }
 
-            // 3. Merge Explicit Remote Version History
+            // 3. Rescue Orphan Active Entries & Revive Non-Empty Soft-Deleted Projects
+            // In PromptPanel, a project cannot legitimately be deleted while it still holds active entries.
+            // If any active entry points to a soft-deleted project after merge, revive that project so its
+            // entries never become hidden/orphaned, and bump updatedAt so the revived project heals the cloud.
+            let projectIdsWithActiveEntries = try String.fetchAll(
+                db,
+                sql: "SELECT DISTINCT project_id FROM entries WHERE deleted_at IS NULL"
+            )
+            for pid in projectIdsWithActiveEntries {
+                if var project = try Project.fetchOne(db, key: pid) {
+                    if project.deletedAt != nil {
+                        project.deletedAt = nil
+                        project.updatedAt = max(syncedAt, project.updatedAt.addingTimeInterval(1))
+                        try project.update(db)
+                        protectedProjectsCount += 1
+                    }
+                } else {
+                    let healedAt = syncedAt
+                    try db.execute(
+                        sql: "UPDATE entries SET project_id = ?, updated_at = ? WHERE project_id = ? AND deleted_at IS NULL",
+                        arguments: [fallbackProjectId, healedAt, pid]
+                    )
+                }
+            }
+
+            // 4. Merge Explicit Remote Version History
             for remoteVersion in envelope.versions {
                 guard try Entry.fetchOne(db, key: remoteVersion.entryId) != nil else { continue }
                 let existsById = try EntryVersion.fetchOne(db, key: remoteVersion.id) != nil
@@ -534,7 +730,27 @@ final class CloudSyncService: @unchecked Sendable {
                 }
             }
 
-            let summaryText = "上次同步：\(Self.summaryFormatter.string(from: syncedAt))（项目 +\(projectsCreated)/更\(projectsUpdated)，词条 +\(entriesCreated)/更\(entriesUpdated)，冲突版本保护 \(conflictsPreserved)）"
+            // 5. Persist High-Water Mark & Sync Metadata
+            let currentActiveEntries = try Entry.filter(Entry.Columns.deletedAt == nil).fetchCount(db)
+            let currentActiveProjects = try Project.filter(Entry.Columns.deletedAt == nil).fetchCount(db)
+            let updatedHighWater = max(preflight.highWaterEntries, currentActiveEntries)
+            try db.execute(
+                sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('high_water_active_entries', ?, ?)",
+                arguments: [String(updatedHighWater), syncedAt]
+            )
+            try db.execute(
+                sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('last_synced_active_entries', ?, ?)",
+                arguments: [String(currentActiveEntries), syncedAt]
+            )
+            try db.execute(
+                sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('last_synced_active_projects', ?, ?)",
+                arguments: [String(currentActiveProjects), syncedAt]
+            )
+
+            let protectionSuffix = (protectedEntriesCount + protectedProjectsCount) > 0
+                ? "，防丢拦截保护 \(protectedEntriesCount) 条/\(protectedProjectsCount) 组"
+                : ""
+            let summaryText = "上次同步：\(Self.summaryFormatter.string(from: syncedAt))（项目 +\(projectsCreated)/更\(projectsUpdated)，词条 +\(entriesCreated)/更\(entriesUpdated)，冲突版本保护 \(conflictsPreserved)\(protectionSuffix)）"
             try db.execute(
                 sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('last_sync_summary', ?, ?)",
                 arguments: [summaryText, syncedAt]
@@ -547,8 +763,100 @@ final class CloudSyncService: @unchecked Sendable {
             entriesCreated: entriesCreated,
             entriesUpdated: entriesUpdated,
             conflictsPreservedInVersions: conflictsPreserved,
+            protectedEntriesCount: protectedEntriesCount,
+            protectedProjectsCount: protectedProjectsCount,
             syncedAt: syncedAt
         )
+    }
+
+    // MARK: - Local Soft-Delete & History Self-Healing Recovery
+
+    /// Restores any soft-deleted projects and entries in the local database (as well as any orphaned
+    /// `entry_versions` snapshots whose parent entry row is missing) by clearing `deletedAt` and
+    /// bumping `updatedAt`, so they become immediately visible and outrank stale remote tombstones.
+    @discardableResult
+    func recoverLocalSoftDeletedRecords(restoredAt: Date = Date()) throws -> (projectsRestored: Int, entriesRestored: Int) {
+        _ = try? storageMaintenanceService?.createSyncSafetyBackupIfNeeded(isGuardTrigger: true)
+        return try dbQueue.write { db in
+            var projectsRestored = 0
+            var entriesRestored = 0
+
+            let deletedProjects = try Project
+                .filter(Project.Columns.deletedAt != nil)
+                .fetchAll(db)
+            for var project in deletedProjects {
+                let bumpDate = max(restoredAt, project.updatedAt.addingTimeInterval(1))
+                project.deletedAt = nil
+                project.updatedAt = bumpDate
+                try project.update(db)
+                projectsRestored += 1
+            }
+
+            let localDefaultProject = try Project
+                .filter(Project.Columns.isDefault == true)
+                .fetchOne(db)
+            let fallbackProjectId = localDefaultProject?.id ?? Constants.inboxProjectId
+            let activeProjectIds = Set(try String.fetchAll(db, sql: "SELECT id FROM projects WHERE deleted_at IS NULL"))
+
+            let deletedEntries = try Entry
+                .filter(Entry.Columns.deletedAt != nil)
+                .fetchAll(db)
+            for var entry in deletedEntries {
+                let bumpDate = max(restoredAt, entry.updatedAt.addingTimeInterval(1))
+                entry.deletedAt = nil
+                entry.updatedAt = bumpDate
+                if !activeProjectIds.contains(entry.projectId) {
+                    entry.projectId = fallbackProjectId
+                }
+                try entry.update(db)
+                entriesRestored += 1
+            }
+
+            // Also reconstruct any entry whose versions still exist in entry_versions but whose entry row was missing
+            let orphanedEntryIds = try String.fetchAll(
+                db,
+                sql: """
+                    SELECT DISTINCT entry_id
+                    FROM entry_versions
+                    WHERE entry_id NOT IN (SELECT id FROM entries)
+                    """
+            )
+            for orphanEntryId in orphanedEntryIds {
+                if let latestVer = try EntryVersion
+                    .filter(EntryVersion.Columns.entryId == orphanEntryId)
+                    .order(EntryVersion.Columns.versionNumber.desc)
+                    .fetchOne(db) {
+                    let reconstructed = Entry(
+                        id: orphanEntryId,
+                        projectId: fallbackProjectId,
+                        title: latestVer.title,
+                        content: latestVer.content,
+                        type: Constants.EntryType.prompt.rawValue,
+                        createdAt: latestVer.createdAt,
+                        updatedAt: restoredAt
+                    )
+                    try reconstructed.insert(db)
+                    entriesRestored += 1
+                }
+            }
+
+            return (projectsRestored: projectsRestored, entriesRestored: entriesRestored)
+        }
+    }
+
+    /// Restores soft-deleted local records and, if a cloud sync endpoint is configured, pushes the
+    /// healed local library back to the cloud.
+    func recoverDeletedAndSync(
+        endpoint: String,
+        apiKey: String
+    ) throws -> (projectsRestored: Int, entriesRestored: Int, syncSummary: CloudSyncSummary?) {
+        let restored = try recoverLocalSoftDeletedRecords()
+        let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return (restored.projectsRestored, restored.entriesRestored, nil)
+        }
+        let summary = try syncNow(endpoint: trimmed, apiKey: apiKey)
+        return (restored.projectsRestored, restored.entriesRestored, summary)
     }
 
     // MARK: - Sync Execution (File / Cloud Drive or HTTPS Endpoint)
@@ -778,10 +1086,15 @@ final class CloudSyncService: @unchecked Sendable {
                     entriesCreated: summary.entriesCreated + secondPass.entriesCreated,
                     entriesUpdated: summary.entriesUpdated + secondPass.entriesUpdated,
                     conflictsPreservedInVersions: summary.conflictsPreservedInVersions + secondPass.conflictsPreservedInVersions,
+                    protectedEntriesCount: summary.protectedEntriesCount + secondPass.protectedEntriesCount,
+                    protectedProjectsCount: summary.protectedProjectsCount + secondPass.protectedProjectsCount,
                     syncedAt: secondPass.syncedAt
                 )
                 try dbQueue.write { db in
-                    let summaryText = "上次同步：\(Self.summaryFormatter.string(from: summary.syncedAt))（项目 +\(summary.projectsCreated)/更\(summary.projectsUpdated)，词条 +\(summary.entriesCreated)/更\(summary.entriesUpdated)，冲突版本保护 \(summary.conflictsPreservedInVersions)）"
+                    let protectionSuffix = summary.totalProtectedCount > 0
+                        ? "，防丢拦截保护 \(summary.protectedEntriesCount) 条/\(summary.protectedProjectsCount) 组"
+                        : ""
+                    let summaryText = "上次同步：\(Self.summaryFormatter.string(from: summary.syncedAt))（项目 +\(summary.projectsCreated)/更\(summary.projectsUpdated)，词条 +\(summary.entriesCreated)/更\(summary.entriesUpdated)，冲突版本保护 \(summary.conflictsPreservedInVersions)\(protectionSuffix)）"
                     try db.execute(
                         sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('last_sync_summary', ?, ?)",
                         arguments: [summaryText, summary.syncedAt]

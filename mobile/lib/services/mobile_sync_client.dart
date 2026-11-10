@@ -177,11 +177,49 @@ class MobileSyncClient {
     final localDefaultIdx = projects.indexWhere((p) => p.isDefault);
     final localDefaultId = localDefaultIdx >= 0 ? projects[localDefaultIdx].id : null;
 
+    // Anti-data-loss circuit breaker: detect abnormal mass-tombstone deletes
+    final localActiveEntries = entries.where((e) => e.deletedAt == null).toList();
+    final localActiveById = {for (final e in localActiveEntries) e.id: e};
+    int remoteDeletingCount = 0;
+    for (final remoteEntry in remote.entries) {
+      final local = localActiveById[remoteEntry.id];
+      if (local != null &&
+          remoteEntry.deletedAt != null &&
+          remoteEntry.updatedAt.isAfter(local.updatedAt)) {
+        remoteDeletingCount += 1;
+      }
+    }
+    final localActiveCount = localActiveEntries.length;
+    final shouldBlockMassDeletions = (remoteDeletingCount >= 3 &&
+            (remoteDeletingCount / (localActiveCount > 0 ? localActiveCount : 1)) >= 0.25) ||
+        (localActiveCount >= 2 && remoteDeletingCount == localActiveCount);
+
     for (final remoteProject in remote.projects) {
       final idx = projects.indexWhere((p) => p.id == remoteProject.id);
       if (idx >= 0) {
-        if (remoteProject.updatedAt.isAfter(projects[idx].updatedAt)) {
-          projects[idx] = remoteProject;
+        final localProj = projects[idx];
+        if (remoteProject.updatedAt.isAfter(localProj.updatedAt)) {
+          if (localProj.deletedAt == null &&
+              remoteProject.deletedAt != null &&
+              shouldBlockMassDeletions) {
+            final healedTime = DateTime.now().toUtc().isAfter(remoteProject.updatedAt)
+                ? DateTime.now().toUtc()
+                : remoteProject.updatedAt.add(const Duration(seconds: 2));
+            projects[idx] = ProjectModel(
+              id: localProj.id,
+              name: localProj.name,
+              isDefault: localProj.isDefault,
+              groupKind: localProj.groupKind,
+              isArchived: localProj.isArchived,
+              iconName: localProj.iconName,
+              sortOrder: localProj.sortOrder,
+              createdAt: localProj.createdAt,
+              updatedAt: healedTime,
+              deletedAt: null,
+            );
+          } else {
+            projects[idx] = remoteProject;
+          }
         }
       } else if (remoteProject.isDefault && localDefaultId != null) {
         remappedProjectIds[remoteProject.id] = localDefaultId;
@@ -199,7 +237,10 @@ class MobileSyncClient {
       if (idx >= 0) {
         final local = entries[idx];
         if (remoteEntry.updatedAt.isAfter(local.updatedAt)) {
-          if (local.content != remoteEntry.content || local.title != remoteEntry.title) {
+          final isRemoteDeletion = local.deletedAt == null && remoteEntry.deletedAt != null;
+          if (local.content != remoteEntry.content ||
+              local.title != remoteEntry.title ||
+              isRemoteDeletion) {
             final currentMax = versionsForEntry(local.id).isEmpty
                 ? 0
                 : versionsForEntry(local.id).first.versionNumber;
@@ -210,15 +251,55 @@ class MobileSyncClient {
                 versionNumber: currentMax + 1,
                 title: local.title,
                 content: local.content,
-                changeNote: '云端同步前手机本地版本自动留存',
+                changeNote: isRemoteDeletion
+                    ? '云端同步删除前手机本地版本自动留存'
+                    : '云端同步前手机本地版本自动留存',
                 createdAt: local.updatedAt,
               ),
             );
           }
-          entries[idx] = remoteEntry;
+          if (isRemoteDeletion && shouldBlockMassDeletions) {
+            final healedTime = DateTime.now().toUtc().isAfter(remoteEntry.updatedAt)
+                ? DateTime.now().toUtc()
+                : remoteEntry.updatedAt.add(const Duration(seconds: 2));
+            entries[idx] = local.copyWith(
+              useCount: remoteEntry.useCount > local.useCount
+                  ? remoteEntry.useCount
+                  : local.useCount,
+              updatedAt: healedTime,
+            );
+          } else {
+            entries[idx] = remoteEntry;
+          }
         }
       } else {
         entries.add(remoteEntry);
+      }
+    }
+
+    // Revive any soft-deleted project that still contains active entries
+    final activeProjectIdsNeeded = entries
+        .where((e) => e.deletedAt == null)
+        .map((e) => e.projectId)
+        .toSet();
+    for (var i = 0; i < projects.length; i++) {
+      final proj = projects[i];
+      if (proj.deletedAt != null && activeProjectIdsNeeded.contains(proj.id)) {
+        final healedTime = DateTime.now().toUtc().isAfter(proj.updatedAt)
+            ? DateTime.now().toUtc()
+            : proj.updatedAt.add(const Duration(seconds: 2));
+        projects[i] = ProjectModel(
+          id: proj.id,
+          name: proj.name,
+          isDefault: proj.isDefault,
+          groupKind: proj.groupKind,
+          isArchived: proj.isArchived,
+          iconName: proj.iconName,
+          sortOrder: proj.sortOrder,
+          createdAt: proj.createdAt,
+          updatedAt: healedTime,
+          deletedAt: null,
+        );
       }
     }
 

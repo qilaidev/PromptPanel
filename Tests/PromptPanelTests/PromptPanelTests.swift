@@ -102,6 +102,7 @@ public enum CoreTestSuite {
         try verifyManualBackupRetention()
         try verifyWorkspaceKindsArchiveVersionsAndCloning()
         try verifyReferenceWindowAndCloudSyncConflictPreservation()
+        try verifyCloudSyncDataLossProtectionAndThrottledBackups()
     }
 
     private static func makeTempDatabaseURL() -> URL {
@@ -945,6 +946,146 @@ public enum CoreTestSuite {
             }
         }
     }
+
+    static func verifyCloudSyncDataLossProtectionAndThrottledBackups() throws {
+        try withTempDatabase { manager, dbURL in
+            let projectRepo = ProjectRepository(dbQueue: manager.dbQueue)
+            let entryRepo = EntryRepository(dbQueue: manager.dbQueue)
+            let logRepo = LogRepository(dbQueue: manager.dbQueue)
+            let maintenance = StorageMaintenanceService(
+                dbQueue: manager.dbQueue,
+                logRepository: logRepo,
+                databaseURL: dbURL
+            )
+            let syncService = CloudSyncService(
+                dbQueue: manager.dbQueue,
+                storageMaintenanceService: maintenance
+            )
+
+            // 1. Verify high-frequency sync backup throttling:
+            // Repeated calls within the throttle window must only create 1 sync backup and 1 sync-guard backup
+            let firstSyncBackup = try maintenance.createSyncSafetyBackupIfNeeded(isGuardTrigger: false)
+            try check(firstSyncBackup != nil)
+            for _ in 0..<5 {
+                let throttled = try maintenance.createSyncSafetyBackupIfNeeded(isGuardTrigger: false)
+                try check(throttled == nil, "Throttled routine sync backup must not duplicate within minimum interval")
+            }
+
+            let firstGuardBackup = try maintenance.createSyncSafetyBackupIfNeeded(isGuardTrigger: true)
+            try check(firstGuardBackup != nil)
+            let secondGuardBackup = try maintenance.createSyncSafetyBackupIfNeeded(isGuardTrigger: true)
+            try check(secondGuardBackup == nil, "Throttled guard backup must not duplicate within minimum interval")
+
+            // Sync backups must not prevent launch maintenance from creating a launch backup
+            let launchSnapshot = try maintenance.performLaunchMaintenance()
+            try check(launchSnapshot.backupCount == 3)
+
+            // 2. Verify strict envelope validation rejects non-envelope gateway JSON
+            let invalidGatewayJSON = #"{"status":"ok","message":"gateway proxy response"}"#.data(using: .utf8)!
+            var gatewayDecodeFailed = false
+            do {
+                _ = try CloudSyncService.makeDecoder().decode(CloudSyncEnvelope.self, from: invalidGatewayJSON)
+            } catch {
+                gatewayDecodeFailed = true
+            }
+            try check(gatewayDecodeFailed, "Non-envelope JSON must be rejected instead of decoding as an empty sync envelope")
+
+            // 3. Seed 4 active entries in a custom project and sync to shared file
+            let baseTime = Date(timeIntervalSince1970: 1_720_000_000)
+            let teamProject = Project(
+                id: "proj-team",
+                name: "核心词库项目",
+                groupKind: .project,
+                createdAt: baseTime,
+                updatedAt: baseTime
+            )
+            try projectRepo.create(teamProject)
+
+            for i in 1...4 {
+                let entry = Entry(
+                    id: "protected-entry-\(i)",
+                    projectId: teamProject.id,
+                    title: "关键提示词 \(i)",
+                    content: "核心业务内容 \(i) — 绝不能因云端异常而丢失",
+                    createdAt: baseTime,
+                    updatedAt: baseTime
+                )
+                try entryRepo.create(entry)
+            }
+
+            let syncFileURL = dbURL.deletingLastPathComponent().appendingPathComponent("CloudSync-GuardTest.json")
+            _ = try syncService.syncNow(endpoint: syncFileURL.path, apiKey: "")
+
+            // 4. Simulate cloud mass-tombstone disaster: remote marks the project and all 4 entries as deleted with a newer timestamp!
+            let disasterTime = baseTime.addingTimeInterval(600)
+            var poisonedProject = teamProject
+            poisonedProject.deletedAt = disasterTime
+            poisonedProject.updatedAt = disasterTime
+
+            let poisonedEntries: [Entry] = (1...4).map { i in
+                Entry(
+                    id: "protected-entry-\(i)",
+                    projectId: teamProject.id,
+                    title: "关键提示词 \(i)",
+                    content: "核心业务内容 \(i) — 绝不能因云端异常而丢失",
+                    createdAt: baseTime,
+                    updatedAt: disasterTime,
+                    deletedAt: disasterTime
+                )
+            }
+            let poisonedEnvelope = CloudSyncEnvelope(
+                deviceId: "poisoned-cloud",
+                exportedAt: disasterTime,
+                projects: [poisonedProject],
+                entries: poisonedEntries,
+                versions: []
+            )
+            try CloudSyncService.makeEncoder().encode(poisonedEnvelope).write(to: syncFileURL, options: .atomic)
+
+            // Sync against the poisoned cloud file: circuit breaker must block the mass wipe and heal the cloud file!
+            let guardSummary = try syncService.syncNow(endpoint: syncFileURL.path, apiKey: "")
+            try check(guardSummary.protectedEntriesCount == 4, "Circuit breaker must protect all 4 active entries from mass deletion")
+            try check(guardSummary.protectedProjectsCount >= 1, "Circuit breaker must protect the parent project from deletion")
+
+            for i in 1...4 {
+                let localEntry = try unwrap(entryRepo.fetchById("protected-entry-\(i)"))
+                try check(localEntry.deletedAt == nil)
+                try check(localEntry.projectId == teamProject.id)
+            }
+            try check(try projectRepo.fetchById(teamProject.id) != nil)
+
+            // Verify the cloud file itself was healed by the local push
+            let healedCloudData = try Data(contentsOf: syncFileURL)
+            let healedCloudEnvelope = try CloudSyncService.makeDecoder().decode(CloudSyncEnvelope.self, from: healedCloudData)
+            let healedActiveIds = Set(healedCloudEnvelope.entries.filter { $0.deletedAt == nil }.map(\.id))
+            for i in 1...4 {
+                try check(healedActiveIds.contains("protected-entry-\(i)"), "Cloud sync file must be re-healed with active local entries")
+            }
+
+            // 5. Simulate complete cloud wipe (empty envelope on cloud) -> local must preserve all data and re-seed cloud
+            let wipedEnvelope = CloudSyncEnvelope(
+                deviceId: "wiped-cloud-server",
+                exportedAt: disasterTime.addingTimeInterval(1200),
+                projects: [],
+                entries: [],
+                versions: []
+            )
+            try CloudSyncService.makeEncoder().encode(wipedEnvelope).write(to: syncFileURL, options: .atomic)
+            _ = try syncService.syncNow(endpoint: syncFileURL.path, apiKey: "")
+            try check(try entryRepo.fetchByProject(teamProject.id).count == 4, "Local entries must survive an empty cloud reset")
+
+            let reseededCloudData = try Data(contentsOf: syncFileURL)
+            let reseededEnvelope = try CloudSyncService.makeDecoder().decode(CloudSyncEnvelope.self, from: reseededCloudData)
+            try check(reseededEnvelope.entries.filter { $0.deletedAt == nil }.count >= 4, "Empty cloud must be re-seeded from local library")
+
+            // 6. Verify manual soft-delete recovery (`recoverDeletedAndSync`)
+            try entryRepo.delete(id: "protected-entry-1")
+            try check(try entryRepo.fetchById("protected-entry-1") == nil)
+            let recoveryResult = try syncService.recoverDeletedAndSync(endpoint: syncFileURL.path, apiKey: "")
+            try check(recoveryResult.entriesRestored >= 1)
+            try check(try entryRepo.fetchById("protected-entry-1") != nil, "Soft-deleted entry must be restored by recoverDeletedAndSync")
+        }
+    }
 }
 
 #if canImport(XCTest)
@@ -996,6 +1137,10 @@ final class PromptPanelTests: XCTestCase {
 
     func testReferenceWindowAndCloudSyncConflictPreservation() throws {
         try CoreTestSuite.verifyReferenceWindowAndCloudSyncConflictPreservation()
+    }
+
+    func testCloudSyncDataLossProtectionAndThrottledBackups() throws {
+        try CoreTestSuite.verifyCloudSyncDataLossProtectionAndThrottledBackups()
     }
 }
 #else

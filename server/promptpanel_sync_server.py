@@ -68,6 +68,11 @@ PORT = _parse_env_int("PP_SYNC_PORT", 18787, minimum=1, maximum=65535)
 DATA_DIR = Path(os.environ.get("PP_SYNC_DATA_DIR", "/var/lib/promptpanel-sync"))
 MAX_BODY_BYTES = _parse_env_int("PP_SYNC_MAX_BODY_BYTES", 16 * 1024 * 1024, minimum=65536)
 MAX_BACKUPS_PER_NAMESPACE = _parse_env_int("PP_SYNC_MAX_BACKUPS", 10, minimum=1, maximum=500)
+MAX_GUARD_BACKUPS_PER_NAMESPACE = _parse_env_int("PP_SYNC_MAX_GUARD_BACKUPS", 5, minimum=1, maximum=100)
+BACKUP_MIN_INTERVAL_SEC = _parse_env_int("PP_SYNC_BACKUP_MIN_INTERVAL_SEC", 600, minimum=0, maximum=86400)
+GUARD_BACKUP_MIN_INTERVAL_SEC = 60
+MASS_DELETE_MIN_COUNT = 3
+MASS_DELETE_RATIO_THRESHOLD = 0.25
 raw_allowed = os.environ.get("PP_SYNC_ALLOWED_TOKENS", "").strip()
 ALLOWED_TOKENS = [t.strip() for t in raw_allowed.split(",") if t.strip()]
 
@@ -80,6 +85,7 @@ _METRICS: dict[str, int] = {
     "syncPostTotal": 0,
     "syncErrorsTotal": 0,
     "conflictsPreservedTotal": 0,
+    "massDeletionsProtectedTotal": 0,
 }
 
 
@@ -292,15 +298,27 @@ def count_namespace_stats(db_path: Path) -> tuple[int, int, int]:
         conn.close()
 
 
-def rotate_namespace_backup(db_path: Path, namespace: str) -> None:
+def rotate_namespace_backup(db_path: Path, namespace: str, is_guard: bool = False) -> None:
     if not db_path.exists():
         return
     backup_dir = DATA_DIR / "backups" / namespace
     backup_dir.mkdir(parents=True, exist_ok=True)
+    prefix = "pre-drop" if is_guard else "sync"
+    min_interval = GUARD_BACKUP_MIN_INTERVAL_SEC if is_guard else BACKUP_MIN_INTERVAL_SEC
+    max_keep = MAX_GUARD_BACKUPS_PER_NAMESPACE if is_guard else MAX_BACKUPS_PER_NAMESPACE
+
+    existing = sorted(backup_dir.glob(f"{prefix}-*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if existing and min_interval > 0:
+        try:
+            if (time.time() - existing[0].stat().st_mtime) < min_interval:
+                return
+        except OSError:
+            pass
+
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S")
-    target = backup_dir / f"sync-{stamp}.db"
+    target = backup_dir / f"{prefix}-{stamp}.db"
     if not target.exists():
-        tmp_target = backup_dir / f".sync-{stamp}-{uuid.uuid4().hex[:8]}.db.tmp"
+        tmp_target = backup_dir / f".{prefix}-{stamp}-{uuid.uuid4().hex[:8]}.db.tmp"
         src_conn: sqlite3.Connection | None = None
         dst_conn: sqlite3.Connection | None = None
         try:
@@ -324,8 +342,8 @@ def rotate_namespace_backup(db_path: Path, namespace: str) -> None:
                 dst_conn.close()
             if src_conn is not None:
                 src_conn.close()
-    backups = sorted(backup_dir.glob("sync-*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
-    for stale in backups[MAX_BACKUPS_PER_NAMESPACE:]:
+    backups = sorted(backup_dir.glob(f"{prefix}-*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for stale in backups[max_keep:]:
         try:
             stale.unlink()
         except OSError:
@@ -360,10 +378,29 @@ def _safe_int(val: Any, default: int = 0) -> int:
         return default
 
 
+def _bump_iso_timestamp(reference_iso: str) -> str:
+    now_dt = datetime.datetime.now(datetime.timezone.utc)
+    ref_dt = now_dt
+    if reference_iso:
+        try:
+            cleaned = reference_iso.replace("Z", "+00:00")
+            parsed = datetime.datetime.fromisoformat(cleaned)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+            if parsed > ref_dt:
+                ref_dt = parsed
+        except ValueError:
+            pass
+    bumped = ref_dt + datetime.timedelta(seconds=2)
+    return bumped.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
 def merge_envelope_into_db(
     conn: sqlite3.Connection,
     incoming: dict[str, Any],
     aead_key: bytes | None = None,
+    db_path: Path | None = None,
+    namespace: str | None = None,
 ) -> dict[str, int]:
     if not isinstance(incoming, dict):
         raise ValueError("Sync envelope root must be a JSON object")
@@ -378,8 +415,45 @@ def merge_envelope_into_db(
         "entriesCreated": 0,
         "entriesUpdated": 0,
         "conflictsPreserved": 0,
+        "protectedEntries": 0,
+        "protectedProjects": 0,
     }
     remote_device = str(_get_field(incoming, "deviceId", "device_id") or "remote-client")
+    allow_mass_delete = bool(_get_field(incoming, "allowMassDelete", "allow_mass_delete", False))
+
+    # Pre-flight inspection for mass-tombstone circuit breaker & pre-drop guard backup
+    srv_active_entries: dict[str, tuple[str, dict[str, Any]]] = {}
+    for e_row in conn.execute("SELECT id, updated_at, payload_json FROM kv_records WHERE kind = 'entry'"):
+        eid_str = str(e_row["id"])
+        e_obj, _ = decrypt_db_record(e_row["payload_json"], aead_key, "entry", eid_str)
+        if _get_field(e_obj, "deletedAt", "deleted_at") is None:
+            srv_active_entries[eid_str] = (str(e_row["updated_at"]), e_obj)
+
+    srv_active_count = len(srv_active_entries)
+    incoming_deleting_count = 0
+    for inc_entry in incoming.get("entries") or []:
+        if not isinstance(inc_entry, dict) or not inc_entry.get("id"):
+            continue
+        eid_str = str(inc_entry["id"])
+        if eid_str in srv_active_entries:
+            srv_upd, _ = srv_active_entries[eid_str]
+            inc_upd = str(_get_field(inc_entry, "updatedAt", "updated_at") or "")
+            if _get_field(inc_entry, "deletedAt", "deleted_at") is not None and inc_upd > srv_upd:
+                incoming_deleting_count += 1
+
+    should_block_mass_delete = False
+    if not allow_mass_delete:
+        if (
+            incoming_deleting_count >= MASS_DELETE_MIN_COUNT
+            and (incoming_deleting_count / max(srv_active_count, 1)) >= MASS_DELETE_RATIO_THRESHOLD
+        ) or (srv_active_count >= 2 and incoming_deleting_count == srv_active_count):
+            should_block_mass_delete = True
+
+    if (should_block_mass_delete or incoming_deleting_count > 0) and db_path is not None and namespace is not None:
+        try:
+            rotate_namespace_backup(db_path, namespace, is_guard=True)
+        except Exception:
+            pass
 
     with conn:
         remapped_project_ids: dict[str, str] = {}
@@ -415,6 +489,24 @@ def merge_envelope_into_db(
                 if _get_field(proj, "deletedAt", "deleted_at") is None:
                     stats["projectsCreated"] += 1
             elif inc_updated > str(row["updated_at"]):
+                srv_proj, _ = decrypt_db_record(row["payload_json"], aead_key, "project", pid)
+                srv_deleted = _get_field(srv_proj, "deletedAt", "deleted_at")
+                inc_deleted = _get_field(proj, "deletedAt", "deleted_at")
+                if srv_deleted is None and inc_deleted is not None and should_block_mass_delete:
+                    healed_proj = dict(srv_proj)
+                    healed_proj.pop("deletedAt", None)
+                    healed_proj.pop("deleted_at", None)
+                    healed_upd = _bump_iso_timestamp(inc_updated)
+                    if "updated_at" in healed_proj or "updatedAt" not in healed_proj:
+                        healed_proj["updated_at"] = healed_upd
+                    if "updatedAt" in healed_proj:
+                        healed_proj["updatedAt"] = healed_upd
+                    conn.execute(
+                        "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'project' AND id = ?",
+                        (healed_upd, encrypt_db_record(healed_proj, aead_key, "project", pid), pid),
+                    )
+                    stats["protectedProjects"] += 1
+                    continue
                 conn.execute(
                     "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'project' AND id = ?",
                     (inc_updated, encrypt_db_record(proj, aead_key, "project", pid), pid),
@@ -498,7 +590,11 @@ def merge_envelope_into_db(
                 )
 
                 if inc_updated > srv_updated:
-                    if has_diff:
+                    srv_deleted = _get_field(server_entry, "deletedAt", "deleted_at")
+                    inc_deleted = _get_field(entry, "deletedAt", "deleted_at")
+                    is_incoming_deletion = srv_deleted is None and inc_deleted is not None
+
+                    if has_diff or is_incoming_deletion:
                         vers = existing_versions_by_entry.get(eid, [])
                         max_ver = max((_safe_int(_get_field(v, "versionNumber", "version_number", 0)) for v in vers), default=0)
                         latest_snap = max(vers, key=lambda v: _safe_int(_get_field(v, "versionNumber", "version_number", 0)), default=None)
@@ -515,7 +611,7 @@ def merge_envelope_into_db(
                                     "versionNumber": max_ver,
                                     "title": server_entry.get("title", ""),
                                     "content": server_entry.get("content", ""),
-                                    "changeNote": "服务端合并前版本自动留存",
+                                    "changeNote": "服务端删除前版本自动留存" if is_incoming_deletion else "服务端合并前版本自动留存",
                                     "createdAt": srv_updated or utc_now_iso(),
                                 }
                             )
@@ -525,14 +621,39 @@ def merge_envelope_into_db(
                     srv_use_count = _safe_int(_get_field(server_entry, "useCount", "use_count", 0))
                     inc_use_count = _safe_int(_get_field(entry, "useCount", "use_count", 0))
                     merged_use_count = max(srv_use_count, inc_use_count)
+                    srv_used = _get_field(server_entry, "lastUsedAt", "last_used_at")
+                    inc_used = _get_field(entry, "lastUsedAt", "last_used_at")
+                    merged_used = max(str(srv_used), str(inc_used)) if (srv_used and inc_used) else (srv_used or inc_used)
+
+                    if is_incoming_deletion and should_block_mass_delete:
+                        healed_entry = dict(server_entry)
+                        healed_entry.pop("deletedAt", None)
+                        healed_entry.pop("deleted_at", None)
+                        healed_upd = _bump_iso_timestamp(inc_updated)
+                        if "updated_at" in healed_entry or "updatedAt" not in healed_entry:
+                            healed_entry["updated_at"] = healed_upd
+                        if "updatedAt" in healed_entry:
+                            healed_entry["updatedAt"] = healed_upd
+                        if "use_count" in healed_entry or "useCount" not in healed_entry:
+                            healed_entry["use_count"] = merged_use_count
+                        if "useCount" in healed_entry:
+                            healed_entry["useCount"] = merged_use_count
+                        if merged_used is not None:
+                            if "last_used_at" in healed_entry or "lastUsedAt" not in healed_entry:
+                                healed_entry["last_used_at"] = merged_used
+                            if "lastUsedAt" in healed_entry:
+                                healed_entry["lastUsedAt"] = merged_used
+                        conn.execute(
+                            "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'entry' AND id = ?",
+                            (healed_upd, encrypt_db_record(healed_entry, aead_key, "entry", eid), eid),
+                        )
+                        stats["protectedEntries"] += 1
+                        continue
+
                     if "use_count" in entry or "useCount" not in entry:
                         entry["use_count"] = merged_use_count
                     if "useCount" in entry:
                         entry["useCount"] = merged_use_count
-
-                    srv_used = _get_field(server_entry, "lastUsedAt", "last_used_at")
-                    inc_used = _get_field(entry, "lastUsedAt", "last_used_at")
-                    merged_used = max(str(srv_used), str(inc_used)) if (srv_used and inc_used) else (srv_used or inc_used)
                     if merged_used is not None:
                         if "last_used_at" in entry or "lastUsedAt" not in entry:
                             entry["last_used_at"] = merged_used
@@ -592,7 +713,38 @@ def merge_envelope_into_db(
                             (encrypt_db_record(server_entry, aead_key, "entry", eid), eid),
                         )
 
-        # 3. Merge Explicit Incoming Versions
+        # 3. Revive any soft-deleted project that still contains active entries
+        active_project_ids_needed: set[str] = set()
+        for e_row in conn.execute("SELECT id, payload_json FROM kv_records WHERE kind = 'entry'"):
+            e_obj, _ = decrypt_db_record(e_row["payload_json"], aead_key, "entry", str(e_row["id"]))
+            if _get_field(e_obj, "deletedAt", "deleted_at") is None:
+                pid_val = str(_get_field(e_obj, "projectId", "project_id") or "")
+                if pid_val:
+                    active_project_ids_needed.add(pid_val)
+
+        for needed_pid in active_project_ids_needed:
+            p_row = conn.execute(
+                "SELECT updated_at, payload_json FROM kv_records WHERE kind = 'project' AND id = ?",
+                (needed_pid,),
+            ).fetchone()
+            if p_row is not None:
+                p_obj, _ = decrypt_db_record(p_row["payload_json"], aead_key, "project", needed_pid)
+                if _get_field(p_obj, "deletedAt", "deleted_at") is not None:
+                    revived = dict(p_obj)
+                    revived.pop("deletedAt", None)
+                    revived.pop("deleted_at", None)
+                    revived_upd = _bump_iso_timestamp(str(p_row["updated_at"]))
+                    if "updated_at" in revived or "updatedAt" not in revived:
+                        revived["updated_at"] = revived_upd
+                    if "updatedAt" in revived:
+                        revived["updatedAt"] = revived_upd
+                    conn.execute(
+                        "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'project' AND id = ?",
+                        (revived_upd, encrypt_db_record(revived, aead_key, "project", needed_pid), needed_pid),
+                    )
+                    stats["protectedProjects"] += 1
+
+        # 4. Merge Explicit Incoming Versions
         for ver in incoming.get("versions") or []:
             if not isinstance(ver, dict) or not ver.get("id"):
                 continue
@@ -797,7 +949,13 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             db_path = DATA_DIR / "namespaces" / f"{namespace}.db"
             conn = init_namespace_db(db_path)
             try:
-                stats = merge_envelope_into_db(conn, incoming, aead_key=aead_key)
+                stats = merge_envelope_into_db(
+                    conn,
+                    incoming,
+                    aead_key=aead_key,
+                    db_path=db_path,
+                    namespace=namespace,
+                )
                 merged_envelope = load_envelope_from_db(conn, aead_key=aead_key)
             except ValueError as exc:
                 _record_metric("syncErrorsTotal")
@@ -808,6 +966,10 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             rotate_namespace_backup(db_path, namespace)
 
         _record_metric("conflictsPreservedTotal", stats.get("conflictsPreserved", 0))
+        _record_metric(
+            "massDeletionsProtectedTotal",
+            stats.get("protectedEntries", 0) + stats.get("protectedProjects", 0),
+        )
         wants_wire_cipher = was_wire_encrypted or ("aes-256-gcm" in self.headers.get("X-PromptPanel-Cipher", "").lower())
         response_payload = encrypt_wire_envelope(merged_envelope, aead_key) if wants_wire_cipher else merged_envelope
         extra_hdrs = {
