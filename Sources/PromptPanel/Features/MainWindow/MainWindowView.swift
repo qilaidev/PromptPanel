@@ -36,9 +36,9 @@ struct MainWindowView: View {
     @ObservedObject var viewModel: MainWindowViewModel
     @StateObject private var dropdownState = ContextDropdownInteractionState()
 
-    private static let hoverOpenDelayMs: Int = 110
+    private static let hoverOpenDelayMs: Int = 45
     private static let hoverCloseDelayMs: Int = 170
-    private static let hoverSelectDelayMs: Int = 70
+    private static let hoverSelectDelayMs: Int = 55
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -228,7 +228,7 @@ struct MainWindowView: View {
         .onVerticalScrollStep { step in
             viewModel.cycleCurrentProject(step: step)
         }
-        .onHover { hovering in
+        .onAlwaysHover { hovering in
             dropdownState.isHoveringPill = hovering
             if hovering {
                 dropdownState.pendingCloseWorkItem?.cancel()
@@ -303,7 +303,7 @@ struct MainWindowView: View {
                 .strokeBorder(Constants.VisualStyle.borderStrong, lineWidth: Constants.Layout.hairline)
         )
         .shadow(color: Color.black.opacity(0.22), radius: 16, x: 0, y: 8)
-        .onHover { hovering in
+        .onAlwaysHover { hovering in
             dropdownState.isHoveringDropdown = hovering
             if hovering {
                 dropdownState.pendingCloseWorkItem?.cancel()
@@ -379,7 +379,7 @@ struct MainWindowView: View {
             .roundedHitTarget(cornerRadius: 6)
         }
         .buttonStyle(.plain)
-        .onHover { hovering in
+        .onAlwaysHover { hovering in
             if hovering {
                 dropdownState.hoveredProjectId = project.id
                 scheduleHoverSelectProject(project.id)

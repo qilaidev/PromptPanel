@@ -107,6 +107,14 @@ extension View {
         modifier(HoverHighlightModifier(cornerRadius: cornerRadius, isEnabled: isEnabled))
     }
 
+    /// Tracks pointer enter/exit via an AppKit `NSTrackingArea` with `.activeAlways`
+    /// so hover interactions work instantaneously even when the hosting `NSPanel` /
+    /// `NSWindow` is floating or non-key while another application is active, without
+    /// intercepting mouse clicks or stealing first-responder focus.
+    func onAlwaysHover(perform action: @escaping (Bool) -> Void) -> some View {
+        modifier(AlwaysHoverModifier(onHoverChanged: action))
+    }
+
     /// Converts vertical mouse-wheel / trackpad scroll gestures over this view into discrete
     /// `-1` (up / previous) and `+1` (down / next) steps without stealing clicks or key focus.
     func onVerticalScrollStep(perform action: @escaping (Int) -> Void) -> some View {
@@ -129,11 +137,190 @@ struct HoverHighlightModifier: ViewModifier {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(state.isHovered && isEnabled ? Constants.VisualStyle.surfaceHover : Color.clear)
             )
-            .onHover { hovering in
+            .onAlwaysHover { hovering in
                 if state.isHovered != hovering {
                     state.isHovered = hovering
                 }
             }
+    }
+}
+
+struct AlwaysHoverModifier: ViewModifier {
+    let onHoverChanged: (Bool) -> Void
+
+    init(onHoverChanged: @escaping (Bool) -> Void) {
+        self.onHoverChanged = onHoverChanged
+    }
+
+    func body(content: Content) -> some View {
+        content.background(
+            AlwaysHoverRepresentable(onHoverChanged: onHoverChanged)
+                .allowsHitTesting(false)
+        )
+    }
+}
+
+private struct AlwaysHoverRepresentable: NSViewRepresentable {
+    let onHoverChanged: (Bool) -> Void
+
+    func makeNSView(context: Context) -> AlwaysHoverTrackingView {
+        let view = AlwaysHoverTrackingView()
+        view.onHoverChanged = onHoverChanged
+        return view
+    }
+
+    func updateNSView(_ nsView: AlwaysHoverTrackingView, context: Context) {
+        nsView.onHoverChanged = onHoverChanged
+    }
+}
+
+private final class AlwaysHoverTrackingView: NSView {
+    var onHoverChanged: ((Bool) -> Void)?
+    private var trackingArea: NSTrackingArea?
+    private var windowObservers: [NSObjectProtocol] = []
+    private var isCurrentlyHovered = false
+    private var hasScheduledSync = false
+
+    override var acceptsFirstResponder: Bool { false }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        self.trackingArea = area
+        scheduleHoverSyncFromMouseLocation()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        installWindowObserversIfNeeded()
+        scheduleHoverSyncFromMouseLocation()
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        removeWindowObservers()
+        if newWindow == nil {
+            if let trackingArea {
+                removeTrackingArea(trackingArea)
+                self.trackingArea = nil
+            }
+            if isCurrentlyHovered {
+                isCurrentlyHovered = false
+                let callback = onHoverChanged
+                DispatchQueue.main.async { [weak self] in
+                    if let self, self.window != nil {
+                        return
+                    }
+                    callback?(false)
+                }
+            }
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    override func viewDidHide() {
+        super.viewDidHide()
+        scheduleHoverSyncFromMouseLocation()
+    }
+
+    override func viewDidUnhide() {
+        super.viewDidUnhide()
+        scheduleHoverSyncFromMouseLocation()
+    }
+
+    deinit {
+        for observer in windowObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        guard window?.isVisible == true, !isHiddenOrHasHiddenAncestor else {
+            applyHovered(false)
+            return
+        }
+        applyHovered(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        applyHovered(false)
+    }
+
+    private func installWindowObserversIfNeeded() {
+        removeWindowObservers()
+        guard let window else { return }
+        let center = NotificationCenter.default
+        let occlusionObserver = center.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            self?.scheduleHoverSyncFromMouseLocation()
+        }
+        let closeObserver = center.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            self?.applyHovered(false)
+        }
+        windowObservers = [occlusionObserver, closeObserver]
+    }
+
+    private func removeWindowObservers() {
+        guard !windowObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        for observer in windowObservers {
+            center.removeObserver(observer)
+        }
+        windowObservers.removeAll()
+    }
+
+    private func scheduleHoverSyncFromMouseLocation() {
+        guard !hasScheduledSync else { return }
+        hasScheduledSync = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.hasScheduledSync = false
+            self.applyHovered(self.isCursorInsideVisibleBounds())
+        }
+    }
+
+    private func isCursorInsideVisibleBounds() -> Bool {
+        guard let window,
+              window.isVisible,
+              !isHiddenOrHasHiddenAncestor,
+              bounds.width > 0,
+              bounds.height > 0 else {
+            return false
+        }
+        let screenPoint = NSEvent.mouseLocation
+        if window.windowNumber > 0 {
+            let frontWindowNumber = NSWindow.windowNumber(at: screenPoint, belowWindowWithWindowNumber: 0)
+            guard frontWindowNumber == window.windowNumber else {
+                return false
+            }
+        }
+        let windowPoint = window.convertPoint(fromScreen: screenPoint)
+        let localPoint = convert(windowPoint, from: nil)
+        let rect = visibleRect
+        return rect.width > 0 && rect.height > 0 && rect.contains(localPoint)
+    }
+
+    private func applyHovered(_ hovering: Bool) {
+        guard isCurrentlyHovered != hovering else { return }
+        isCurrentlyHovered = hovering
+        onHoverChanged?(hovering)
     }
 }
 

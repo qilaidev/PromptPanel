@@ -1400,6 +1400,32 @@ public enum CoreTestSuite {
             try check(savedQuickTodo.type == Constants.EntryType.todo.rawValue)
             try check(savedQuickTodo.tags == ["qa"])
 
+            // 3b. One-click direct typing mode (`startQuickCapture(type:)`) enters `; ` / `t `, closes overlays, bumps focusToken, and preserves body on mode switch
+            viewModel.isScopeDropdownOpen = true
+            viewModel.isPreviewPresented = true
+            let tokenBeforeStartCapture = viewModel.focusToken
+            viewModel.startQuickCapture(type: .note)
+            try check(viewModel.query == "; ")
+            try check(!viewModel.isScopeDropdownOpen)
+            try check(!viewModel.isPreviewPresented)
+            try check(viewModel.focusToken == tokenBeforeStartCapture + 1)
+            try check(viewModel.quickCaptureDraft?.type == .note)
+            try check(viewModel.quickCaptureDraft?.hasContent == false)
+
+            viewModel.query = "; 一键写便签直接切换类型 #ux"
+            let tokenBeforeSwitchToTodo = viewModel.focusToken
+            viewModel.startQuickCapture(type: .todo)
+            try check(viewModel.query == "t 一键写便签直接切换类型 #ux")
+            try check(viewModel.focusToken == tokenBeforeSwitchToTodo + 1)
+            try check(viewModel.quickCaptureDraft?.type == .todo)
+            viewModel.executeSelection(force: true, triggerSource: .pointerClick)
+            await waitUntilAsync(timeout: 1.5) { !viewModel.isScopeSearchInFlight }
+            let savedDirectCapture = try unwrap(
+                entryRepo.fetchByProject(inboxProject.id).first(where: { $0.content.contains("一键写便签直接切换类型") })
+            )
+            try check(savedDirectCapture.type == Constants.EntryType.todo.rawValue)
+            try check(savedDirectCapture.tags == ["ux"])
+
             // 4. Shift+Enter (.quickCreateNote) & Option+Enter (.quickCreateTodo) key commands + clipboard quick-note
             try check(
                 QuickPanelViewModel.panelKeyCommand(

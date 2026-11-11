@@ -52,10 +52,10 @@ struct QuickPanelView: View {
     @ObservedObject var viewModel: QuickPanelViewModel
     @StateObject private var interaction = PanelInteractionCoordinator()
 
-    private static let scopeHoverOpenDelayMs = 110
+    private static let scopeHoverOpenDelayMs = 45
     private static let scopeHoverCloseDelayMs = 170
-    private static let scopeHoverSelectDelayMs = 70
-    private static let filterHoverDwellDelayMs = 90
+    private static let scopeHoverSelectDelayMs = 55
+    private static let filterHoverDwellDelayMs = 65
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -208,30 +208,54 @@ struct QuickPanelView: View {
     private var headerQuickCaptureControls: some View {
         if viewModel.query.isEmpty {
             Button {
-                viewModel.quickCreateNoteFromClipboard()
+                viewModel.startQuickCapture(type: .note)
             } label: {
                 HStack(spacing: 3) {
-                    Text("📋")
+                    Text("✏️")
                         .font(.ui(.micro))
-                    Text("存便签")
-                        .font(.ui(.caption, weight: .medium))
+                    Text("写便签")
+                        .font(.ui(.caption, weight: .semibold))
                 }
-                .foregroundStyle(viewModel.hasClipboardText ? Constants.VisualStyle.textSecondary : Constants.VisualStyle.textTertiary)
-                .padding(.horizontal, 7)
+                .foregroundStyle(Constants.VisualStyle.accent)
+                .padding(.horizontal, 8)
                 .frame(height: Constants.Layout.compactControlHeight - 2)
                 .background(
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(Constants.VisualStyle.tintSubtle)
+                        .fill(Constants.VisualStyle.accentDim)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
+                        .strokeBorder(Constants.VisualStyle.accentBorder, lineWidth: Constants.Layout.hairline)
                 )
+                .hoverHighlight(cornerRadius: 5)
                 .roundedHitTarget(cornerRadius: 5)
             }
             .buttonStyle(.plain)
             .fixedSize()
-            .help("将剪贴板内容一键存为便签")
+            .help("一键进入便签输入模式，直接打字回车即存")
+
+            if viewModel.hasClipboardText {
+                Button {
+                    viewModel.quickCreateNoteFromClipboard()
+                } label: {
+                    Text("📋")
+                        .font(.ui(.micro))
+                        .frame(width: Constants.Layout.compactControlHeight - 2, height: Constants.Layout.compactControlHeight - 2)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .fill(Constants.VisualStyle.tintSubtle)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
+                        )
+                        .hoverHighlight(cornerRadius: 5)
+                        .roundedHitTarget(cornerRadius: 5)
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .help("将剪贴板内容一键存为便签")
+            }
         } else {
             if viewModel.quickCaptureDraft == nil {
                 Button {
@@ -391,7 +415,7 @@ struct QuickPanelView: View {
         .onVerticalScrollStep { step in
             viewModel.cycleScope(step)
         }
-        .onHover { hovering in
+        .onAlwaysHover { hovering in
             handleScopePillHoverChanged(hovering)
         }
         .help("悬停展开切换 · 滚轮或 Tab 快速切换分组")
@@ -458,7 +482,7 @@ struct QuickPanelView: View {
                 .strokeBorder(Constants.VisualStyle.borderStrong, lineWidth: Constants.Layout.hairline)
         )
         .shadow(color: Color.black.opacity(0.26), radius: 16, x: 0, y: 8)
-        .onHover { hovering in
+        .onAlwaysHover { hovering in
             handleScopeDropdownHoverChanged(hovering)
         }
     }
@@ -515,7 +539,7 @@ struct QuickPanelView: View {
             .roundedHitTarget(cornerRadius: 6)
         }
         .buttonStyle(.plain)
-        .onHover { hovering in
+        .onAlwaysHover { hovering in
             handleScopeItemHover(id: id, hovering: hovering)
         }
     }
@@ -623,49 +647,7 @@ struct QuickPanelView: View {
     private var kindFilterStrip: some View {
         HStack(spacing: Design.Space.xs) {
             ForEach(QuickPanelViewModel.KindFilter.barItems) { filter in
-                let isActive = viewModel.activeKindFilter == filter
-                let isHovered = interaction.hoveredKindFilter == filter
-                let count = viewModel.countForFilter(filter)
-
-                Button {
-                    interaction.filterDwellWorkItem?.cancel()
-                    interaction.filterDwellWorkItem = nil
-                    viewModel.activeKindFilter = filter
-                } label: {
-                    HStack(spacing: 4) {
-                        if let symbol = filter.symbolName {
-                            Image(systemName: symbol)
-                                .font(.icon(.micro))
-                        }
-                        Text(filter.displayName)
-                            .font(.ui(.caption, weight: isActive ? .semibold : .medium))
-                        if count > 0, filter != .all {
-                            Text("\(count)")
-                                .font(.ui(.micro, weight: .medium, mono: true))
-                                .opacity(0.75)
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .frame(height: 22)
-                    .foregroundStyle(
-                        isActive
-                            ? Constants.VisualStyle.accent
-                            : (isHovered ? Constants.VisualStyle.text : Constants.VisualStyle.textTertiary)
-                    )
-                    .background(
-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .fill(
-                                isActive
-                                    ? Constants.VisualStyle.accentDim
-                                    : (isHovered ? Constants.VisualStyle.surfaceHover : Color.clear)
-                            )
-                    )
-                    .roundedHitTarget(cornerRadius: 5)
-                }
-                .buttonStyle(.plain)
-                .onHover { hovering in
-                    handleKindFilterHover(filter: filter, hovering: hovering)
-                }
+                kindFilterChip(filter)
             }
 
             Spacer(minLength: 0)
@@ -676,6 +658,52 @@ struct QuickPanelView: View {
         }
         .padding(.horizontal, Design.Space.lg)
         .padding(.vertical, 5)
+    }
+
+    private func kindFilterChip(_ filter: QuickPanelViewModel.KindFilter) -> some View {
+        let isActive = viewModel.activeKindFilter == filter
+        let isHovered = interaction.hoveredKindFilter == filter
+        let count = viewModel.countForFilter(filter)
+
+        return Button {
+            interaction.filterDwellWorkItem?.cancel()
+            interaction.filterDwellWorkItem = nil
+            viewModel.activeKindFilter = filter
+        } label: {
+            HStack(spacing: 4) {
+                if let symbol = filter.symbolName {
+                    Image(systemName: symbol)
+                        .font(.icon(.micro))
+                }
+                Text(filter.displayName)
+                    .font(.ui(.caption, weight: isActive ? .semibold : .medium))
+                if count > 0, filter != .all {
+                    Text("\(count)")
+                        .font(.ui(.micro, weight: .medium, mono: true))
+                        .opacity(0.75)
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .foregroundStyle(
+                isActive
+                    ? Constants.VisualStyle.accent
+                    : (isHovered ? Constants.VisualStyle.text : Constants.VisualStyle.textTertiary)
+            )
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(
+                        isActive
+                            ? Constants.VisualStyle.accentDim
+                            : (isHovered ? Constants.VisualStyle.surfaceHover : Color.clear)
+                    )
+            )
+            .roundedHitTarget(cornerRadius: 5)
+        }
+        .buttonStyle(.plain)
+        .onAlwaysHover { hovering in
+            handleKindFilterHover(filter: filter, hovering: hovering)
+        }
     }
 
     private func handleKindFilterHover(filter: QuickPanelViewModel.KindFilter, hovering: Bool) {
@@ -782,15 +810,42 @@ struct QuickPanelView: View {
 
                     Spacer(minLength: 0)
 
+                    Button {
+                        viewModel.startQuickCapture(type: isTodo ? .note : .todo)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.left.arrow.right")
+                                .font(.icon(.nano, weight: .semibold))
+                            Text(isTodo ? "切换为便签" : "切换为待办")
+                                .font(.ui(.caption, weight: .medium))
+                        }
+                        .foregroundStyle(Constants.VisualStyle.textSecondary)
+                        .padding(.horizontal, 8)
+                        .frame(height: Constants.Layout.regularControlHeight)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Constants.VisualStyle.tintSubtle)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
+                        )
+                        .hoverHighlight(cornerRadius: 6)
+                        .roundedHitTarget(cornerRadius: 6)
+                    }
+                    .buttonStyle(.plain)
+                    .help(isTodo ? "切换为便签输入模式" : "切换为待办输入模式")
+
                     PrimaryActionButton(
-                        title: isTodo ? "保存待办" : "保存便签",
-                        systemImage: "return",
-                        shortcut: "Enter"
+                        title: "保存 ⏎",
+                        systemImage: nil,
+                        shortcut: nil
                     ) {
                         viewModel.executeSelection(force: true, triggerSource: .pointerClick)
                     }
                     .disabled(!draft.hasContent)
                     .opacity(draft.hasContent ? 1 : 0.5)
+                    .help(isTodo ? "保存待办（Enter）" : "保存便签（Enter）")
                 }
 
                 Divider()
@@ -1193,13 +1248,13 @@ struct QuickPanelView: View {
                     }
 
                     Button {
-                        viewModel.quickCreateNoteFromClipboard()
+                        viewModel.startQuickCapture(type: .note)
                     } label: {
                         HStack(spacing: 4) {
-                            Image(systemName: "doc.on.clipboard")
-                                .font(.icon(.small))
-                            Text("剪贴板存便签")
-                                .font(.ui(.caption, weight: .medium))
+                            Text("✏️")
+                                .font(.ui(.micro))
+                            Text("写便签")
+                                .font(.ui(.caption, weight: .semibold))
                         }
                         .foregroundStyle(Constants.VisualStyle.accent)
                         .padding(.horizontal, 10)
@@ -1208,8 +1263,41 @@ struct QuickPanelView: View {
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
                                 .fill(Constants.VisualStyle.accentDim)
                         )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .strokeBorder(Constants.VisualStyle.accentBorder, lineWidth: Constants.Layout.hairline)
+                        )
+                        .hoverHighlight(cornerRadius: 6)
+                        .roundedHitTarget(cornerRadius: 6)
                     }
                     .buttonStyle(.plain)
+
+                    if viewModel.hasClipboardText {
+                        Button {
+                            viewModel.quickCreateNoteFromClipboard()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "doc.on.clipboard")
+                                    .font(.icon(.small))
+                                Text("剪贴板存便签")
+                                    .font(.ui(.caption, weight: .medium))
+                            }
+                            .foregroundStyle(Constants.VisualStyle.textSecondary)
+                            .padding(.horizontal, 10)
+                            .frame(height: 24)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(Constants.VisualStyle.tintSubtle)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
+                            )
+                            .hoverHighlight(cornerRadius: 6)
+                            .roundedHitTarget(cornerRadius: 6)
+                        }
+                        .buttonStyle(.plain)
+                    }
 
                     Button {
                         viewModel.openSettings()
@@ -1559,7 +1647,7 @@ private struct PanelRow: View {
                 )
         )
         .contentShape(RoundedRectangle(cornerRadius: Design.rowCornerRadius, style: .continuous))
-        .onHover { hovering in
+        .onAlwaysHover { hovering in
             hoverBox.isHovered = hovering
             if hovering {
                 onHoverSelect()
@@ -1672,6 +1760,7 @@ private struct PanelPointerActivityCatcher: NSViewRepresentable {
 private final class PanelPointerActivityNSView: NSView {
     var onPointerMoved: (() -> Void)?
     private var monitor: Any?
+    private var trackingArea: NSTrackingArea?
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
@@ -1679,6 +1768,27 @@ private final class PanelPointerActivityNSView: NSView {
 
     override var acceptsFirstResponder: Bool {
         false
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseMoved, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        self.trackingArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        if abs(event.deltaX) > 0.15 || abs(event.deltaY) > 0.15 {
+            onPointerMoved?()
+        }
     }
 
     override func viewDidMoveToWindow() {
@@ -1689,6 +1799,10 @@ private final class PanelPointerActivityNSView: NSView {
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         if newWindow == nil {
             removeMonitor()
+            if let trackingArea {
+                removeTrackingArea(trackingArea)
+                self.trackingArea = nil
+            }
         }
         super.viewWillMove(toWindow: newWindow)
     }

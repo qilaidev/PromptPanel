@@ -593,6 +593,25 @@ final class QuickPanelViewModel: ObservableObject {
         return projectNamesById[projectId]
     }
 
+    /// Enters direct note / todo typing mode in the panel search bar (or switches an active
+    /// quick-capture draft between `.note` and `.todo` while preserving typed body text),
+    /// closing transient overlays and focusing the input field with cursor at the end.
+    func startQuickCapture(type: Constants.EntryType = .note) {
+        let targetType: Constants.EntryType = (type == .todo) ? .todo : .note
+        let prefix = targetType == .todo ? "t " : "; "
+        if let draft = quickCaptureDraft {
+            let leadingTrimmed = String(query.drop(while: { $0 == " " || $0 == "\t" }))
+            let remainder = String(leadingTrimmed.dropFirst(draft.matchedPrefix.count))
+                .drop(while: { $0 == " " || $0 == "\t" })
+            query = remainder.isEmpty ? prefix : "\(prefix)\(remainder)"
+        } else {
+            query = prefix
+        }
+        isScopeDropdownOpen = false
+        isPreviewPresented = false
+        focusToken += 1
+    }
+
     /// Saves the current clipboard text directly as a scratchpad note in `速记与待办`.
     func quickCreateNoteFromClipboard() {
         let clipboardText = clipboardTextProvider()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

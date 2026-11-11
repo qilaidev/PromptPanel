@@ -228,14 +228,17 @@ struct KeyAwareSearchField: NSViewRepresentable {
                 }
 
                 self.activateWindowIfNeeded(for: field)
-                _ = field.window?.makeFirstResponder(field)
+                if field.currentEditor() == nil {
+                    _ = field.window?.makeFirstResponder(field)
+                }
                 if let editor = field.currentEditor() as? NSTextView {
                     editor.insertionPointColor = NSColor(srgbRed: 0.49, green: 0.55, blue: 0.97, alpha: 1.0)
                 }
+                let endLocation = (field.stringValue as NSString).length
+                field.currentEditor()?.selectedRange = NSRange(location: endLocation, length: 0)
                 let focusResult = self.makeFocusResult(field: field, token: focusToken, attempt: attempt)
 
                 if focusResult.succeeded {
-                    field.currentEditor()?.selectedRange = NSRange(location: field.stringValue.count, length: 0)
                     self.reportSuccessfulFocusIfNeeded(result: focusResult)
                 } else if remainingAttempts > 0 {
                     self.attemptFocus(
@@ -390,7 +393,7 @@ final class PromptSearchField: NSSearchField {
     func setDisplayedText(_ text: String) {
         stringValue = text
         currentEditor()?.string = text
-        currentEditor()?.selectedRange = NSRange(location: text.count, length: 0)
+        currentEditor()?.selectedRange = NSRange(location: (text as NSString).length, length: 0)
     }
 
     private func focusForImmediateTyping() {
