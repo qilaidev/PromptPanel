@@ -19,7 +19,7 @@ struct LibraryView: View {
 
             verticalDivider
 
-            PreviewPane(viewModel: viewModel)
+            PreviewPane(viewModel: viewModel, inlineSession: viewModel.inlineSession)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Constants.VisualStyle.surfaceRaised)
         }
@@ -740,7 +740,6 @@ struct LibraryView: View {
                                     viewModel.togglePin(entry)
                                 }
                             )
-                            .draggable(entry.id)
                             .contextMenu {
                                 Button("复制内容 (⇧⌘C)") {
                                     viewModel.selectedEntryId = entry.id
@@ -755,6 +754,13 @@ struct LibraryView: View {
                                 }
                                 Button(entry.isPinned ? "取消置顶" : "置顶") {
                                     viewModel.togglePin(entry)
+                                }
+                                Menu("移动到项目…") {
+                                    ForEach(viewModel.projects.filter { $0.id != entry.projectId && !$0.isArchived }) { target in
+                                        Button(target.name) {
+                                            viewModel.updateEntryProject(entry, toProjectId: target.id)
+                                        }
+                                    }
                                 }
                                 Menu("克隆到…") {
                                     ForEach(viewModel.projects.filter { $0.id != entry.projectId && !$0.isArchived }) { target in
@@ -778,9 +784,9 @@ struct LibraryView: View {
                     }
                 }
             }
-            .onChange(of: viewModel.selectedEntry?.id) { _, id in
-                guard let id else { return }
-                proxy.scrollTo(id, anchor: .center)
+            .onChange(of: viewModel.programmaticScrollRevision) { _, _ in
+                guard let id = viewModel.selectedEntry?.id else { return }
+                proxy.scrollTo(id, anchor: viewModel.programmaticScrollAnchor)
             }
         }
     }
@@ -832,11 +838,6 @@ private struct SidebarSectionHeader: View {
     }
 }
 
-private final class SidebarRowInteractionState: ObservableObject {
-    @Published var isHovered: Bool = false
-    @Published var isDropTargeted: Bool = false
-}
-
 private struct SidebarGroupRow: View {
     let title: String
     let systemImage: String
@@ -848,23 +849,38 @@ private struct SidebarGroupRow: View {
     var onDropEntryIds: (([String]) -> Bool)? = nil
     let action: () -> Void
 
-    @StateObject private var rowState = SidebarRowInteractionState()
+    private var isHoveredState = SwiftUI.State<Bool>(initialValue: false)
+    private var isDropTargetedState = SwiftUI.State<Bool>(initialValue: false)
+
+    private var isHovered: Bool {
+        get { isHoveredState.wrappedValue }
+        nonmutating set { isHoveredState.wrappedValue = newValue }
+    }
+
+    private var isDropTargeted: Bool {
+        get { isDropTargetedState.wrappedValue }
+        nonmutating set { isDropTargetedState.wrappedValue = newValue }
+    }
+
+    private var showsSetContextButton: Bool {
+        isHovered && !isCurrentContext && onSetCurrentContext != nil
+    }
 
     private var rowBackgroundFill: Color {
-        if rowState.isDropTargeted {
+        if isDropTargeted {
             return Constants.VisualStyle.accentDim
         }
         if isSelected {
             return Constants.VisualStyle.accentDim
         }
-        if rowState.isHovered {
+        if isHovered {
             return Constants.VisualStyle.surfaceHover
         }
         return Color.clear
     }
 
     private var rowBorderColor: Color {
-        if rowState.isDropTargeted {
+        if isDropTargeted {
             return Constants.VisualStyle.accent
         }
         if isSelected {
@@ -874,53 +890,66 @@ private struct SidebarGroupRow: View {
     }
 
     var body: some View {
-        let baseRow = HStack(spacing: 6) {
-            Button(action: action) {
-                HStack(spacing: 8) {
-                    Image(systemName: systemImage)
-                        .font(.icon(.base))
-                        .foregroundStyle(isSelected ? Constants.VisualStyle.accent : Constants.VisualStyle.textSecondary)
-                        .frame(width: 16)
+        let baseRow = Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.icon(.base))
+                    .foregroundStyle(isSelected ? Constants.VisualStyle.accent : Constants.VisualStyle.textSecondary)
+                    .frame(width: 16)
 
-                    Text(title)
-                        .font(.ui(.body, weight: isSelected ? .semibold : .regular))
-                        .foregroundStyle(Constants.VisualStyle.text)
-                        .lineLimit(1)
+                Text(title)
+                    .font(.ui(.body, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(Constants.VisualStyle.text)
+                    .lineLimit(1)
 
-                    Spacer(minLength: 0)
+                Spacer(minLength: 0)
 
-                    if isCurrentContext {
-                        Text("当前")
-                            .font(.ui(.micro, weight: .medium))
-                            .foregroundStyle(Constants.VisualStyle.accent)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                    .fill(Constants.VisualStyle.accentDim)
-                            )
-                    } else if let badgeText {
-                        Text(badgeText)
-                            .font(.ui(.micro))
-                            .foregroundStyle(Constants.VisualStyle.textSecondary)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                    .fill(Constants.VisualStyle.tintSubtle)
-                            )
-                    }
-
-                    Text("\(count)")
-                        .font(.ui(.caption, mono: true))
-                        .foregroundStyle(isSelected ? Constants.VisualStyle.accent : Constants.VisualStyle.textTertiary)
+                if isCurrentContext {
+                    Text("当前")
+                        .font(.ui(.micro, weight: .medium))
+                        .foregroundStyle(Constants.VisualStyle.accent)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(Constants.VisualStyle.accentDim)
+                        )
+                } else if let badgeText {
+                    Text(badgeText)
+                        .font(.ui(.micro))
+                        .foregroundStyle(Constants.VisualStyle.textSecondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(Constants.VisualStyle.tintSubtle)
+                        )
+                        .opacity(showsSetContextButton ? 0 : 1)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
 
-            if rowState.isHovered, !isCurrentContext, let onSetCurrentContext {
+                Text("\(count)")
+                    .font(.ui(.caption, mono: true))
+                    .foregroundStyle(isSelected ? Constants.VisualStyle.accent : Constants.VisualStyle.textTertiary)
+                    .frame(minWidth: 18, alignment: .trailing)
+                    .opacity(showsSetContextButton ? 0 : 1)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(rowBackgroundFill)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(rowBorderColor, lineWidth: isDropTargeted ? 1 : Constants.Layout.hairline)
+        )
+        .overlay(alignment: .trailing) {
+            if showsSetContextButton, let onSetCurrentContext {
                 Button(action: onSetCurrentContext) {
                     Image(systemName: "scope")
                         .font(.icon(.micro, weight: .semibold))
@@ -932,30 +961,24 @@ private struct SidebarGroupRow: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .padding(.trailing, 8)
                 .help("设为快捷面板当前分组")
             }
         }
-        .padding(.horizontal, 8)
-        .frame(height: 28)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(rowBackgroundFill)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(rowBorderColor, lineWidth: rowState.isDropTargeted ? 1 : Constants.Layout.hairline)
-        )
         .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .onHover { hovering in
-            rowState.isHovered = hovering
+            if isHovered != hovering {
+                isHovered = hovering
+            }
         }
 
         if let onDropEntryIds {
             baseRow.dropDestination(for: String.self) { items, _ in
                 onDropEntryIds(items)
             } isTargeted: { targeted in
-                rowState.isDropTargeted = targeted
+                if isDropTargeted != targeted {
+                    isDropTargeted = targeted
+                }
             }
         } else {
             baseRow
@@ -1081,10 +1104,6 @@ enum EntryDateFormat {
 
 // MARK: - Native Entry List Row
 
-private final class EntryRowHoverState: ObservableObject {
-    @Published var isHovered: Bool = false
-}
-
 private struct EntryListRow: View {
     let entry: Entry
     let isSelected: Bool
@@ -1095,7 +1114,12 @@ private struct EntryListRow: View {
     let onCopy: () -> Void
     let onTogglePin: () -> Void
 
-    @StateObject private var hoverState = EntryRowHoverState()
+    private var isHoveredState = SwiftUI.State<Bool>(initialValue: false)
+
+    private var isHovered: Bool {
+        get { isHoveredState.wrappedValue }
+        nonmutating set { isHoveredState.wrappedValue = newValue }
+    }
 
     private var showsCheckbox: Bool {
         isInboxContext || entry.type == Constants.EntryType.todo.rawValue || entry.type == Constants.EntryType.note.rawValue
@@ -1105,7 +1129,7 @@ private struct EntryListRow: View {
         if isSelected {
             return Constants.VisualStyle.accentDim
         }
-        if hoverState.isHovered {
+        if isHovered {
             return Constants.VisualStyle.surfaceHover
         }
         return Color.clear
@@ -1150,7 +1174,7 @@ private struct EntryListRow: View {
 
                         Spacer(minLength: 4)
 
-                        if !hoverState.isHovered {
+                        HStack(spacing: 6) {
                             if entry.useCount > 0 {
                                 Text("\(entry.useCount)次")
                                     .font(.ui(.micro, weight: .medium, mono: true))
@@ -1174,10 +1198,9 @@ private struct EntryListRow: View {
                                         .fill(Constants.VisualStyle.tintSubtle)
                                 )
                                 .fixedSize()
-                        } else {
-                            Color.clear
-                                .frame(width: 44, height: 16)
                         }
+                        .frame(minWidth: 44, alignment: .trailing)
+                        .opacity(isHovered ? 0 : 1)
                     }
 
                     Text(entry.previewLine)
@@ -1231,7 +1254,7 @@ private struct EntryListRow: View {
             }
         }
         .overlay(alignment: .topTrailing) {
-            if hoverState.isHovered {
+            if isHovered {
                 HStack(spacing: 4) {
                     Button(action: onCopy) {
                         Image(systemName: "doc.on.doc")
@@ -1275,7 +1298,9 @@ private struct EntryListRow: View {
             }
         }
         .onHover { hovering in
-            hoverState.isHovered = hovering
+            if isHovered != hovering {
+                isHovered = hovering
+            }
         }
     }
 }
@@ -1284,6 +1309,7 @@ private struct EntryListRow: View {
 
 private struct PreviewPane: View {
     @ObservedObject var viewModel: MainWindowViewModel
+    @ObservedObject var inlineSession: InlineEditorSession
 
     var body: some View {
         if let entry = viewModel.selectedEntry {
@@ -1292,7 +1318,7 @@ private struct PreviewPane: View {
                     viewModel.syncInlineDraft(with: entry)
                 }
                 .onChange(of: entry) { _, newValue in
-                    let isSameEntry = viewModel.inlineDraftEntryId == newValue.id
+                    let isSameEntry = inlineSession.entryId == newValue.id
                     let shouldForceSync = !isSameEntry || !viewModel.hasUnsavedInlineChanges(for: newValue)
                     viewModel.syncInlineDraft(
                         with: newValue,
@@ -1320,7 +1346,7 @@ private struct PreviewPane: View {
     private func detailContent(for entry: Entry) -> some View {
         let isDirty = viewModel.hasUnsavedInlineChanges(for: entry)
         let latestVersionNumber = viewModel.selectedEntryVersions.first?.versionNumber ?? 1
-        let currentKind = Constants.EntryType.resolve(viewModel.inlineDraftType)
+        let currentKind = Constants.EntryType.resolve(inlineSession.type)
 
         return VStack(alignment: .leading, spacing: 0) {
             // Top Native Action & Metadata Toolbar
@@ -1331,7 +1357,7 @@ private struct PreviewPane: View {
                         Image(systemName: "folder")
                             .font(.icon(.micro, weight: .semibold))
                             .foregroundStyle(Constants.VisualStyle.accent)
-                        Text(viewModel.projectName(for: viewModel.inlineDraftProjectId))
+                        Text(viewModel.projectName(for: inlineSession.projectId))
                             .font(.ui(.caption, weight: .medium))
                             .foregroundStyle(Constants.VisualStyle.text)
                             .lineLimit(1)
@@ -1353,7 +1379,7 @@ private struct PreviewPane: View {
                     )
                     .overlay {
                         Menu {
-                            ForEach(viewModel.projects.filter { !$0.isArchived || $0.id == viewModel.inlineDraftProjectId }) { project in
+                            ForEach(viewModel.projects.filter { !$0.isArchived || $0.id == inlineSession.projectId }) { project in
                                 Button {
                                     viewModel.updateEntryProject(entry, toProjectId: project.id)
                                 } label: {
@@ -1418,23 +1444,23 @@ private struct PreviewPane: View {
                         viewModel.toggleEntryCompleted(entry)
                     } label: {
                         HStack(spacing: 4) {
-                            Image(systemName: viewModel.inlineDraftIsCompleted ? "checkmark.circle.fill" : "circle")
+                            Image(systemName: inlineSession.isCompleted ? "checkmark.circle.fill" : "circle")
                                 .font(.icon(.micro, weight: .semibold))
-                                .foregroundStyle(viewModel.inlineDraftIsCompleted ? Constants.VisualStyle.success : Constants.VisualStyle.textTertiary)
+                                .foregroundStyle(inlineSession.isCompleted ? Constants.VisualStyle.success : Constants.VisualStyle.textTertiary)
                             Text("完成")
                                 .font(.ui(.caption, weight: .medium))
-                                .foregroundStyle(viewModel.inlineDraftIsCompleted ? Constants.VisualStyle.text : Constants.VisualStyle.textSecondary)
+                                .foregroundStyle(inlineSession.isCompleted ? Constants.VisualStyle.text : Constants.VisualStyle.textSecondary)
                         }
                         .padding(.horizontal, 7)
                         .frame(height: 24)
                         .background(
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(viewModel.inlineDraftIsCompleted ? Constants.VisualStyle.successDim : Constants.VisualStyle.surfaceRaised)
+                                .fill(inlineSession.isCompleted ? Constants.VisualStyle.successDim : Constants.VisualStyle.surfaceRaised)
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
                                 .strokeBorder(
-                                    viewModel.inlineDraftIsCompleted ? Constants.VisualStyle.success.opacity(0.35) : Constants.VisualStyle.border,
+                                    inlineSession.isCompleted ? Constants.VisualStyle.success.opacity(0.35) : Constants.VisualStyle.border,
                                     lineWidth: Constants.Layout.hairline
                                 )
                         )
@@ -1448,23 +1474,23 @@ private struct PreviewPane: View {
                         viewModel.togglePin(entry)
                     } label: {
                         HStack(spacing: 4) {
-                            Image(systemName: viewModel.inlineDraftIsPinned ? "pin.fill" : "pin")
+                            Image(systemName: inlineSession.isPinned ? "pin.fill" : "pin")
                                 .font(.icon(.micro, weight: .semibold))
-                                .foregroundStyle(viewModel.inlineDraftIsPinned ? Constants.VisualStyle.warn : Constants.VisualStyle.textTertiary)
+                                .foregroundStyle(inlineSession.isPinned ? Constants.VisualStyle.warn : Constants.VisualStyle.textTertiary)
                             Text("置顶")
                                 .font(.ui(.caption, weight: .medium))
-                                .foregroundStyle(viewModel.inlineDraftIsPinned ? Constants.VisualStyle.text : Constants.VisualStyle.textSecondary)
+                                .foregroundStyle(inlineSession.isPinned ? Constants.VisualStyle.text : Constants.VisualStyle.textSecondary)
                         }
                         .padding(.horizontal, 7)
                         .frame(height: 24)
                         .background(
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(viewModel.inlineDraftIsPinned ? Constants.VisualStyle.warnDim : Constants.VisualStyle.surfaceRaised)
+                                .fill(inlineSession.isPinned ? Constants.VisualStyle.warnDim : Constants.VisualStyle.surfaceRaised)
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
                                 .strokeBorder(
-                                    viewModel.inlineDraftIsPinned ? Constants.VisualStyle.warn.opacity(0.35) : Constants.VisualStyle.border,
+                                    inlineSession.isPinned ? Constants.VisualStyle.warn.opacity(0.35) : Constants.VisualStyle.border,
                                     lineWidth: Constants.Layout.hairline
                                 )
                         )
@@ -1617,7 +1643,7 @@ private struct PreviewPane: View {
 
             // Inline Editable Title & Tags
             VStack(alignment: .leading, spacing: 8) {
-                TextField("输入标题（留空自动取首行）…", text: $viewModel.inlineDraftTitle)
+                TextField("输入标题（留空自动取首行）…", text: $inlineSession.title)
                     .textFieldStyle(.plain)
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(Constants.VisualStyle.text)
@@ -1626,12 +1652,12 @@ private struct PreviewPane: View {
                     Image(systemName: "tag")
                         .font(.icon(.small))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
-                    TextField("标签（逗号分隔，单标签不超过 10 字）", text: $viewModel.inlineDraftTagsText)
+                    TextField("标签（逗号分隔，单标签不超过 10 字）", text: $inlineSession.tagsText)
                         .textFieldStyle(.plain)
                         .font(.ui(.caption))
                         .foregroundStyle(Constants.VisualStyle.textSecondary)
                     Spacer()
-                    Text("\(viewModel.inlineDraftContent.count) 字")
+                    Text("\(inlineSession.content.count) 字")
                         .font(.ui(.caption, mono: true))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
                 }
@@ -1645,7 +1671,7 @@ private struct PreviewPane: View {
                 .frame(height: Constants.Layout.hairline)
 
             // Inline Editable Content Area
-            TextEditor(text: $viewModel.inlineDraftContent)
+            TextEditor(text: $inlineSession.content)
                 .font(.system(size: 13.5))
                 .foregroundStyle(Constants.VisualStyle.text)
                 .lineSpacing(4)
@@ -1668,7 +1694,7 @@ private struct PreviewPane: View {
 
     @ViewBuilder
     private func autoSaveStatusView(for entry: Entry, isDirty: Bool) -> some View {
-        switch viewModel.inlineAutoSaveState {
+        switch inlineSession.saveState {
         case .saving:
             HStack(spacing: 4) {
                 Circle()

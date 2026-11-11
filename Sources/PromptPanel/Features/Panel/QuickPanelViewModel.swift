@@ -6,7 +6,6 @@ import Foundation
 final class QuickPanelViewModel: ObservableObject {
     nonisolated static let allProjectsScopeId = EntrySearchService.allProjectsScopeId
     nonisolated static let allProjectsScopeName = "全部内容"
-    nonisolated static let keyboardHoverLockCooldown: TimeInterval = 0.30
     nonisolated private static let transientStatusDuration: TimeInterval = 2.8
 
     enum SelectionDirection {
@@ -129,17 +128,24 @@ final class QuickPanelViewModel: ObservableObject {
             if isPreviewPresented {
                 isPreviewPresented = false
             }
-            lockHoverSelectionForKeyboardInput()
+            if isScopeDropdownOpen {
+                isScopeDropdownOpen = false
+            }
             scheduleEntriesRefresh(delayMs: Constants.panelSearchDebounceMs, reason: .scopeChanged)
         }
     }
     @Published var activeKindFilter: KindFilter = .all {
         didSet {
             guard !isSuppressingFilterDidSet, activeKindFilter != oldValue else { return }
-            entries = Self.filterEntries(unfilteredEntries, by: activeKindFilter)
-            selectedIndex = 0
-            lastSelectionScrollToken += 1
-            if entries.isEmpty {
+            let filtered = Self.filterEntries(unfilteredEntries, by: activeKindFilter)
+            if entries != filtered {
+                entries = filtered
+            }
+            if selectedIndex != 0 {
+                selectedIndex = 0
+            }
+            scrollSelectionRevision += 1
+            if entries.isEmpty, isPreviewPresented {
                 isPreviewPresented = false
             }
         }
@@ -151,7 +157,7 @@ final class QuickPanelViewModel: ObservableObject {
     @Published private(set) var isShowingGlobalFallback: Bool = false
     @Published var currentProjectId: String = ""
     @Published var selectedIndex: Int = 0
-    @Published private(set) var lastSelectionScrollToken: Int = 0
+    @Published private(set) var scrollSelectionRevision: Int = 0
     @Published var focusToken: Int = 0
     @Published var statusMessage: String?
     @Published private(set) var statusTone: StatusTone = .info
@@ -160,7 +166,6 @@ final class QuickPanelViewModel: ObservableObject {
     @Published var isScopeDropdownOpen: Bool = false
     @Published private(set) var hasClipboardText: Bool = false
     private(set) var isExecutionReady: Bool = false
-    private(set) var suppressHoverSelectionUntilMouseMoves: Bool = false
     var clipboardTextProvider: () -> String? = {
         NSPasteboard.general.string(forType: .string)
     }
@@ -182,7 +187,6 @@ final class QuickPanelViewModel: ObservableObject {
     private var pendingSearchWorkItem: DispatchWorkItem?
     private var transientStatusResetWorkItem: DispatchWorkItem?
     private var transientStatus: (message: String, tone: StatusTone, expiresAt: Date)?
-    private var keyboardNavigationLockUntil: Date = .distantPast
     private var searchGeneration: Int = 0
     private(set) var isScopeSearchInFlight: Bool = false
     private var deferredExecutionRequest: (target: DeferredExecutionTarget, force: Bool, triggerSource: Constants.ExecutionTrigger)?
@@ -295,13 +299,19 @@ final class QuickPanelViewModel: ObservableObject {
             activeKindFilter = .all
             isSuppressingFilterDidSet = false
         }
-        isPreviewPresented = false
-        isScopeDropdownOpen = false
-        suppressHoverSelectionUntilMouseMoves = false
-        keyboardNavigationLockUntil = .distantPast
-        selectedIndex = 0
-        lastSelectionScrollToken += 1
-        currentProjectId = appState.effectiveProjectId
+        if isPreviewPresented {
+            isPreviewPresented = false
+        }
+        if isScopeDropdownOpen {
+            isScopeDropdownOpen = false
+        }
+        if selectedIndex != 0 {
+            selectedIndex = 0
+        }
+        scrollSelectionRevision += 1
+        if currentProjectId != appState.effectiveProjectId {
+            currentProjectId = appState.effectiveProjectId
+        }
         isExecutionReady = false
         deferredExecutionRequest = nil
         focusToken += 1
@@ -345,8 +355,12 @@ final class QuickPanelViewModel: ObservableObject {
     }
 
     func closePanel() {
-        isPreviewPresented = false
-        isScopeDropdownOpen = false
+        if isPreviewPresented {
+            isPreviewPresented = false
+        }
+        if isScopeDropdownOpen {
+            isScopeDropdownOpen = false
+        }
         deferredExecutionRequest = nil
         onClosePanel()
     }
@@ -399,45 +413,22 @@ final class QuickPanelViewModel: ObservableObject {
             return
         }
 
-        lockHoverSelectionForKeyboardInput()
-
         switch direction {
         case .up:
             selectedIndex = max(0, selectedIndex - 1)
         case .down:
             selectedIndex = min(entries.count - 1, selectedIndex + 1)
         }
-        lastSelectionScrollToken += 1
+        scrollSelectionRevision += 1
     }
 
     func selectEntry(at index: Int) {
         guard entries.indices.contains(index) else {
             return
         }
-        selectedIndex = index
-    }
-
-    func notifyPointerMoved() {
-        suppressHoverSelectionUntilMouseMoves = false
-        keyboardNavigationLockUntil = .distantPast
-    }
-
-    func selectEntryByHover(at index: Int) {
-        if Date() >= keyboardNavigationLockUntil {
-            suppressHoverSelectionUntilMouseMoves = false
+        if selectedIndex != index {
+            selectedIndex = index
         }
-        guard !suppressHoverSelectionUntilMouseMoves else {
-            return
-        }
-        guard entries.indices.contains(index), selectedIndex != index else {
-            return
-        }
-        selectedIndex = index
-    }
-
-    private func lockHoverSelectionForKeyboardInput() {
-        suppressHoverSelectionUntilMouseMoves = true
-        keyboardNavigationLockUntil = Date().addingTimeInterval(Self.keyboardHoverLockCooldown)
     }
 
     func executeSelection(
@@ -513,19 +504,29 @@ final class QuickPanelViewModel: ObservableObject {
         activateProject(scopes[nextIndex])
     }
 
+    func setAllProjectsScope() {
+        guard currentProjectId != Self.allProjectsScopeId else {
+            return
+        }
+        if isPreviewPresented {
+            isPreviewPresented = false
+        }
+        currentProjectId = Self.allProjectsScopeId
+        scheduleEntriesRefresh(delayMs: 0, reason: .scopeChanged)
+    }
+
     func activateProject(_ id: String) {
         guard !id.isEmpty, currentProjectId != id else {
             return
         }
 
-        if isPreviewPresented {
-            isPreviewPresented = false
+        if id == Self.allProjectsScopeId {
+            setAllProjectsScope()
+            return
         }
 
-        if id == Self.allProjectsScopeId {
-            currentProjectId = Self.allProjectsScopeId
-            scheduleEntriesRefresh(delayMs: 0, reason: .scopeChanged)
-            return
+        if isPreviewPresented {
+            isPreviewPresented = false
         }
 
         do {
@@ -845,17 +846,23 @@ final class QuickPanelViewModel: ObservableObject {
         let searchService = self.searchService
         let searchQueue = self.searchQueue
 
-        if effectiveCurrentProjectId != Self.allProjectsScopeId {
+        if effectiveCurrentProjectId != Self.allProjectsScopeId,
+           appState.currentProjectId != effectiveCurrentProjectId {
             appState.currentProjectId = effectiveCurrentProjectId
         }
         if reason == .scopeChanged {
             isScopeSearchInFlight = true
             deferredExecutionRequest = nil
-            selectedIndex = 0
+            if selectedIndex != 0 {
+                selectedIndex = 0
+            }
         }
         // Keep existing entries visible while the background query runs so the
         // ScrollView/LazyVStack is never torn down and recreated on keystrokes.
-        isLoadingEntries = entries.isEmpty
+        let shouldShowLoading = entries.isEmpty
+        if isLoadingEntries != shouldShowLoading {
+            isLoadingEntries = shouldShowLoading
+        }
         searchGeneration += 1
         let generation = searchGeneration
 
@@ -889,22 +896,37 @@ final class QuickPanelViewModel: ObservableObject {
 
                     switch result {
                     case .success(let (sortedEntries, isGlobalFallback)):
-                        self.isLoadingEntries = false
-                        self.isShowingGlobalFallback = isGlobalFallback
+                        if self.isLoadingEntries {
+                            self.isLoadingEntries = false
+                        }
+                        if self.isShowingGlobalFallback != isGlobalFallback {
+                            self.isShowingGlobalFallback = isGlobalFallback
+                        }
                         let previousSelectionId = self.selectedEntry?.id
-                        self.unfilteredEntries = sortedEntries
+                        if self.unfilteredEntries != sortedEntries {
+                            self.unfilteredEntries = sortedEntries
+                        }
                         let visibleEntries = Self.filterEntries(sortedEntries, by: self.activeKindFilter)
-                        self.entries = visibleEntries
+                        if self.entries != visibleEntries {
+                            self.entries = visibleEntries
+                        }
                         if visibleEntries.isEmpty || reason == .scopeChanged {
-                            self.selectedIndex = 0
-                            self.lastSelectionScrollToken += 1
+                            if self.selectedIndex != 0 {
+                                self.selectedIndex = 0
+                            }
+                            self.scrollSelectionRevision += 1
                         } else if let previousSelectionId,
                                   let index = visibleEntries.firstIndex(where: { $0.id == previousSelectionId }) {
-                            self.selectedIndex = index
+                            if self.selectedIndex != index {
+                                self.selectedIndex = index
+                            }
                         } else {
-                            self.selectedIndex = min(self.selectedIndex, visibleEntries.count - 1)
+                            let clamped = min(self.selectedIndex, visibleEntries.count - 1)
+                            if self.selectedIndex != clamped {
+                                self.selectedIndex = clamped
+                            }
                         }
-                        if visibleEntries.isEmpty {
+                        if visibleEntries.isEmpty, self.isPreviewPresented {
                             self.isPreviewPresented = false
                         }
                         self.applyBaseStatus()
@@ -970,20 +992,33 @@ final class QuickPanelViewModel: ObservableObject {
 
     private func applyBaseStatus() {
         if let transientStatus, Date() < transientStatus.expiresAt {
-            statusMessage = transientStatus.message
-            statusTone = transientStatus.tone
+            if statusMessage != transientStatus.message {
+                statusMessage = transientStatus.message
+            }
+            if statusTone != transientStatus.tone {
+                statusTone = transientStatus.tone
+            }
             return
         }
         transientStatus = nil
 
         guard permissionService.isAccessibilityGranted == false else {
-            statusMessage = nil
-            statusTone = .info
+            if statusMessage != nil {
+                statusMessage = nil
+            }
+            if statusTone != .info {
+                statusTone = .info
+            }
             return
         }
 
-        statusMessage = "未授权辅助功能，当前仅复制到剪贴板"
-        statusTone = .warning
+        let warningMessage = "未授权辅助功能，当前仅复制到剪贴板"
+        if statusMessage != warningMessage {
+            statusMessage = warningMessage
+        }
+        if statusTone != .warning {
+            statusTone = .warning
+        }
     }
 
     private func setStatus(_ message: String, tone: StatusTone) {

@@ -183,7 +183,6 @@ final class PanelService {
         panel.titlebarAppearsTransparent = true
         panel.isMovableByWindowBackground = true
         panel.becomesKeyOnlyIfNeeded = false
-        panel.acceptsMouseMovedEvents = true
         panel.animationBehavior = .none
         panel.isReleasedWhenClosed = false
         panel.backgroundColor = .clear

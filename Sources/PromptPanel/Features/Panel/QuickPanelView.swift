@@ -2,60 +2,13 @@ import AppKit
 import Foundation
 import SwiftUI
 
-@MainActor
-private final class PanelInteractionCoordinator: ObservableObject {
-    @Published var isHoveringScopePill = false
-    @Published var isHoveringScopeDropdown = false
-    @Published var hoveredScopeItemId: String?
-    @Published var hoveredKindFilter: QuickPanelViewModel.KindFilter?
-    var hasPointerMovedInSession = false
-
-    var scopeOpenWorkItem: DispatchWorkItem?
-    var scopeCloseWorkItem: DispatchWorkItem?
-    var scopeSelectWorkItem: DispatchWorkItem?
-    var filterDwellWorkItem: DispatchWorkItem?
-
-    deinit {
-        scopeOpenWorkItem?.cancel()
-        scopeCloseWorkItem?.cancel()
-        scopeSelectWorkItem?.cancel()
-        filterDwellWorkItem?.cancel()
-    }
-
-    func resetScopeDropdownHoverState() {
-        scopeOpenWorkItem?.cancel()
-        scopeOpenWorkItem = nil
-        scopeCloseWorkItem?.cancel()
-        scopeCloseWorkItem = nil
-        scopeSelectWorkItem?.cancel()
-        scopeSelectWorkItem = nil
-        isHoveringScopeDropdown = false
-        hoveredScopeItemId = nil
-    }
-
-    func cancelAllTimers() {
-        resetScopeDropdownHoverState()
-        filterDwellWorkItem?.cancel()
-        filterDwellWorkItem = nil
-        isHoveringScopePill = false
-        hoveredKindFilter = nil
-    }
-}
-
-@MainActor
-private final class PanelRowHoverBox: ObservableObject {
-    @Published var isHovered = false
-}
-
 struct QuickPanelView: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject var viewModel: QuickPanelViewModel
-    @StateObject private var interaction = PanelInteractionCoordinator()
 
-    private static let scopeHoverOpenDelayMs = 45
-    private static let scopeHoverCloseDelayMs = 170
-    private static let scopeHoverSelectDelayMs = 55
-    private static let filterHoverDwellDelayMs = 65
+    private var isContentInteractionBlocked: Bool {
+        viewModel.isScopeDropdownOpen || viewModel.isPreviewPresented
+    }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -63,46 +16,57 @@ struct QuickPanelView: View {
                 header
                     .overlay(dividerBottom, alignment: .bottom)
 
-                if viewModel.quickCaptureDraft == nil {
-                    kindFilterStrip
-                        .overlay(dividerBottom, alignment: .bottom)
-                }
+                ZStack(alignment: .topLeading) {
+                    VStack(spacing: 0) {
+                        if viewModel.quickCaptureDraft == nil {
+                            kindFilterStrip
+                                .overlay(dividerBottom, alignment: .bottom)
+                                .allowsHitTesting(!isContentInteractionBlocked)
+                        }
 
-                if let statusMessage = viewModel.statusMessage {
-                    statusBanner(statusMessage, tone: viewModel.statusTone)
-                        .overlay(dividerBottom, alignment: .bottom)
-                }
+                        if let statusMessage = viewModel.statusMessage {
+                            statusBanner(statusMessage, tone: viewModel.statusTone)
+                                .overlay(dividerBottom, alignment: .bottom)
+                        }
 
-                ZStack {
-                    if let draft = viewModel.quickCaptureDraft {
-                        quickCapturePreviewBody(draft)
-                    } else {
-                        resultsList
+                        ZStack {
+                            if let draft = viewModel.quickCaptureDraft {
+                                quickCapturePreviewBody(draft)
+                            } else {
+                                resultsList
+                                    .allowsHitTesting(!isContentInteractionBlocked)
+                            }
+
+                            if viewModel.isPreviewPresented,
+                               viewModel.quickCaptureDraft == nil,
+                               let previewEntry = viewModel.selectedEntry {
+                                entryPreviewOverlay(previewEntry)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                        if appState.panelShowFooter {
+                            footerHints
+                                .overlay(dividerTop, alignment: .top)
+                        }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    if viewModel.isPreviewPresented,
-                       viewModel.quickCaptureDraft == nil,
-                       let previewEntry = viewModel.selectedEntry {
-                        entryPreviewOverlay(previewEntry)
+                    if viewModel.isScopeDropdownOpen {
+                        Color.black.opacity(0.001)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                closeScopeDropdownImmediately()
+                            }
+                            .zIndex(15)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                if appState.panelShowFooter {
-                    footerHints
-                        .overlay(dividerTop, alignment: .top)
-                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if viewModel.isScopeDropdownOpen {
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        closeScopeDropdownImmediately()
-                    }
-                    .zIndex(15)
-
                 scopeDropdownCard
                     .padding(.leading, Design.Space.lg)
                     .padding(.top, 38)
@@ -110,29 +74,9 @@ struct QuickPanelView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(
-            PanelPointerActivityCatcher {
-                if !interaction.hasPointerMovedInSession {
-                    interaction.hasPointerMovedInSession = true
-                }
-                viewModel.notifyPointerMoved()
-            }
-        )
         .background(panelSurface)
         .preferredColorScheme(appState.appTheme.preferredColorScheme)
         .transaction { $0.animation = nil }
-        .onChange(of: viewModel.focusToken) { _, _ in
-            interaction.hasPointerMovedInSession = false
-            interaction.cancelAllTimers()
-        }
-        .onChange(of: viewModel.isScopeDropdownOpen) { _, isOpen in
-            if !isOpen {
-                interaction.resetScopeDropdownHoverState()
-            }
-        }
-        .onDisappear {
-            interaction.cancelAllTimers()
-        }
     }
 
     private var dividerBottom: some View {
@@ -202,6 +146,15 @@ struct QuickPanelView: View {
         }
         .padding(.horizontal, Design.Space.lg)
         .padding(.vertical, Design.Space.sm)
+        .background(
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if viewModel.isScopeDropdownOpen {
+                        closeScopeDropdownImmediately()
+                    }
+                }
+        )
     }
 
     @ViewBuilder
@@ -371,7 +324,7 @@ struct QuickPanelView: View {
         return currentProject?.effectiveIconName ?? "folder.fill"
     }
 
-    // MARK: - Non-Focus-Stealing Scope Switcher (Hover-to-Open + Hover-to-Select + Scroll-to-Cycle)
+    // MARK: - Scope Switcher (Click-to-Open + Click-to-Select + Tab-to-Cycle)
 
     private var projectScopePill: some View {
         Button {
@@ -396,7 +349,7 @@ struct QuickPanelView: View {
             .background(
                 RoundedRectangle(cornerRadius: Design.pillCornerRadius, style: .continuous)
                     .fill(
-                        viewModel.isScopeDropdownOpen || interaction.isHoveringScopePill
+                        viewModel.isScopeDropdownOpen
                             ? Constants.VisualStyle.surfaceHover
                             : Constants.VisualStyle.tintSubtle
                     )
@@ -408,17 +361,12 @@ struct QuickPanelView: View {
                         lineWidth: Constants.Layout.hairline
                     )
             )
+            .hoverHighlight(cornerRadius: Design.pillCornerRadius, isEnabled: !viewModel.isScopeDropdownOpen)
             .roundedHitTarget(cornerRadius: Design.pillCornerRadius)
         }
         .buttonStyle(.plain)
         .fixedSize()
-        .onVerticalScrollStep { step in
-            viewModel.cycleScope(step)
-        }
-        .onAlwaysHover { hovering in
-            handleScopePillHoverChanged(hovering)
-        }
-        .help("悬停展开切换 · 滚轮或 Tab 快速切换分组")
+        .help("点击切换分组 · Tab 键快速轮换")
     }
 
     private var scopeDropdownCard: some View {
@@ -426,53 +374,69 @@ struct QuickPanelView: View {
         let categoryProjects = viewModel.projects.filter { $0.groupKind == .category }
         let activeProjects = viewModel.projects.filter { $0.groupKind == .project }
 
-        return ScrollView {
-            VStack(alignment: .leading, spacing: 2) {
-                scopeDropdownItem(
-                    id: QuickPanelViewModel.allProjectsScopeId,
-                    name: QuickPanelViewModel.allProjectsScopeName,
-                    iconName: "square.stack.3d.up.fill"
-                )
+        return VStack(alignment: .leading, spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    scopeDropdownItem(
+                        id: QuickPanelViewModel.allProjectsScopeId,
+                        name: QuickPanelViewModel.allProjectsScopeName,
+                        iconName: "square.stack.3d.up.fill"
+                    )
 
-                if !inboxProjects.isEmpty {
-                    scopeDropdownSectionHeader("速记与待办")
-                    ForEach(inboxProjects) { project in
-                        scopeDropdownItem(
-                            id: project.id,
-                            name: project.name,
-                            iconName: project.effectiveIconName
-                        )
+                    if !inboxProjects.isEmpty {
+                        scopeDropdownSectionHeader("速记与待办")
+                        ForEach(inboxProjects) { project in
+                            scopeDropdownItem(
+                                id: project.id,
+                                name: project.name,
+                                iconName: project.effectiveIconName
+                            )
+                        }
+                    }
+
+                    if !categoryProjects.isEmpty {
+                        scopeDropdownSectionHeader("常用类型")
+                        ForEach(categoryProjects) { project in
+                            scopeDropdownItem(
+                                id: project.id,
+                                name: project.name,
+                                iconName: project.effectiveIconName
+                            )
+                        }
+                    }
+
+                    if !activeProjects.isEmpty {
+                        scopeDropdownSectionHeader("项目")
+                        ForEach(activeProjects) { project in
+                            scopeDropdownItem(
+                                id: project.id,
+                                name: project.name,
+                                iconName: project.effectiveIconName
+                            )
+                        }
                     }
                 }
-
-                if !categoryProjects.isEmpty {
-                    scopeDropdownSectionHeader("常用类型")
-                    ForEach(categoryProjects) { project in
-                        scopeDropdownItem(
-                            id: project.id,
-                            name: project.name,
-                            iconName: project.effectiveIconName
-                        )
-                    }
-                }
-
-                if !activeProjects.isEmpty {
-                    scopeDropdownSectionHeader("项目")
-                    ForEach(activeProjects) { project in
-                        scopeDropdownItem(
-                            id: project.id,
-                            name: project.name,
-                            iconName: project.effectiveIconName
-                        )
-                    }
-                }
+                .padding(Design.Space.sm)
             }
-            .padding(Design.Space.sm)
+            .scrollIndicators(.hidden)
+            .frame(maxHeight: 332)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Rectangle()
+                .fill(Constants.VisualStyle.divider)
+                .frame(height: Constants.Layout.hairline)
+
+            HStack(spacing: 4) {
+                Image(systemName: "hand.point.up.left")
+                    .font(.icon(.micro))
+                Text("点击切换分组 · Tab 键快速轮换")
+                    .font(.ui(.micro))
+            }
+            .foregroundStyle(Constants.VisualStyle.textTertiary)
+            .padding(.horizontal, Design.Space.md)
+            .padding(.vertical, 6)
         }
-        .scrollIndicators(.hidden)
         .frame(width: 224)
-        .frame(maxHeight: 332)
-        .fixedSize(horizontal: false, vertical: true)
         .background(
             RoundedRectangle(cornerRadius: Design.cardCornerRadius, style: .continuous)
                 .fill(Constants.VisualStyle.surfaceRaised)
@@ -482,9 +446,6 @@ struct QuickPanelView: View {
                 .strokeBorder(Constants.VisualStyle.borderStrong, lineWidth: Constants.Layout.hairline)
         )
         .shadow(color: Color.black.opacity(0.26), radius: 16, x: 0, y: 8)
-        .onAlwaysHover { hovering in
-            handleScopeDropdownHoverChanged(hovering)
-        }
     }
 
     private func scopeDropdownSectionHeader(_ title: String) -> some View {
@@ -497,149 +458,22 @@ struct QuickPanelView: View {
     }
 
     private func scopeDropdownItem(id: String, name: String, iconName: String) -> some View {
-        let isActive = viewModel.currentProjectId == id
-        let isHovered = interaction.hoveredScopeItemId == id
-
-        return Button {
-            interaction.scopeSelectWorkItem?.cancel()
-            interaction.scopeSelectWorkItem = nil
+        ScopeDropdownItemRow(
+            name: name,
+            iconName: iconName,
+            isActive: viewModel.currentProjectId == id
+        ) {
             viewModel.activateScope(id)
             closeScopeDropdownImmediately()
-        } label: {
-            HStack(spacing: Design.Space.sm) {
-                Image(systemName: iconName)
-                    .font(.icon(.small))
-                    .foregroundStyle(isActive ? Constants.VisualStyle.accent : Constants.VisualStyle.textSecondary)
-                    .frame(width: 15, alignment: .center)
-
-                Text(name)
-                    .font(.ui(.body, weight: isActive ? .semibold : .regular))
-                    .foregroundStyle(isActive ? Constants.VisualStyle.accent : Constants.VisualStyle.text)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-
-                Spacer(minLength: 4)
-
-                if isActive {
-                    Image(systemName: "checkmark")
-                        .font(.icon(.micro, weight: .bold))
-                        .foregroundStyle(Constants.VisualStyle.accent)
-                }
-            }
-            .padding(.horizontal, Design.Space.sm)
-            .frame(height: 26)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(
-                        isActive
-                            ? Constants.VisualStyle.accentDim
-                            : (isHovered ? Constants.VisualStyle.surfaceHover : Color.clear)
-                    )
-            )
-            .roundedHitTarget(cornerRadius: 6)
-        }
-        .buttonStyle(.plain)
-        .onAlwaysHover { hovering in
-            handleScopeItemHover(id: id, hovering: hovering)
         }
     }
 
     private func toggleScopeDropdownImmediately() {
-        if viewModel.isScopeDropdownOpen {
-            closeScopeDropdownImmediately()
-        } else {
-            interaction.scopeOpenWorkItem?.cancel()
-            interaction.scopeOpenWorkItem = nil
-            interaction.scopeCloseWorkItem?.cancel()
-            interaction.scopeCloseWorkItem = nil
-            interaction.scopeSelectWorkItem?.cancel()
-            interaction.scopeSelectWorkItem = nil
-            viewModel.isScopeDropdownOpen = true
-        }
+        viewModel.isScopeDropdownOpen.toggle()
     }
 
     private func closeScopeDropdownImmediately() {
-        interaction.resetScopeDropdownHoverState()
         viewModel.isScopeDropdownOpen = false
-    }
-
-    private func handleScopePillHoverChanged(_ hovering: Bool) {
-        interaction.isHoveringScopePill = hovering
-        if hovering {
-            interaction.scopeCloseWorkItem?.cancel()
-            interaction.scopeCloseWorkItem = nil
-            guard !viewModel.isScopeDropdownOpen else { return }
-            interaction.scopeOpenWorkItem?.cancel()
-            let interaction = self.interaction
-            let viewModel = self.viewModel
-            let workItem = DispatchWorkItem {
-                guard interaction.isHoveringScopePill else { return }
-                viewModel.isScopeDropdownOpen = true
-            }
-            interaction.scopeOpenWorkItem = workItem
-            DispatchQueue.main.asyncAfter(
-                deadline: .now() + .milliseconds(Self.scopeHoverOpenDelayMs),
-                execute: workItem
-            )
-        } else {
-            interaction.scopeOpenWorkItem?.cancel()
-            interaction.scopeOpenWorkItem = nil
-            scheduleScopeDropdownCloseIfNeeded()
-        }
-    }
-
-    private func handleScopeDropdownHoverChanged(_ hovering: Bool) {
-        interaction.isHoveringScopeDropdown = hovering
-        if hovering {
-            interaction.scopeCloseWorkItem?.cancel()
-            interaction.scopeCloseWorkItem = nil
-        } else {
-            interaction.hoveredScopeItemId = nil
-            interaction.scopeSelectWorkItem?.cancel()
-            interaction.scopeSelectWorkItem = nil
-            scheduleScopeDropdownCloseIfNeeded()
-        }
-    }
-
-    private func scheduleScopeDropdownCloseIfNeeded() {
-        guard !interaction.isHoveringScopePill, !interaction.isHoveringScopeDropdown, viewModel.isScopeDropdownOpen else {
-            return
-        }
-        interaction.scopeCloseWorkItem?.cancel()
-        let interaction = self.interaction
-        let viewModel = self.viewModel
-        let workItem = DispatchWorkItem {
-            guard !interaction.isHoveringScopePill, !interaction.isHoveringScopeDropdown else { return }
-            interaction.hoveredScopeItemId = nil
-            viewModel.isScopeDropdownOpen = false
-        }
-        interaction.scopeCloseWorkItem = workItem
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + .milliseconds(Self.scopeHoverCloseDelayMs),
-            execute: workItem
-        )
-    }
-
-    private func handleScopeItemHover(id: String, hovering: Bool) {
-        if hovering {
-            interaction.hoveredScopeItemId = id
-            interaction.scopeSelectWorkItem?.cancel()
-            let interaction = self.interaction
-            let viewModel = self.viewModel
-            let workItem = DispatchWorkItem {
-                guard interaction.hoveredScopeItemId == id, viewModel.isScopeDropdownOpen else { return }
-                viewModel.activateScope(id)
-            }
-            interaction.scopeSelectWorkItem = workItem
-            DispatchQueue.main.asyncAfter(
-                deadline: .now() + .milliseconds(Self.scopeHoverSelectDelayMs),
-                execute: workItem
-            )
-        } else if interaction.hoveredScopeItemId == id {
-            interaction.hoveredScopeItemId = nil
-            interaction.scopeSelectWorkItem?.cancel()
-            interaction.scopeSelectWorkItem = nil
-        }
     }
 
     // MARK: - Kind Filter Bar
@@ -647,7 +481,15 @@ struct QuickPanelView: View {
     private var kindFilterStrip: some View {
         HStack(spacing: Design.Space.xs) {
             ForEach(QuickPanelViewModel.KindFilter.barItems) { filter in
-                kindFilterChip(filter)
+                KindFilterChipButton(
+                    filter: filter,
+                    isActive: viewModel.activeKindFilter == filter,
+                    isHoverEnabled: !isContentInteractionBlocked,
+                    count: viewModel.countForFilter(filter)
+                ) {
+                    guard !isContentInteractionBlocked else { return }
+                    viewModel.activeKindFilter = filter
+                }
             }
 
             Spacer(minLength: 0)
@@ -658,74 +500,6 @@ struct QuickPanelView: View {
         }
         .padding(.horizontal, Design.Space.lg)
         .padding(.vertical, 5)
-    }
-
-    private func kindFilterChip(_ filter: QuickPanelViewModel.KindFilter) -> some View {
-        let isActive = viewModel.activeKindFilter == filter
-        let isHovered = interaction.hoveredKindFilter == filter
-        let count = viewModel.countForFilter(filter)
-
-        return Button {
-            interaction.filterDwellWorkItem?.cancel()
-            interaction.filterDwellWorkItem = nil
-            viewModel.activeKindFilter = filter
-        } label: {
-            HStack(spacing: 4) {
-                if let symbol = filter.symbolName {
-                    Image(systemName: symbol)
-                        .font(.icon(.micro))
-                }
-                Text(filter.displayName)
-                    .font(.ui(.caption, weight: isActive ? .semibold : .medium))
-                if count > 0, filter != .all {
-                    Text("\(count)")
-                        .font(.ui(.micro, weight: .medium, mono: true))
-                        .opacity(0.75)
-                }
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 22)
-            .foregroundStyle(
-                isActive
-                    ? Constants.VisualStyle.accent
-                    : (isHovered ? Constants.VisualStyle.text : Constants.VisualStyle.textTertiary)
-            )
-            .background(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(
-                        isActive
-                            ? Constants.VisualStyle.accentDim
-                            : (isHovered ? Constants.VisualStyle.surfaceHover : Color.clear)
-                    )
-            )
-            .roundedHitTarget(cornerRadius: 5)
-        }
-        .buttonStyle(.plain)
-        .onAlwaysHover { hovering in
-            handleKindFilterHover(filter: filter, hovering: hovering)
-        }
-    }
-
-    private func handleKindFilterHover(filter: QuickPanelViewModel.KindFilter, hovering: Bool) {
-        if hovering {
-            interaction.hoveredKindFilter = filter
-            interaction.filterDwellWorkItem?.cancel()
-            let interaction = self.interaction
-            let viewModel = self.viewModel
-            let workItem = DispatchWorkItem {
-                guard interaction.hoveredKindFilter == filter else { return }
-                viewModel.activeKindFilter = filter
-            }
-            interaction.filterDwellWorkItem = workItem
-            DispatchQueue.main.asyncAfter(
-                deadline: .now() + .milliseconds(Self.filterHoverDwellDelayMs),
-                execute: workItem
-            )
-        } else if interaction.hoveredKindFilter == filter {
-            interaction.hoveredKindFilter = nil
-            interaction.filterDwellWorkItem?.cancel()
-            interaction.filterDwellWorkItem = nil
-        }
     }
 
     // MARK: - Window Controls
@@ -933,7 +707,8 @@ struct QuickPanelView: View {
     /// nesting a GeometryReader inside a LazyVStack cell forces a second layout
     /// pass for every row on every scroll and every keystroke.
     private var resultsList: some View {
-        GeometryReader { listGeometry in
+        let hoverEnabled = !isContentInteractionBlocked
+        return GeometryReader { listGeometry in
             let rowWidth = max(listGeometry.size.width - Design.Space.xs * 2, 0)
             ScrollViewReader { proxy in
                 ScrollView {
@@ -951,27 +726,29 @@ struct QuickPanelView: View {
                                     entry: entry,
                                     index: index,
                                     isSelected: index == viewModel.selectedIndex,
+                                    isHoverEnabled: hoverEnabled,
                                     showNumber: showsShortcutNumbers,
                                     scopeBadgeText: scopeBadgeText(for: entry),
                                     isCompact: appState.panelCompactRows,
                                     availableWidth: rowWidth,
-                                    onHoverSelect: {
-                                        guard interaction.hasPointerMovedInSession else { return }
-                                        viewModel.selectEntryByHover(at: index)
-                                    },
                                     onTap: {
+                                        guard !isContentInteractionBlocked else { return }
                                         viewModel.executeEntry(at: index, triggerSource: .pointerClick)
                                     },
                                     onCopy: {
+                                        guard !isContentInteractionBlocked else { return }
                                         viewModel.copyEntry(at: index)
                                     },
                                     onPreview: {
+                                        guard !isContentInteractionBlocked else { return }
                                         viewModel.openPreview(at: index)
                                     },
                                     onToggleComplete: {
+                                        guard !isContentInteractionBlocked else { return }
                                         viewModel.toggleEntryCompleted(entry)
                                     },
                                     onTogglePin: {
+                                        guard !isContentInteractionBlocked else { return }
                                         viewModel.toggleEntryPinned(entry)
                                     }
                                 )
@@ -983,9 +760,13 @@ struct QuickPanelView: View {
                     .padding(.vertical, Design.Space.xs)
                 }
                 .scrollIndicators(.hidden)
-                .onChange(of: viewModel.lastSelectionScrollToken) { _, _ in
+                .onChange(of: viewModel.scrollSelectionRevision) { _, _ in
                     guard let selectedEntry = viewModel.selectedEntry else { return }
-                    proxy.scrollTo(selectedEntry.id, anchor: .center)
+                    if viewModel.selectedIndex == 0 {
+                        proxy.scrollTo(selectedEntry.id, anchor: .top)
+                    } else {
+                        proxy.scrollTo(selectedEntry.id)
+                    }
                 }
             }
         }
@@ -1486,33 +1267,42 @@ private struct PanelRow: View {
     let entry: Entry
     let index: Int
     let isSelected: Bool
+    let isHoverEnabled: Bool
     let showNumber: Bool
     let scopeBadgeText: String?
     let isCompact: Bool
     /// Supplied by the list rather than measured per row; see `resultsList`.
     let availableWidth: CGFloat
-    let onHoverSelect: () -> Void
     let onTap: () -> Void
     let onCopy: () -> Void
     let onPreview: () -> Void
     let onToggleComplete: () -> Void
     let onTogglePin: () -> Void
 
-    @StateObject private var hoverBox = PanelRowHoverBox()
+    private var _isHovered = SwiftUI.State(initialValue: false)
+
+    private var isHovered: Bool {
+        get { _isHovered.wrappedValue }
+        nonmutating set { _isHovered.wrappedValue = newValue }
+    }
 
     private var isInteractiveTodo: Bool {
         entry.type == Constants.EntryType.todo.rawValue || entry.type == Constants.EntryType.note.rawValue
     }
 
+    private var effectiveHovered: Bool {
+        isHoverEnabled && isHovered
+    }
+
     private var showsQuickActions: Bool {
-        hoverBox.isHovered || isSelected
+        effectiveHovered || isSelected
     }
 
     var body: some View {
         let type = Constants.EntryType.resolve(entry.type)
         let level = Constants.EntryLevel.resolve(useCount: entry.useCount)
         let rowHeight = isCompact ? Constants.Layout.compactRowHeight : Constants.Layout.regularRowHeight
-        let metrics = RowMetrics(totalWidth: availableWidth, reservingQuickActions: showsQuickActions)
+        let metrics = RowMetrics(totalWidth: availableWidth)
 
         HStack(spacing: 0) {
             if isInteractiveTodo {
@@ -1564,17 +1354,15 @@ private struct PanelRow: View {
                     }
 
                     HStack(spacing: Design.Space.xs) {
-                        if !showsQuickActions || availableWidth >= 480 {
-                            Text("\(entry.useCount) 次")
-                                .font(.ui(.micro, weight: .medium, mono: true))
-                                .foregroundStyle(level.color)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(
-                                    RoundedRectangle(cornerRadius: Constants.Layout.badgeCornerRadius, style: .continuous)
-                                        .fill(level.fillColor)
-                                )
-                        }
+                        Text("\(entry.useCount) 次")
+                            .font(.ui(.micro, weight: .medium, mono: true))
+                            .foregroundStyle(level.color)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(
+                                RoundedRectangle(cornerRadius: Constants.Layout.badgeCornerRadius, style: .continuous)
+                                    .fill(level.fillColor)
+                            )
                         if let scopeBadgeText {
                             Text(scopeBadgeText)
                                 .font(.ui(.micro, weight: .medium))
@@ -1587,7 +1375,7 @@ private struct PanelRow: View {
                                         .fill(Constants.VisualStyle.tintSubtle)
                                 )
                         }
-                        if metrics.showsRecency, !showsQuickActions {
+                        if metrics.showsRecency {
                             Text(recencyLabel)
                                 .font(.ui(.micro, weight: .medium, mono: true))
                                 .foregroundStyle(isSelected ? Constants.VisualStyle.textSecondary : Constants.VisualStyle.textTertiary)
@@ -1597,38 +1385,13 @@ private struct PanelRow: View {
                     .fixedSize(horizontal: true, vertical: false)
                 }
                 .padding(.leading, isInteractiveTodo ? Design.Space.xs : Design.Space.sm)
-                .padding(.trailing, showsQuickActions ? Design.Space.xs : Design.Space.lg)
+                .padding(.trailing, Design.Space.lg)
                 .frame(maxWidth: .infinity)
                 .frame(height: rowHeight)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity)
-
-            if showsQuickActions {
-                HStack(spacing: 2) {
-                    rowQuickActionButton(
-                        systemImage: "doc.on.doc",
-                        tint: Constants.VisualStyle.textSecondary,
-                        help: "仅复制内容 (⌘C)",
-                        action: onCopy
-                    )
-                    rowQuickActionButton(
-                        systemImage: "eye",
-                        tint: Constants.VisualStyle.textSecondary,
-                        help: "预览全文 (⌘Y)",
-                        action: onPreview
-                    )
-                    rowQuickActionButton(
-                        systemImage: entry.isPinned ? "pin.fill" : "pin",
-                        tint: entry.isPinned ? Constants.VisualStyle.warn : Constants.VisualStyle.textTertiary,
-                        help: entry.isPinned ? "取消置顶" : "置顶词条",
-                        action: onTogglePin
-                    )
-                }
-                .padding(.trailing, Design.Space.sm)
-                .fixedSize()
-            }
         }
         .roundedHitTarget(cornerRadius: Design.rowCornerRadius)
         .overlay(alignment: .leading) {
@@ -1638,19 +1401,35 @@ private struct PanelRow: View {
                     .frame(width: 2.5, height: isCompact ? 14 : 16)
             }
         }
+        .overlay(alignment: .trailing) {
+            if showsQuickActions {
+                quickActionStrip
+                    .padding(.trailing, Design.Space.sm)
+            }
+        }
         .background(
             RoundedRectangle(cornerRadius: Design.rowCornerRadius, style: .continuous)
                 .fill(
                     isSelected
                         ? Constants.VisualStyle.tintMedium
-                        : (hoverBox.isHovered ? Constants.VisualStyle.surfaceHover : Color.clear)
+                        : (effectiveHovered ? Constants.VisualStyle.surfaceHover : Color.clear)
                 )
         )
         .contentShape(RoundedRectangle(cornerRadius: Design.rowCornerRadius, style: .continuous))
-        .onAlwaysHover { hovering in
-            hoverBox.isHovered = hovering
-            if hovering {
-                onHoverSelect()
+        .onHover { hovering in
+            guard isHoverEnabled else {
+                if isHovered {
+                    isHovered = false
+                }
+                return
+            }
+            if isHovered != hovering {
+                isHovered = hovering
+            }
+        }
+        .onChange(of: isHoverEnabled) { _, enabled in
+            if !enabled, isHovered {
+                isHovered = false
             }
         }
         .contextMenu {
@@ -1661,6 +1440,40 @@ private struct PanelRow: View {
             Button(entry.isCompleted ? "标记为未完成" : "标记为已完成") { onToggleComplete() }
             Button(entry.isPinned ? "取消置顶" : "置顶词条") { onTogglePin() }
         }
+    }
+
+    private var quickActionStrip: some View {
+        HStack(spacing: 2) {
+            rowQuickActionButton(
+                systemImage: "doc.on.doc",
+                tint: Constants.VisualStyle.textSecondary,
+                help: "仅复制内容 (⌘C)",
+                action: onCopy
+            )
+            rowQuickActionButton(
+                systemImage: "eye",
+                tint: Constants.VisualStyle.textSecondary,
+                help: "预览全文 (⌘Y)",
+                action: onPreview
+            )
+            rowQuickActionButton(
+                systemImage: entry.isPinned ? "pin.fill" : "pin",
+                tint: entry.isPinned ? Constants.VisualStyle.warn : Constants.VisualStyle.textTertiary,
+                help: entry.isPinned ? "取消置顶" : "置顶词条",
+                action: onTogglePin
+            )
+        }
+        .padding(.horizontal, 3)
+        .padding(.vertical, 2)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Constants.VisualStyle.surfaceRaised)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
+        )
+        .fixedSize()
     }
 
     private func rowQuickActionButton(
@@ -1700,17 +1513,15 @@ private struct PanelRow: View {
         }
     }
 
-    /// How a row spends the width it is given. A portrait panel is narrow by
-    /// design, so the secondary columns drop out in order of importance —
-    /// content preview first, then the recency label — instead of squeezing the
-    /// title down to an ellipsis.
+    /// How a row spends the width it is given. Kept strictly invariant with respect to
+    /// hover and selection state so crossing rows never triggers text re-measurement.
     private struct RowMetrics {
         let titleWidth: CGFloat?
         let showsPreview: Bool
         let showsRecency: Bool
 
-        init(totalWidth: CGFloat, reservingQuickActions: Bool) {
-            let effectiveWidth = reservingQuickActions ? max(totalWidth - 64, 0) : totalWidth
+        init(totalWidth: CGFloat) {
+            let effectiveWidth = max(totalWidth, 0)
             showsPreview = effectiveWidth >= 460
             showsRecency = effectiveWidth >= 400
             titleWidth = showsPreview ? min(max(effectiveWidth * 0.28, 145), 250) : nil
@@ -1739,98 +1550,130 @@ private struct PanelRow: View {
     }
 }
 
-// MARK: - Non-Focus-Stealing AppKit Pointer Monitor
+// MARK: - Lightweight Click Controls (Local Hover Feedback Only)
 
-/// Detects genuine pointer movement inside the panel window so keyboard `↑/↓`
-/// list scrolling never gets hijacked by a stationary mouse cursor.
-private struct PanelPointerActivityCatcher: NSViewRepresentable {
-    var onPointerMoved: () -> Void
+private struct ScopeDropdownItemRow: View {
+    let name: String
+    let iconName: String
+    let isActive: Bool
+    let action: () -> Void
 
-    func makeNSView(context: Context) -> PanelPointerActivityNSView {
-        let view = PanelPointerActivityNSView()
-        view.onPointerMoved = onPointerMoved
-        return view
+    private var _isHovered = SwiftUI.State(initialValue: false)
+
+    private var isHovered: Bool {
+        get { _isHovered.wrappedValue }
+        nonmutating set { _isHovered.wrappedValue = newValue }
     }
 
-    func updateNSView(_ nsView: PanelPointerActivityNSView, context: Context) {
-        nsView.onPointerMoved = onPointerMoved
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: Design.Space.sm) {
+                Image(systemName: iconName)
+                    .font(.icon(.small))
+                    .foregroundStyle(isActive ? Constants.VisualStyle.accent : Constants.VisualStyle.textSecondary)
+                    .frame(width: 15, alignment: .center)
+
+                Text(name)
+                    .font(.ui(.body, weight: isActive ? .semibold : .regular))
+                    .foregroundStyle(isActive ? Constants.VisualStyle.accent : Constants.VisualStyle.text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                Spacer(minLength: 4)
+
+                if isActive {
+                    Image(systemName: "checkmark")
+                        .font(.icon(.micro, weight: .bold))
+                        .foregroundStyle(Constants.VisualStyle.accent)
+                }
+            }
+            .padding(.horizontal, Design.Space.sm)
+            .frame(height: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(
+                        isActive
+                            ? Constants.VisualStyle.accentDim
+                            : (isHovered ? Constants.VisualStyle.surfaceHover : Color.clear)
+                    )
+            )
+            .roundedHitTarget(cornerRadius: 6)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            if isHovered != hovering {
+                isHovered = hovering
+            }
+        }
     }
 }
 
-private final class PanelPointerActivityNSView: NSView {
-    var onPointerMoved: (() -> Void)?
-    private var monitor: Any?
-    private var trackingArea: NSTrackingArea?
+private struct KindFilterChipButton: View {
+    let filter: QuickPanelViewModel.KindFilter
+    let isActive: Bool
+    let isHoverEnabled: Bool
+    let count: Int
+    let action: () -> Void
 
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        nil
+    private var _isHovered = SwiftUI.State(initialValue: false)
+
+    private var isHovered: Bool {
+        get { _isHovered.wrappedValue }
+        nonmutating set { _isHovered.wrappedValue = newValue }
     }
 
-    override var acceptsFirstResponder: Bool {
-        false
+    private var effectiveHovered: Bool {
+        isHoverEnabled && isHovered
     }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea {
-            removeTrackingArea(trackingArea)
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                if let symbol = filter.symbolName {
+                    Image(systemName: symbol)
+                        .font(.icon(.micro))
+                }
+                Text(filter.displayName)
+                    .font(.ui(.caption, weight: isActive ? .semibold : .medium))
+                if count > 0, filter != .all {
+                    Text("\(count)")
+                        .font(.ui(.micro, weight: .medium, mono: true))
+                        .opacity(0.75)
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .foregroundStyle(
+                isActive
+                    ? Constants.VisualStyle.accent
+                    : (effectiveHovered ? Constants.VisualStyle.text : Constants.VisualStyle.textTertiary)
+            )
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(
+                        isActive
+                            ? Constants.VisualStyle.accentDim
+                            : (effectiveHovered ? Constants.VisualStyle.surfaceHover : Color.clear)
+                    )
+            )
+            .roundedHitTarget(cornerRadius: 5)
         }
-        let area = NSTrackingArea(
-            rect: .zero,
-            options: [.mouseMoved, .activeAlways, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(area)
-        self.trackingArea = area
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        if abs(event.deltaX) > 0.15 || abs(event.deltaY) > 0.15 {
-            onPointerMoved?()
-        }
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        updateMonitor()
-    }
-
-    override func viewWillMove(toWindow newWindow: NSWindow?) {
-        if newWindow == nil {
-            removeMonitor()
-            if let trackingArea {
-                removeTrackingArea(trackingArea)
-                self.trackingArea = nil
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            guard isHoverEnabled else {
+                if isHovered {
+                    isHovered = false
+                }
+                return
+            }
+            if isHovered != hovering {
+                isHovered = hovering
             }
         }
-        super.viewWillMove(toWindow: newWindow)
-    }
-
-    deinit {
-        if let monitor {
-            NSEvent.removeMonitor(monitor)
-        }
-    }
-
-    private func updateMonitor() {
-        removeMonitor()
-        guard window != nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
-            guard let self, let window = self.window, window.isVisible, event.window === window else {
-                return event
+        .onChange(of: isHoverEnabled) { _, enabled in
+            if !enabled, isHovered {
+                isHovered = false
             }
-            if abs(event.deltaX) > 0.15 || abs(event.deltaY) > 0.15 {
-                self.onPointerMoved?()
-            }
-            return event
-        }
-    }
-
-    private func removeMonitor() {
-        if let monitor {
-            NSEvent.removeMonitor(monitor)
-            self.monitor = nil
         }
     }
 }

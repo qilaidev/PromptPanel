@@ -2,7 +2,58 @@ import AppKit
 import Combine
 import Foundation
 import KeyboardShortcuts
+import SwiftUI
 import UniformTypeIdentifiers
+
+@MainActor
+final class InlineEditorSession: ObservableObject {
+    @Published var entryId: String = ""
+    @Published var title: String = "" {
+        didSet {
+            guard title != oldValue else { return }
+            onFieldMutation?()
+        }
+    }
+    @Published var content: String = "" {
+        didSet {
+            guard content != oldValue else { return }
+            onFieldMutation?()
+        }
+    }
+    @Published var projectId: String = "" {
+        didSet {
+            guard projectId != oldValue else { return }
+            onFieldMutation?()
+        }
+    }
+    @Published var type: String = Constants.EntryType.prompt.rawValue {
+        didSet {
+            guard type != oldValue else { return }
+            onFieldMutation?()
+        }
+    }
+    @Published var isPinned: Bool = false {
+        didSet {
+            guard isPinned != oldValue else { return }
+            onFieldMutation?()
+        }
+    }
+    @Published var isCompleted: Bool = false {
+        didSet {
+            guard isCompleted != oldValue else { return }
+            onFieldMutation?()
+        }
+    }
+    @Published var tagsText: String = "" {
+        didSet {
+            guard tagsText != oldValue else { return }
+            onFieldMutation?()
+        }
+    }
+    @Published var saveState: MainWindowViewModel.InlineAutoSaveState = .idle
+
+    fileprivate var onFieldMutation: (() -> Void)?
+}
 
 @MainActor
 final class MainWindowViewModel: ObservableObject {
@@ -82,6 +133,7 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     static let inlineAutoSaveDebounceMs: Int = 900
+    static let inlineVersionSnapshotInterval: TimeInterval = 180
 
     struct EntryDraft: Identifiable {
         let id: String
@@ -179,31 +231,66 @@ final class MainWindowViewModel: ObservableObject {
     @Published private(set) var selectedEntryVersions: [EntryVersion] = []
     @Published var isArchivedSectionExpanded: Bool = false
     @Published var isShowingVersionPopover: Bool = false
-    @Published var inlineDraftEntryId: String = ""
-    @Published var inlineDraftTitle: String = "" {
-        didSet { handleInlineDraftFieldMutation() }
+    @Published private(set) var programmaticScrollRevision: Int = 0
+    private(set) var programmaticScrollAnchor: UnitPoint? = nil
+
+    let inlineSession = InlineEditorSession()
+
+    var inlineDraftEntryId: String {
+        get { inlineSession.entryId }
+        set { inlineSession.entryId = newValue }
     }
-    @Published var inlineDraftContent: String = "" {
-        didSet { handleInlineDraftFieldMutation() }
+    var inlineDraftTitle: String {
+        get { inlineSession.title }
+        set { inlineSession.title = newValue }
     }
-    @Published var inlineDraftProjectId: String = "" {
-        didSet { handleInlineDraftFieldMutation() }
+    var inlineDraftContent: String {
+        get { inlineSession.content }
+        set { inlineSession.content = newValue }
     }
-    @Published var inlineDraftType: String = Constants.EntryType.prompt.rawValue {
-        didSet { handleInlineDraftFieldMutation() }
+    var inlineDraftProjectId: String {
+        get { inlineSession.projectId }
+        set { inlineSession.projectId = newValue }
     }
-    @Published var inlineDraftIsPinned: Bool = false {
-        didSet { handleInlineDraftFieldMutation() }
+    var inlineDraftType: String {
+        get { inlineSession.type }
+        set { inlineSession.type = newValue }
     }
-    @Published var inlineDraftIsCompleted: Bool = false {
-        didSet { handleInlineDraftFieldMutation() }
+    var inlineDraftIsPinned: Bool {
+        get { inlineSession.isPinned }
+        set { inlineSession.isPinned = newValue }
     }
-    @Published var inlineDraftTagsText: String = "" {
-        didSet { handleInlineDraftFieldMutation() }
+    var inlineDraftIsCompleted: Bool {
+        get { inlineSession.isCompleted }
+        set { inlineSession.isCompleted = newValue }
     }
-    @Published private(set) var inlineAutoSaveState: InlineAutoSaveState = .idle
+    var inlineDraftTagsText: String {
+        get { inlineSession.tagsText }
+        set { inlineSession.tagsText = newValue }
+    }
+    var inlineAutoSaveState: InlineAutoSaveState {
+        get { inlineSession.saveState }
+        set { inlineSession.saveState = newValue }
+    }
+
+    var inlineTitle: String {
+        get { inlineSession.title }
+        set { inlineSession.title = newValue }
+    }
+    var inlineContent: String {
+        get { inlineSession.content }
+        set { inlineSession.content = newValue }
+    }
+    var inlineTagsText: String {
+        get { inlineSession.tagsText }
+        set { inlineSession.tagsText = newValue }
+    }
+
     private var pendingInlineAutoSaveWorkItem: DispatchWorkItem?
     private var isSyncingInlineDraftProgrammatically = false
+    private var inlineSessionVersionedEntryId: String?
+    private var lastInlineVersionSnapshotAtByEntryId: [String: Date] = [:]
+    private var suppressSelfEntriesReloadCount: Int = 0
     @Published var referenceTargetProjectId: String = ""
     @Published var referenceSourceProjectId: String = MainWindowViewModel.allProjectsSelection
     @Published var referenceSearchText: String = ""
@@ -357,6 +444,9 @@ final class MainWindowViewModel: ObservableObject {
         if let stored = try? settingsRepository.getEntrySortMode() {
             self.entrySortMode = EntrySortMode.resolve(stored)
         }
+        self.inlineSession.onFieldMutation = { [weak self] in
+            self?.handleInlineDraftFieldMutation()
+        }
         refreshCloudSyncState()
 
         observeChanges()
@@ -492,10 +582,16 @@ final class MainWindowViewModel: ObservableObject {
             }
         }
 
-        completedEntryCount = completedCount
-        availableEntryKinds = kinds
-        entryKindCounts = kindCounts
-        topTags = tagCounts
+        if completedEntryCount != completedCount {
+            completedEntryCount = completedCount
+        }
+        if availableEntryKinds != kinds {
+            availableEntryKinds = kinds
+        }
+        if entryKindCounts != kindCounts {
+            entryKindCounts = kindCounts
+        }
+        let nextTopTags = tagCounts
             .sorted { lhs, rhs in
                 if lhs.value != rhs.value {
                     return lhs.value > rhs.value
@@ -504,6 +600,9 @@ final class MainWindowViewModel: ObservableObject {
             }
             .prefix(Self.topTagFacetLimit)
             .map { EntryTagFacet(tag: $0.key, count: $0.value) }
+        if topTags != nextTopTags {
+            topTags = nextTopTags
+        }
     }
 
     func entryCount(forKind kind: Constants.EntryType) -> Int {
@@ -588,40 +687,69 @@ final class MainWindowViewModel: ObservableObject {
         )
     }
 
+    func requestProgrammaticScroll(anchor: UnitPoint? = nil) {
+        programmaticScrollAnchor = anchor
+        programmaticScrollRevision &+= 1
+    }
+
     func syncInlineDraft(with entry: Entry, force: Bool = false, preserveSavedState: Bool = false) {
-        guard force || inlineDraftEntryId != entry.id else { return }
-        let isSwitchingEntry = inlineDraftEntryId != entry.id
+        guard force || inlineSession.entryId != entry.id else { return }
+        let isSwitchingEntry = inlineSession.entryId != entry.id
         if isSwitchingEntry {
             pendingInlineAutoSaveWorkItem?.cancel()
             pendingInlineAutoSaveWorkItem = nil
+            if inlineSessionVersionedEntryId != entry.id {
+                inlineSessionVersionedEntryId = nil
+            }
         }
         isSyncingInlineDraftProgrammatically = true
         defer { isSyncingInlineDraftProgrammatically = false }
-        let trimmedDraftTitle = inlineDraftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedDraftTitle = inlineSession.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let shouldKeepLiveTitle = preserveSavedState
             && !isSwitchingEntry
             && !trimmedDraftTitle.isEmpty
             && trimmedDraftTitle == entry.title
-        let currentParsedTags = Self.parseNormalizedInlineTags(from: inlineDraftTagsText)
+        let currentParsedTags = Self.parseNormalizedInlineTags(from: inlineSession.tagsText)
         let shouldKeepLiveTagsText = preserveSavedState
             && !isSwitchingEntry
             && currentParsedTags == entry.tags
 
-        inlineDraftEntryId = entry.id
-        if !shouldKeepLiveTitle {
-            inlineDraftTitle = entry.title
+        if inlineSession.entryId != entry.id {
+            inlineSession.entryId = entry.id
         }
-        inlineDraftContent = entry.content
-        inlineDraftProjectId = entry.projectId
-        inlineDraftType = entry.type
-        inlineDraftIsPinned = entry.isPinned
-        inlineDraftIsCompleted = entry.isCompleted
-        if !shouldKeepLiveTagsText {
-            inlineDraftTagsText = entry.tags.joined(separator: ", ")
+        if !shouldKeepLiveTitle, inlineSession.title != entry.title {
+            inlineSession.title = entry.title
         }
-        if isSwitchingEntry || !preserveSavedState {
-            inlineAutoSaveState = .idle
+        if inlineSession.content != entry.content {
+            inlineSession.content = entry.content
         }
+        if inlineSession.projectId != entry.projectId {
+            inlineSession.projectId = entry.projectId
+        }
+        if inlineSession.type != entry.type {
+            inlineSession.type = entry.type
+        }
+        if inlineSession.isPinned != entry.isPinned {
+            inlineSession.isPinned = entry.isPinned
+        }
+        if inlineSession.isCompleted != entry.isCompleted {
+            inlineSession.isCompleted = entry.isCompleted
+        }
+        let joinedTags = entry.tags.joined(separator: ", ")
+        if !shouldKeepLiveTagsText, inlineSession.tagsText != joinedTags {
+            inlineSession.tagsText = joinedTags
+        }
+        if (isSwitchingEntry || !preserveSavedState), inlineSession.saveState != .idle {
+            inlineSession.saveState = .idle
+        }
+    }
+
+    func handleInlineFieldEdit() {
+        handleInlineDraftFieldMutation()
+    }
+
+    func flushPendingInlineChangesIfNeeded(forEntryId targetId: String? = nil) {
+        commitPendingInlineChangesIfNeeded(forEntryId: targetId)
     }
 
     private func handleInlineDraftFieldMutation() {
@@ -1041,6 +1169,11 @@ final class MainWindowViewModel: ObservableObject {
         return true
     }
 
+    @discardableResult
+    func moveSelection(delta: Int) -> Bool {
+        moveSelectedEntry(offset: delta)
+    }
+
     private func moveSelectedEntry(offset: Int) -> Bool {
         guard !displayedEntries.isEmpty else {
             return false
@@ -1048,10 +1181,12 @@ final class MainWindowViewModel: ObservableObject {
         guard let currentId = selectedEntry?.id,
               let currentIndex = displayedEntries.firstIndex(where: { $0.id == currentId }) else {
             selectedEntryId = displayedEntries.first?.id
+            requestProgrammaticScroll(anchor: nil)
             return true
         }
         let nextIndex = min(max(currentIndex + offset, 0), displayedEntries.count - 1)
         selectedEntryId = displayedEntries[nextIndex].id
+        requestProgrammaticScroll(anchor: nil)
         return true
     }
 
@@ -2097,6 +2232,7 @@ final class MainWindowViewModel: ObservableObject {
                     tags: parsedTags
                 )
                 try entryRepository.update(updated)
+                lastInlineVersionSnapshotAtByEntryId[updated.id] = Date()
                 if let idx = entries.firstIndex(where: { $0.id == updated.id }) {
                     entries[idx] = updated
                     refreshEntryFacets()
@@ -2123,6 +2259,7 @@ final class MainWindowViewModel: ObservableObject {
                     refreshDisplayedEntries()
                 }
                 selectedEntryId = entry.id
+                requestProgrammaticScroll(anchor: .top)
                 bannerMessage = "词条已创建。"
             }
 
@@ -2178,6 +2315,7 @@ final class MainWindowViewModel: ObservableObject {
                 refreshDisplayedEntries()
             }
             selectedEntryId = newEntry.id
+            requestProgrammaticScroll(anchor: .top)
             NotificationCenter.default.post(name: .entriesDidChange, object: nil)
             let destName = quickCaptureDestinationName
             let kindLabel = type == .todo ? "待办" : "便签"
@@ -2450,18 +2588,54 @@ final class MainWindowViewModel: ObservableObject {
         )
 
         let didChangeContent = entry.title != trimmedTitle || entry.content != content
+        let projectChanged = entry.projectId != projectId
+        let shouldRecordVersion = shouldRecordInlineVersionSnapshot(
+            for: entry.id,
+            isAutoSave: isAutoSave,
+            didChangeContent: didChangeContent
+        )
         do {
-            try entryRepository.update(updated, changeNote: changeNote)
-            if let idx = entries.firstIndex(where: { $0.id == updated.id }) {
-                entries[idx] = updated
+            try entryRepository.update(updated, changeNote: changeNote, recordVersion: shouldRecordVersion)
+            if shouldRecordVersion && didChangeContent {
+                inlineSessionVersionedEntryId = updated.id
+                lastInlineVersionSnapshotAtByEntryId[updated.id] = Date()
             }
+
+            let hadEntryInMemory: Bool
+            if selectedProjectId != Self.allProjectsSelection && selectedProjectId != updated.projectId {
+                let countBefore = entries.count
+                entries.removeAll { $0.id == updated.id }
+                hadEntryInMemory = entries.count != countBefore
+            } else if let idx = entries.firstIndex(where: { $0.id == updated.id }) {
+                entries[idx] = updated
+                hadEntryInMemory = true
+            } else {
+                hadEntryInMemory = false
+            }
+
             inlineAutoSaveState = .saved
             if !isAutoSave {
                 syncInlineDraft(with: updated, force: true, preserveSavedState: true)
                 bannerMessage = didChangeContent ? "已保存修改并留存历史版本。" : "已保存词条属性修改。"
             }
-            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
-            refreshSelectedEntryVersions()
+
+            if hadEntryInMemory {
+                refreshEntryFacets()
+                let newDisplayed = sortedVisibleEntries()
+                if displayedEntries != newDisplayed {
+                    displayedEntries = newDisplayed
+                }
+                if let selectedEntryId, !displayedEntries.contains(where: { $0.id == selectedEntryId }) {
+                    self.selectedEntryId = displayedEntries.first?.id
+                }
+                postEntriesDidChangeSkippingSelfReload(projectChanged: projectChanged)
+            } else {
+                NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            }
+
+            if shouldRecordVersion && didChangeContent {
+                refreshSelectedEntryVersions()
+            }
             return true
         } catch {
             PPLogger.entry.error("Failed to save inline entry: \(error.localizedDescription)")
@@ -2470,6 +2644,32 @@ final class MainWindowViewModel: ObservableObject {
             }
             return false
         }
+    }
+
+    private func shouldRecordInlineVersionSnapshot(
+        for entryId: String,
+        isAutoSave: Bool,
+        didChangeContent: Bool
+    ) -> Bool {
+        guard didChangeContent else { return false }
+        guard isAutoSave else { return true }
+        if inlineSessionVersionedEntryId != entryId {
+            return true
+        }
+        guard let lastSnapshot = lastInlineVersionSnapshotAtByEntryId[entryId] else {
+            return true
+        }
+        return Date().timeIntervalSince(lastSnapshot) >= Self.inlineVersionSnapshotInterval
+    }
+
+    private func postEntriesDidChangeSkippingSelfReload(projectChanged: Bool) {
+        suppressSelfEntriesReloadCount += 1
+        defer { suppressSelfEntriesReloadCount -= 1 }
+        NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+        if projectChanged {
+            refreshProjectEntryCounts()
+        }
+        scheduleAutoCloudSyncIfNeeded()
     }
 
     func restoreEntryVersion(_ version: EntryVersion) {
@@ -2523,6 +2723,7 @@ final class MainWindowViewModel: ObservableObject {
                 refreshDisplayedEntries()
             }
             selectedEntryId = newEntry.id
+            requestProgrammaticScroll(anchor: .top)
             NotificationCenter.default.post(name: .entriesDidChange, object: nil)
             bannerMessage = "已从剪贴板创建词条：\(title)"
         } catch {
@@ -2605,9 +2806,10 @@ final class MainWindowViewModel: ObservableObject {
 
         NotificationCenter.default.publisher(for: .entriesDidChange)
             .sink { [weak self] _ in
-                self?.scheduleEntriesRefresh(delayMs: 0)
-                self?.refreshProjectEntryCounts()
-                self?.scheduleAutoCloudSyncIfNeeded()
+                guard let self, self.suppressSelfEntriesReloadCount == 0 else { return }
+                self.scheduleEntriesRefresh(delayMs: 0)
+                self.refreshProjectEntryCounts()
+                self.scheduleAutoCloudSyncIfNeeded()
             }
             .store(in: &cancellables)
 

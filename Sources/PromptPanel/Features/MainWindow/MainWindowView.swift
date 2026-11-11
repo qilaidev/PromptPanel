@@ -2,43 +2,14 @@ import AppKit
 import Foundation
 import SwiftUI
 
-private final class ContextDropdownInteractionState: ObservableObject {
-    @Published var isOpen: Bool = false
-    @Published var isHoveringPill: Bool = false
-    @Published var isHoveringDropdown: Bool = false
-    @Published var hoveredProjectId: String?
-
-    var pendingOpenWorkItem: DispatchWorkItem?
-    var pendingCloseWorkItem: DispatchWorkItem?
-    var pendingHoverSelectWorkItem: DispatchWorkItem?
-
-    deinit {
-        cancelAllTimers()
-    }
-
-    func cancelAllTimers() {
-        pendingOpenWorkItem?.cancel()
-        pendingOpenWorkItem = nil
-        pendingCloseWorkItem?.cancel()
-        pendingCloseWorkItem = nil
-        pendingHoverSelectWorkItem?.cancel()
-        pendingHoverSelectWorkItem = nil
-    }
-
-    func resetDropdownHoverState() {
-        cancelAllTimers()
-        isHoveringDropdown = false
-        hoveredProjectId = nil
-    }
-}
-
 struct MainWindowView: View {
     @ObservedObject var viewModel: MainWindowViewModel
-    @StateObject private var dropdownState = ContextDropdownInteractionState()
+    private var _isContextDropdownOpen = SwiftUI.State(initialValue: false)
 
-    private static let hoverOpenDelayMs: Int = 45
-    private static let hoverCloseDelayMs: Int = 170
-    private static let hoverSelectDelayMs: Int = 55
+    private var isContextDropdownOpen: Bool {
+        get { _isContextDropdownOpen.wrappedValue }
+        nonmutating set { _isContextDropdownOpen.wrappedValue = newValue }
+    }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -48,30 +19,45 @@ struct MainWindowView: View {
             VStack(spacing: 0) {
                 windowHeader
 
-                if let bannerMessage = viewModel.bannerMessage {
-                    SettingsBanner(
-                        message: bannerMessage,
-                        isBusy: viewModel.activeMaintenanceTask != nil,
-                        onDismiss: { viewModel.bannerMessage = nil }
-                    )
-                    .padding(.horizontal, 16)
-                    .padding(.top, Design.Space.md)
-                }
-
-                Group {
-                    switch viewModel.selectedTab {
-                    case .library:
-                        LibraryView(viewModel: viewModel)
-                    case .settings:
-                        SettingsView(viewModel: viewModel)
+                VStack(spacing: 0) {
+                    if let bannerMessage = viewModel.bannerMessage {
+                        SettingsBanner(
+                            message: bannerMessage,
+                            isBusy: viewModel.activeMaintenanceTask != nil,
+                            onDismiss: { viewModel.bannerMessage = nil }
+                        )
+                        .padding(.horizontal, 16)
+                        .padding(.top, Design.Space.md)
                     }
+
+                    Group {
+                        switch viewModel.selectedTab {
+                        case .library:
+                            LibraryView(viewModel: viewModel)
+                        case .settings:
+                            SettingsView(viewModel: viewModel)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(!isContextDropdownOpen)
             }
 
-            if dropdownState.isOpen {
+            if isContextDropdownOpen {
+                Button("") {
+                    closeContextDropdownImmediately()
+                }
+                .keyboardShortcut(.cancelAction)
+                .buttonStyle(.plain)
+                .frame(width: 0, height: 0)
+                .opacity(0)
+                .allowsHitTesting(false)
+
                 Color.black.opacity(0.001)
-                    .ignoresSafeArea()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .padding(.top, Constants.Layout.headerHeight)
                     .onTapGesture {
                         closeContextDropdownImmediately()
                     }
@@ -90,14 +76,15 @@ struct MainWindowView: View {
             minHeight: Constants.MainWindowLayout.minContentSize.height
         )
         .transaction { $0.animation = nil }
-        .onChange(of: dropdownState.isOpen) { _, isOpen in
-            if !isOpen {
-                dropdownState.resetDropdownHoverState()
+        .onChange(of: viewModel.selectedTab) { _, _ in
+            if isContextDropdownOpen {
+                closeContextDropdownImmediately()
             }
         }
         .onDisappear {
-            dropdownState.resetDropdownHoverState()
-            dropdownState.isHoveringPill = false
+            if isContextDropdownOpen {
+                closeContextDropdownImmediately()
+            }
         }
         .sheet(isPresented: Binding(
             get: { viewModel.projectDraft != nil },
@@ -165,6 +152,9 @@ struct MainWindowView: View {
                 Spacer(minLength: 0)
 
                 SettingsPillButton("参考窗口", systemImage: "rectangle.split.2x1") {
+                    if isContextDropdownOpen {
+                        closeContextDropdownImmediately()
+                    }
                     viewModel.openReferenceWindow()
                 }
                 .help("打开参考窗口 (⌘⇧N)")
@@ -175,6 +165,12 @@ struct MainWindowView: View {
         .background(
             Rectangle()
                 .fill(Constants.VisualStyle.surface)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if isContextDropdownOpen {
+                        closeContextDropdownImmediately()
+                    }
+                }
                 .overlay(
                     Rectangle()
                         .fill(Constants.VisualStyle.divider)
@@ -185,17 +181,8 @@ struct MainWindowView: View {
     }
 
     private var contextSwitcherPill: some View {
-        let isHighlighted = dropdownState.isOpen || dropdownState.isHoveringPill
-        return Button {
-            if dropdownState.isOpen {
-                closeContextDropdownImmediately()
-            } else {
-                dropdownState.pendingOpenWorkItem?.cancel()
-                dropdownState.pendingOpenWorkItem = nil
-                dropdownState.pendingCloseWorkItem?.cancel()
-                dropdownState.pendingCloseWorkItem = nil
-                dropdownState.isOpen = true
-            }
+        Button {
+            isContextDropdownOpen.toggle()
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: "scope")
@@ -203,46 +190,30 @@ struct MainWindowView: View {
                     .foregroundStyle(Constants.VisualStyle.accent)
                 Text("当前面板：\(viewModel.projectName(for: viewModel.currentProjectId))")
                     .font(.ui(.caption, weight: .medium))
-                    .foregroundStyle(isHighlighted ? Constants.VisualStyle.text : Constants.VisualStyle.textSecondary)
+                    .foregroundStyle(isContextDropdownOpen ? Constants.VisualStyle.text : Constants.VisualStyle.textSecondary)
                     .lineLimit(1)
-                Image(systemName: dropdownState.isOpen ? "chevron.up" : "chevron.down")
+                Image(systemName: isContextDropdownOpen ? "chevron.up" : "chevron.down")
                     .font(.icon(.micro, weight: .semibold))
-                    .foregroundStyle(isHighlighted ? Constants.VisualStyle.accent : Constants.VisualStyle.textTertiary)
+                    .foregroundStyle(isContextDropdownOpen ? Constants.VisualStyle.accent : Constants.VisualStyle.textTertiary)
             }
             .padding(.horizontal, 8)
             .frame(height: 24)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isHighlighted ? Constants.VisualStyle.surfaceHover : Constants.VisualStyle.tintSubtle)
+                    .fill(isContextDropdownOpen ? Constants.VisualStyle.surfaceHover : Constants.VisualStyle.tintSubtle)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .strokeBorder(
-                        dropdownState.isOpen ? Constants.VisualStyle.accentBorder : Constants.VisualStyle.border,
+                        isContextDropdownOpen ? Constants.VisualStyle.accentBorder : Constants.VisualStyle.border,
                         lineWidth: Constants.Layout.hairline
                     )
             )
+            .hoverHighlight(cornerRadius: 6, isEnabled: !isContextDropdownOpen)
             .roundedHitTarget(cornerRadius: 6)
         }
         .buttonStyle(.plain)
-        .onVerticalScrollStep { step in
-            viewModel.cycleCurrentProject(step: step)
-        }
-        .onAlwaysHover { hovering in
-            dropdownState.isHoveringPill = hovering
-            if hovering {
-                dropdownState.pendingCloseWorkItem?.cancel()
-                dropdownState.pendingCloseWorkItem = nil
-                if !dropdownState.isOpen {
-                    scheduleContextDropdownOpen()
-                }
-            } else {
-                dropdownState.pendingOpenWorkItem?.cancel()
-                dropdownState.pendingOpenWorkItem = nil
-                scheduleContextDropdownCloseIfOutside()
-            }
-        }
-        .help("悬停展开并滑过即切 · 滚轮上下轮换当前快捷面板分组")
+        .help("点击切换当前快捷面板分组")
     }
 
     private var contextSwitcherDropdown: some View {
@@ -284,9 +255,9 @@ struct MainWindowView: View {
                 .frame(height: Constants.Layout.hairline)
 
             HStack(spacing: 4) {
-                Image(systemName: "cursorarrow.motionlines")
+                Image(systemName: "hand.point.up.left")
                     .font(.icon(.micro))
-                Text("滑过即切 · 点击收起 · 顶部滚轮轮换")
+                Text("点击切换当前快捷面板分组")
                     .font(.ui(.micro))
             }
             .foregroundStyle(Constants.VisualStyle.textTertiary)
@@ -303,18 +274,6 @@ struct MainWindowView: View {
                 .strokeBorder(Constants.VisualStyle.borderStrong, lineWidth: Constants.Layout.hairline)
         )
         .shadow(color: Color.black.opacity(0.22), radius: 16, x: 0, y: 8)
-        .onAlwaysHover { hovering in
-            dropdownState.isHoveringDropdown = hovering
-            if hovering {
-                dropdownState.pendingCloseWorkItem?.cancel()
-                dropdownState.pendingCloseWorkItem = nil
-            } else {
-                dropdownState.hoveredProjectId = nil
-                dropdownState.pendingHoverSelectWorkItem?.cancel()
-                dropdownState.pendingHoverSelectWorkItem = nil
-                scheduleContextDropdownCloseIfOutside()
-            }
-        }
     }
 
     private func dropdownSectionTitle(_ title: String) -> some View {
@@ -326,123 +285,19 @@ struct MainWindowView: View {
     }
 
     private func contextDropdownRow(for project: Project, iconName: String) -> some View {
-        let isActive = project.id == viewModel.currentProjectId
-        let isHovered = dropdownState.hoveredProjectId == project.id
-        return Button {
-            dropdownState.pendingHoverSelectWorkItem?.cancel()
-            dropdownState.pendingHoverSelectWorkItem = nil
-            if viewModel.currentProjectId != project.id {
-                viewModel.setCurrentProject(project.id)
-            }
+        ContextDropdownRow(
+            name: project.name,
+            iconName: iconName,
+            entryCount: viewModel.entryCount(forProjectId: project.id),
+            isActive: project.id == viewModel.currentProjectId
+        ) {
+            viewModel.setCurrentProject(project.id)
             closeContextDropdownImmediately()
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: iconName)
-                    .font(.icon(.small, weight: .medium))
-                    .foregroundStyle(isActive ? Constants.VisualStyle.accent : Constants.VisualStyle.textSecondary)
-                    .frame(width: 15)
-
-                Text(project.name)
-                    .font(.ui(.body, weight: isActive ? .semibold : .regular))
-                    .foregroundStyle(Constants.VisualStyle.text)
-                    .lineLimit(1)
-
-                Spacer(minLength: 4)
-
-                Text("\(viewModel.entryCount(forProjectId: project.id))")
-                    .font(.ui(.micro, mono: true))
-                    .foregroundStyle(isActive ? Constants.VisualStyle.accent : Constants.VisualStyle.textTertiary)
-
-                if isActive {
-                    Image(systemName: "checkmark")
-                        .font(.icon(.micro, weight: .bold))
-                        .foregroundStyle(Constants.VisualStyle.accent)
-                }
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 26)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(
-                        isActive
-                            ? Constants.VisualStyle.accentDim
-                            : (isHovered ? Constants.VisualStyle.surfaceHover : Color.clear)
-                    )
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(
-                        isActive ? Constants.VisualStyle.accent.opacity(0.3) : Color.clear,
-                        lineWidth: Constants.Layout.hairline
-                    )
-            )
-            .roundedHitTarget(cornerRadius: 6)
         }
-        .buttonStyle(.plain)
-        .onAlwaysHover { hovering in
-            if hovering {
-                dropdownState.hoveredProjectId = project.id
-                scheduleHoverSelectProject(project.id)
-            } else if dropdownState.hoveredProjectId == project.id {
-                dropdownState.hoveredProjectId = nil
-                dropdownState.pendingHoverSelectWorkItem?.cancel()
-                dropdownState.pendingHoverSelectWorkItem = nil
-            }
-        }
-    }
-
-    private func scheduleContextDropdownOpen() {
-        dropdownState.pendingOpenWorkItem?.cancel()
-        let state = dropdownState
-        let workItem = DispatchWorkItem { [weak state] in
-            guard let state, state.isHoveringPill else { return }
-            state.isOpen = true
-        }
-        dropdownState.pendingOpenWorkItem = workItem
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + .milliseconds(Self.hoverOpenDelayMs),
-            execute: workItem
-        )
-    }
-
-    private func scheduleContextDropdownCloseIfOutside() {
-        dropdownState.pendingCloseWorkItem?.cancel()
-        let state = dropdownState
-        let workItem = DispatchWorkItem { [weak state] in
-            guard let state, !state.isHoveringPill && !state.isHoveringDropdown else { return }
-            state.isOpen = false
-            state.hoveredProjectId = nil
-        }
-        dropdownState.pendingCloseWorkItem = workItem
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + .milliseconds(Self.hoverCloseDelayMs),
-            execute: workItem
-        )
-    }
-
-    private func scheduleHoverSelectProject(_ projectId: String) {
-        dropdownState.pendingHoverSelectWorkItem?.cancel()
-        guard viewModel.currentProjectId != projectId else { return }
-        let state = dropdownState
-        let viewModel = self.viewModel
-        let workItem = DispatchWorkItem { [weak state, weak viewModel] in
-            guard let state, let viewModel,
-                  state.hoveredProjectId == projectId,
-                  state.isOpen else { return }
-            if viewModel.currentProjectId != projectId {
-                viewModel.setCurrentProject(projectId)
-            }
-        }
-        dropdownState.pendingHoverSelectWorkItem = workItem
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + .milliseconds(Self.hoverSelectDelayMs),
-            execute: workItem
-        )
     }
 
     private func closeContextDropdownImmediately() {
-        dropdownState.resetDropdownHoverState()
-        dropdownState.isOpen = false
+        isContextDropdownOpen = false
     }
 
     private var segmentedControl: some View {
@@ -472,6 +327,9 @@ struct MainWindowView: View {
     private func segmentButton(title: String, tab: MainWindowViewModel.Tab) -> some View {
         let isActive = viewModel.selectedTab == tab
         return Button {
+            if isContextDropdownOpen {
+                closeContextDropdownImmediately()
+            }
             viewModel.selectedTab = tab
         } label: {
             Text(title)
@@ -867,5 +725,72 @@ private struct SheetActionFooter: View {
                 .frame(height: Constants.Layout.hairline),
             alignment: .top
         )
+    }
+}
+
+private struct ContextDropdownRow: View {
+    let name: String
+    let iconName: String
+    let entryCount: Int
+    let isActive: Bool
+    let action: () -> Void
+
+    private var _isHovered = SwiftUI.State(initialValue: false)
+
+    private var isHovered: Bool {
+        get { _isHovered.wrappedValue }
+        nonmutating set { _isHovered.wrappedValue = newValue }
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: iconName)
+                    .font(.icon(.small, weight: .medium))
+                    .foregroundStyle(isActive ? Constants.VisualStyle.accent : Constants.VisualStyle.textSecondary)
+                    .frame(width: 15)
+
+                Text(name)
+                    .font(.ui(.body, weight: isActive ? .semibold : .regular))
+                    .foregroundStyle(Constants.VisualStyle.text)
+                    .lineLimit(1)
+
+                Spacer(minLength: 4)
+
+                Text("\(entryCount)")
+                    .font(.ui(.micro, mono: true))
+                    .foregroundStyle(isActive ? Constants.VisualStyle.accent : Constants.VisualStyle.textTertiary)
+
+                if isActive {
+                    Image(systemName: "checkmark")
+                        .font(.icon(.micro, weight: .bold))
+                        .foregroundStyle(Constants.VisualStyle.accent)
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(
+                        isActive
+                            ? Constants.VisualStyle.accentDim
+                            : (isHovered ? Constants.VisualStyle.surfaceHover : Color.clear)
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(
+                        isActive ? Constants.VisualStyle.accent.opacity(0.3) : Color.clear,
+                        lineWidth: Constants.Layout.hairline
+                    )
+            )
+            .roundedHitTarget(cornerRadius: 6)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            if isHovered != hovering {
+                isHovered = hovering
+            }
+        }
     }
 }

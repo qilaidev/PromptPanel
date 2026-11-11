@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import GRDB
 @testable import PromptPanel
@@ -109,6 +110,7 @@ public enum CoreTestSuite {
         try verifyCompletedRankingCleanupAndArchivedExclusion()
         try verifyQuickPanelAllScopeCaptureFilterHoverAndPreview()
         try verifyMainWindowQuickJotAutoTitleCleanupAndDebouncedAutoSave()
+        try verifyPerformanceAndStabilityRegressions()
     }
 
     private static func makeTempDatabaseURL() -> URL {
@@ -1496,23 +1498,27 @@ public enum CoreTestSuite {
             viewModel.activeKindFilter = .all
             try check(viewModel.entries.count == totalUnfiltered)
 
-            // 6. Hover selection with keyboard-navigation lock
+            // 6. Deterministic keyboard selection scroll revision (pointer selection never triggers scroll jumps)
             try check(viewModel.entries.count >= 3)
-            viewModel.selectEntry(at: 0)
-            viewModel.notifyPointerMoved()
-            viewModel.selectEntryByHover(at: 2)
-            try check(viewModel.selectedIndex == 2, "Hover should select row when keyboard lock is inactive")
+            let revisionBeforePointerSelect = viewModel.scrollSelectionRevision
+            viewModel.selectEntry(at: 2)
+            try check(viewModel.selectedIndex == 2, "Pointer selection should update selectedIndex")
+            try check(
+                viewModel.scrollSelectionRevision == revisionBeforePointerSelect,
+                "Pointer selection must not increment scrollSelectionRevision"
+            )
 
             viewModel.moveSelection(.up)
             try check(viewModel.selectedIndex == 1)
-            try check(viewModel.suppressHoverSelectionUntilMouseMoves)
-            viewModel.selectEntryByHover(at: 0)
-            try check(viewModel.selectedIndex == 1, "Stationary cursor hover must not hijack keyboard arrow selection")
+            try check(viewModel.scrollSelectionRevision == revisionBeforePointerSelect + 1)
 
-            viewModel.notifyPointerMoved()
-            try check(!viewModel.suppressHoverSelectionUntilMouseMoves)
-            viewModel.selectEntryByHover(at: 0)
-            try check(viewModel.selectedIndex == 0, "Real pointer movement must re-enable hover selection")
+            viewModel.moveSelection(.down)
+            try check(viewModel.selectedIndex == 2)
+            try check(viewModel.scrollSelectionRevision == revisionBeforePointerSelect + 2)
+
+            viewModel.selectEntry(at: 0)
+            try check(viewModel.selectedIndex == 0)
+            try check(viewModel.scrollSelectionRevision == revisionBeforePointerSelect + 2)
 
             // 7. Full-text preview (`⌘Y`) & layered `Esc` dismissal (preview -> scope dropdown -> panel)
             try check(!viewModel.isPreviewPresented)
@@ -1770,6 +1776,184 @@ public enum CoreTestSuite {
             )
         }
     }
+
+    static func verifyPerformanceAndStabilityRegressions() throws {
+        try runAsyncOnMainRunLoop {
+            try await verifyPerformanceAndStabilityRegressionsAsync()
+        }
+    }
+
+    static func verifyPerformanceAndStabilityRegressionsAsync() async throws {
+        try await withTempDatabaseAsync { manager, dbURL in
+            let projectRepo = ProjectRepository(dbQueue: manager.dbQueue)
+            let entryRepo = EntryRepository(dbQueue: manager.dbQueue)
+            let settingsRepo = SettingsRepository(dbQueue: manager.dbQueue)
+            let logRepo = LogRepository(dbQueue: manager.dbQueue)
+            let maintenance = StorageMaintenanceService(
+                dbQueue: manager.dbQueue,
+                logRepository: logRepo,
+                databaseURL: dbURL
+            )
+            let defaultProject = try unwrap(projectRepo.fetchDefault())
+            let inboxProject = try unwrap(projectRepo.fetchInbox())
+            let projectBeta = Project(id: "proj-beta", name: "性能稳定专项", groupKind: .project)
+            try projectRepo.create(projectBeta)
+
+            let e1 = Entry(projectId: defaultProject.id, title: "条目一", content: "正文一", type: Constants.EntryType.prompt.rawValue)
+            let e2 = Entry(projectId: defaultProject.id, title: "条目二", content: "正文二", type: Constants.EntryType.code.rawValue)
+            let e3 = Entry(projectId: defaultProject.id, title: "条目三", content: "正文三", type: Constants.EntryType.note.rawValue)
+            try entryRepo.create(e1)
+            try entryRepo.create(e2)
+            try entryRepo.create(e3)
+
+            let appState = AppState()
+            appState.loadPersistedState(currentProjectId: defaultProject.id, defaultProjectId: defaultProject.id)
+
+            let spyClipboard = SpyClipboardService()
+            let spyPaste = SpyPasteService()
+            let stubPermission = StubPermissionService()
+            let executeService = ExecuteService(
+                clipboardService: spyClipboard,
+                pasteService: spyPaste,
+                entryRepository: entryRepo,
+                logRepository: logRepo,
+                permissionService: stubPermission,
+                targetApplicationProvider: { nil },
+                currentFrontApplicationProvider: { nil }
+            )
+
+            let panelVM = QuickPanelViewModel(
+                appState: appState,
+                projectRepository: projectRepo,
+                entryRepository: entryRepo,
+                settingsRepository: settingsRepo,
+                searchService: EntrySearchService(entryRepository: entryRepo),
+                executeService: executeService,
+                clipboardService: spyClipboard,
+                permissionService: PermissionService(),
+                onClosePanel: {}
+            )
+
+            let mainVM = MainWindowViewModel(
+                appState: appState,
+                projectRepository: projectRepo,
+                entryRepository: entryRepo,
+                settingsRepository: settingsRepo,
+                logRepository: logRepo,
+                permissionService: PermissionService(),
+                loginItemService: LoginItemService(),
+                storageMaintenanceService: maintenance,
+                updaterService: UpdaterService(),
+                launchRecoveryReport: nil
+            )
+            defer { mainVM.cancelPendingBackgroundTasks() }
+
+            mainVM.load()
+            panelVM.prepareForPresentation()
+            await waitUntilAsync(timeout: 1.5) {
+                !panelVM.isScopeSearchInFlight && panelVM.entries.count == 3 && mainVM.entries.count == 3
+            }
+
+            // 1. QuickPanelViewModel: synchronous race-free project scope persistence on `.currentProjectDidChange`
+            var persistedIdSeenDuringNotification: String?
+            let projectChangeCancellable = NotificationCenter.default.publisher(for: .currentProjectDidChange)
+                .sink { _ in
+                    persistedIdSeenDuringNotification = try? settingsRepo.getCurrentProjectId()
+                }
+            defer { projectChangeCancellable.cancel() }
+
+            panelVM.activateScope(projectBeta.id)
+            try check(persistedIdSeenDuringNotification == projectBeta.id, "SQLite currentProjectId must already be updated when .currentProjectDidChange fires")
+            try check(try settingsRepo.getCurrentProjectId() == projectBeta.id)
+            try check(appState.currentProjectId == projectBeta.id)
+            try check(mainVM.currentProjectId == projectBeta.id, "MainWindowViewModel must stay synchronized on panel scope switch")
+
+            panelVM.activateScope(defaultProject.id)
+            await waitUntilAsync(timeout: 1.5) { !panelVM.isScopeSearchInFlight && panelVM.entries.count == 3 }
+
+            // 2. QuickPanelViewModel: `scrollSelectionRevision` increments ONLY on keyboard navigation, never on pointer selection
+            let basePanelScrollRev = panelVM.scrollSelectionRevision
+            panelVM.selectEntry(at: 1)
+            try check(panelVM.selectedIndex == 1)
+            try check(panelVM.scrollSelectionRevision == basePanelScrollRev, "Pointer selectEntry(at:) must not increment scrollSelectionRevision")
+            panelVM.moveSelection(.down)
+            try check(panelVM.selectedIndex == 2)
+            try check(panelVM.scrollSelectionRevision == basePanelScrollRev + 1)
+            panelVM.moveSelection(.up)
+            try check(panelVM.selectedIndex == 1)
+            try check(panelVM.scrollSelectionRevision == basePanelScrollRev + 2)
+
+            // 3. MainWindowViewModel: clicking a row (`selectedEntryId = ...`) does NOT increment `programmaticScrollRevision`, while keyboard navigation does
+            mainVM.selectedProjectId = defaultProject.id
+            await waitUntilAsync(timeout: 1.5) { mainVM.displayedEntries.count == 3 }
+            let firstEntry = mainVM.displayedEntries[0]
+            let secondEntry = mainVM.displayedEntries[1]
+
+            let baseLibraryScrollRev = mainVM.programmaticScrollRevision
+            mainVM.selectedEntryId = firstEntry.id
+            try check(mainVM.programmaticScrollRevision == baseLibraryScrollRev, "Clicking an EntryListRow must not increment programmaticScrollRevision")
+            mainVM.selectedEntryId = secondEntry.id
+            try check(mainVM.programmaticScrollRevision == baseLibraryScrollRev)
+            try check(mainVM.moveSelection(delta: -1))
+            try check(mainVM.selectedEntryId == firstEntry.id)
+            try check(mainVM.programmaticScrollRevision == baseLibraryScrollRev + 1, "Keyboard arrow selection must increment programmaticScrollRevision")
+
+            // 4. InlineEditorSession isolation: keystrokes fire ZERO `MainWindowViewModel.objectWillChange` events
+            var mainVMWillChangeCount = 0
+            var inlineSessionWillChangeCount = 0
+            let mainVMCancellable = mainVM.objectWillChange.sink { _ in
+                mainVMWillChangeCount += 1
+            }
+            let inlineSessionCancellable = mainVM.inlineSession.objectWillChange.sink { _ in
+                inlineSessionWillChangeCount += 1
+            }
+            defer {
+                mainVMCancellable.cancel()
+                inlineSessionCancellable.cancel()
+            }
+
+            mainVM.inlineDraftTitle = "高频输入标题 A"
+            mainVM.handleInlineFieldEdit()
+            mainVM.inlineDraftContent = "高频输入正文第一段"
+            mainVM.handleInlineFieldEdit()
+            mainVM.inlineDraftContent = "高频输入正文第一段 + 第二段"
+            mainVM.handleInlineFieldEdit()
+            mainVM.inlineDraftTagsText = "perf, isolated"
+            mainVM.handleInlineFieldEdit()
+
+            try check(mainVMWillChangeCount == 0, "Inline keystrokes must emit 0 MainWindowViewModel.objectWillChange events")
+            try check(inlineSessionWillChangeCount > 0, "InlineEditorSession must publish local draft updates to PreviewPane")
+            try check(mainVM.inlineAutoSaveState == .pending)
+
+            // 5. Consecutive inline auto-saves on the same entry coalesce `EntryVersion` snapshots (1 instead of N) & update `entries` in place
+            let versionsBefore = try entryRepo.fetchVersions(forEntryId: firstEntry.id).count
+            mainVM.flushPendingInlineChangesIfNeeded()
+            try check(mainVM.inlineAutoSaveState == .saved)
+
+            mainVM.inlineDraftContent = "连续第二次内联自动保存"
+            mainVM.flushPendingInlineChangesIfNeeded()
+            mainVM.inlineDraftContent = "连续第三次内联自动保存"
+            mainVM.flushPendingInlineChangesIfNeeded()
+
+            let versionsAfterAutoSaves = try entryRepo.fetchVersions(forEntryId: firstEntry.id)
+            try check(
+                versionsAfterAutoSaves.count == versionsBefore + 1,
+                "Rapid consecutive inline auto-saves on the same entry must coalesce into 1 EntryVersion snapshot"
+            )
+            let updatedInMemory = try unwrap(mainVM.entries.first(where: { $0.id == firstEntry.id }))
+            try check(updatedInMemory.title == "高频输入标题 A")
+            try check(updatedInMemory.content == "连续第三次内联自动保存")
+            try check(updatedInMemory.tags == ["perf", "isolated"])
+
+            // Explicit manual save (`⌘S` / `commitInlineChanges`) still records a fresh `EntryVersion`
+            mainVM.inlineDraftContent = "显式手动保存版本内容"
+            let latestEntry = try unwrap(entryRepo.fetchById(firstEntry.id))
+            try check(mainVM.commitInlineChanges(for: latestEntry))
+            let versionsAfterExplicitSave = try entryRepo.fetchVersions(forEntryId: firstEntry.id)
+            try check(versionsAfterExplicitSave.count == versionsBefore + 2, "Explicit manual save must still record a version snapshot")
+            _ = inboxProject
+        }
+    }
 }
 
 #if canImport(XCTest)
@@ -1837,6 +2021,10 @@ final class PromptPanelTests: XCTestCase {
 
     func testMainWindowQuickJotAutoTitleCleanupAndDebouncedAutoSave() throws {
         try CoreTestSuite.verifyMainWindowQuickJotAutoTitleCleanupAndDebouncedAutoSave()
+    }
+
+    func testPerformanceAndStabilityRegressions() throws {
+        try CoreTestSuite.verifyPerformanceAndStabilityRegressions()
     }
 }
 #else
@@ -1914,6 +2102,10 @@ struct PromptPanelSwiftTestingSuite {
 
     @Test func mainWindowQuickJotAutoTitleCleanupAndDebouncedAutoSave() async throws {
         try await CoreTestSuite.verifyMainWindowQuickJotAutoTitleCleanupAndDebouncedAutoSaveAsync()
+    }
+
+    @Test func performanceAndStabilityRegressions() async throws {
+        try await CoreTestSuite.verifyPerformanceAndStabilityRegressionsAsync()
     }
 }
 #endif

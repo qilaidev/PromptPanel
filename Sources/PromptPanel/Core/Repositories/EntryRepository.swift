@@ -334,14 +334,16 @@ final class EntryRepository: @unchecked Sendable {
         PPLogger.entry.debug("Entry created: \(entry.id)")
     }
 
-    /// Update an existing entry. Automatically records a new `EntryVersion` if title or content changed.
-    func update(_ entry: Entry, changeNote: String? = nil) throws {
+    /// Update an existing entry. Automatically records a new `EntryVersion` if `recordVersion` is true and title or content changed.
+    func update(_ entry: Entry, changeNote: String? = nil, recordVersion: Bool = true) throws {
         var updated = entry
         let now = Date()
         updated.updatedAt = now
         try dbQueue.write { db in
             let previous = try Entry.fetchOne(db, key: entry.id)
             try updated.update(db)
+
+            guard recordVersion else { return }
 
             let contentChanged = previous.map { $0.title != updated.title || $0.content != updated.content } ?? true
             if contentChanged {
