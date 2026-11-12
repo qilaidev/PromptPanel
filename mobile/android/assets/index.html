@@ -1725,7 +1725,7 @@
       </div>
       <div class="health-inline">
         <span class="status-dot"></span>
-        <span id="healthInlineText">SQLite WAL · KeyStore AES-256 · v1.6.0 (10)</span>
+        <span id="healthInlineText">SQLite WAL · KeyStore AES-256 · v1.7.0 (11)</span>
       </div>
     </div>
 
@@ -2729,8 +2729,12 @@ function render() {
     return true;
   });
 
-  // Sort using macOS 4 Sort Modes (uses / by_level / recent / alpha)
+  // Sort using macOS 4 Sort Modes (uses / by_level / recent / alpha) with unfinished-first priority
   items.sort((a, b) => {
+    const doneA = a.isCompleted || a.is_completed ? 1 : 0;
+    const doneB = b.isCompleted || b.is_completed ? 1 : 0;
+    if (doneA !== doneB) return doneA - doneB;
+
     const pinA = a.isPinned || a.is_pinned ? 1 : 0;
     const pinB = b.isPinned || b.is_pinned ? 1 : 0;
     if (pinA !== pinB) return pinB - pinA;
@@ -3665,20 +3669,54 @@ function testCloudConnection() {
 }
 
 function mergeRemoteEnvelope(remote) {
-  const stats = { pNew: 0, pUpd: 0, eNew: 0, eUpd: 0, conflicts: 0 };
+  const stats = { pNew: 0, pUpd: 0, eNew: 0, eUpd: 0, conflicts: 0, protectedCount: 0 };
   if (!remote || typeof remote !== 'object') return stats;
 
   const remappedProjectIds = {};
   const localDefault = (store.projects || []).find(p => p.isDefault || p.is_default);
+
+  // Anti-data-loss circuit breaker: detect abnormal mass-tombstone deletes
+  const localActiveEntries = activeEntriesList();
+  const localActiveById = {};
+  localActiveEntries.forEach(e => { localActiveById[e.id] = e; });
+  let remoteDeletingCount = 0;
+  for (const rawEntry of (remote.entries || [])) {
+    if (!rawEntry || !rawEntry.id) continue;
+    const local = localActiveById[rawEntry.id];
+    const rDeleted = !!(rawEntry.deletedAt || rawEntry.deleted_at);
+    if (local && rDeleted) {
+      const rTime = new Date(rawEntry.updatedAt || rawEntry.updated_at || 0).getTime();
+      const lTime = new Date(local.updatedAt || local.updated_at || 0).getTime();
+      if (rTime > lTime) remoteDeletingCount++;
+    }
+  }
+  const localActiveCount = localActiveEntries.length;
+  const shouldBlockMassDeletions =
+    (remoteDeletingCount >= 3 && (remoteDeletingCount / Math.max(1, localActiveCount)) >= 0.25) ||
+    (localActiveCount >= 2 && remoteDeletingCount === localActiveCount);
 
   for (const rp of (remote.projects || [])) {
     if (!rp || !rp.id) continue;
     const isRemoteDefault = !!(rp.isDefault || rp.is_default);
     const idx = store.projects.findIndex(p => p.id === rp.id);
     if (idx >= 0) {
-      if (new Date(rp.updatedAt || rp.updated_at) > new Date(store.projects[idx].updatedAt || store.projects[idx].updated_at)) {
-        store.projects[idx] = rp;
-        stats.pUpd++;
+      const lp = store.projects[idx];
+      const rTime = new Date(rp.updatedAt || rp.updated_at || 0).getTime();
+      const lTime = new Date(lp.updatedAt || lp.updated_at || 0).getTime();
+      if (rTime > lTime) {
+        const lDeleted = !!(lp.deletedAt || lp.deleted_at);
+        const rDeleted = !!(rp.deletedAt || rp.deleted_at);
+        if (!lDeleted && rDeleted && shouldBlockMassDeletions) {
+          const healedTime = new Date(Math.max(Date.now(), rTime + 2000)).toISOString();
+          lp.updatedAt = healedTime;
+          if ('updated_at' in lp) lp.updated_at = healedTime;
+          lp.deletedAt = null;
+          if ('deleted_at' in lp) lp.deleted_at = null;
+          stats.protectedCount++;
+        } else {
+          store.projects[idx] = rp;
+          stats.pUpd++;
+        }
       }
     } else if (isRemoteDefault && localDefault && localDefault.id !== rp.id) {
       remappedProjectIds[rp.id] = localDefault.id;
@@ -3702,8 +3740,9 @@ function mergeRemoteEnvelope(remote) {
       const remoteTime = new Date(re.updatedAt || re.updated_at || 0).getTime();
       const localTime = new Date(local.updatedAt || local.updated_at || 0).getTime();
       const hasTextDiff = (local.content || '') !== (re.content || '') || (local.title || '') !== (re.title || '');
+      const isRemoteDeletion = !(local.deletedAt || local.deleted_at) && !!(re.deletedAt || re.deleted_at);
       if (remoteTime > localTime) {
-        if (hasTextDiff) {
+        if (hasTextDiff || isRemoteDeletion) {
           const vers = versionsForEntry(local.id);
           const maxVer = vers.length > 0 ? (vers[0].versionNumber || 1) : 0;
           const alreadySaved = vers.some(v => (v.content || '') === (local.content || '') && (v.title || '') === (local.title || ''));
@@ -3714,7 +3753,7 @@ function mergeRemoteEnvelope(remote) {
               versionNumber: maxVer + 1,
               title: local.title,
               content: local.content,
-              changeNote: '云端同步前本地版本自动留存',
+              changeNote: isRemoteDeletion ? '云端同步删除前手机本地版本自动留存' : '云端同步前本地版本自动留存',
               createdAt: local.updatedAt || new Date().toISOString()
             });
             stats.conflicts++;
@@ -3723,17 +3762,27 @@ function mergeRemoteEnvelope(remote) {
         re.useCount = Math.max(local.useCount || local.use_count || 0, re.useCount || re.use_count || 0);
         const lUsed = local.lastUsedAt || local.last_used_at;
         const rUsed = re.lastUsedAt || re.last_used_at;
-        if (lUsed && rUsed) {
-          re.lastUsedAt = new Date(lUsed) > new Date(rUsed) ? lUsed : rUsed;
-        } else {
-          re.lastUsedAt = lUsed || rUsed || null;
+        const mergedUsed = (lUsed && rUsed)
+          ? (new Date(lUsed) > new Date(rUsed) ? lUsed : rUsed)
+          : (lUsed || rUsed || null);
+        if (isRemoteDeletion && shouldBlockMassDeletions) {
+          const healedTime = new Date(Math.max(Date.now(), remoteTime + 2000)).toISOString();
+          local.useCount = re.useCount;
+          local.lastUsedAt = mergedUsed;
+          local.updatedAt = healedTime;
+          if ('updated_at' in local) local.updated_at = healedTime;
+          local.deletedAt = null;
+          if ('deleted_at' in local) local.deleted_at = null;
+          stats.protectedCount++;
+          continue;
         }
+        re.lastUsedAt = mergedUsed;
         store.entries[idx] = re;
         stats.eUpd++;
       } else {
         if (remoteTime < localTime && hasTextDiff) {
           const vers = versionsForEntry(local.id);
-          const alreadySaved = vers.some(v => (v.content || '') === (re.content || '') && (v.title || '') === (re.title || ''));
+          const alreadySaved = vers.some(v => (v.content || '') === (re.content || '') && (v.title || '') === (local.title || ''));
           if (!alreadySaved) {
             const maxVer = vers.length > 0 ? (vers[0].versionNumber || 1) : 0;
             store.versions.push({
@@ -3760,6 +3809,23 @@ function mergeRemoteEnvelope(remote) {
     } else {
       store.entries.push(re);
       if (!re.deletedAt && !re.deleted_at) stats.eNew++;
+    }
+  }
+
+  // Revive any soft-deleted project that still contains active entries
+  const neededProjectIds = new Set();
+  for (const e of activeEntriesList()) {
+    const pid = e.projectId || e.project_id;
+    if (pid) neededProjectIds.add(pid);
+  }
+  for (const p of (store.projects || [])) {
+    if (neededProjectIds.has(p.id) && (p.deletedAt || p.deleted_at)) {
+      const revivedTime = new Date(Math.max(Date.now(), new Date(p.updatedAt || p.updated_at || 0).getTime() + 2000)).toISOString();
+      p.deletedAt = null;
+      if ('deleted_at' in p) p.deleted_at = null;
+      p.updatedAt = revivedTime;
+      if ('updated_at' in p) p.updated_at = revivedTime;
+      stats.protectedCount++;
     }
   }
 
@@ -3803,7 +3869,7 @@ function triggerCloudSync(silent = false) {
           if (!silent) showToast('远端拉取失败 (HTTP ' + getCode + ')');
           return;
         }
-        let s1 = { pNew: 0, pUpd: 0, eNew: 0, eUpd: 0, conflicts: 0 };
+        let s1 = { pNew: 0, pUpd: 0, eNew: 0, eUpd: 0, conflicts: 0, protectedCount: 0 };
         if (getCode >= 200 && getCode < 300 && getBody) {
           s1 = mergeRemoteEnvelope(JSON.parse(getBody));
         }
@@ -3820,9 +3886,11 @@ function triggerCloudSync(silent = false) {
             s1.eNew += s2.eNew;
             s1.eUpd += s2.eUpd;
             s1.conflicts += s2.conflicts;
+            s1.protectedCount += (s2.protectedCount || 0);
             persistStore(false);
           }
-          const summary = `上次同步：${new Date().toLocaleTimeString()}（项目 +${s1.pNew}/更${s1.pUpd}，词条 +${s1.eNew}/更${s1.eUpd}，冲突版本保护 ${s1.conflicts}）`;
+          const protSuffix = s1.protectedCount > 0 ? `，防丢熔断保护 ${s1.protectedCount}` : '';
+          const summary = `上次同步：${new Date().toLocaleTimeString()}（项目 +${s1.pNew}/更${s1.pUpd}，词条 +${s1.eNew}/更${s1.eUpd}，冲突版本保护 ${s1.conflicts}${protSuffix}）`;
           document.getElementById('syncStatusText').textContent = summary;
           document.getElementById('syncBadgeText').textContent = '已同步';
           if (!silent) showBanner(summary);
