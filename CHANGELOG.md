@@ -6,6 +6,28 @@ The format is based on Keep a Changelog, and this project uses Conventional Comm
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-13
+
+快捷面板速记捕获、跨端同步防丢熔断与内联编辑性能隔离版本。围绕「高频随手记 + 零丢字同步 + 确定性跟手交互」三条主线，新增快捷面板前缀/快捷键/一键直写速记与待办、`__all_projects__` 全部项目作用域、全文预览与类型筛选，主窗口新增顶部行内速记栏、900ms 防抖自动保存与已完成项自动下沉清理；跨端同步在 macOS、自托管服务端与 Android 端全链路落地异常批量删除熔断器与软删除一键恢复；同时将内联编辑器抽离为独立会话并移除自定义鼠标/滚轮监听器，消除高频打字重绘与点击跳动。
+
+### Added
+
+- **跨端同步防丢数据熔断器、安全快照与软删除恢复（`CloudSyncService` + `server/` + `mobile/`）。** 当远端单次同步尝试软删除本地活跃词条达到阈值（`>= 3` 条且占比 `>= 25%`，或清空全部 `>= 2` 条活跃词条）时，自动触发高水位熔断拦截，保留本地活跃词条与所属分组并在回推时自动治愈远端信封；即便远端空白重置也会由本地词库自动反向重灌。同步删除前自动留存本地历史版本并按节流窗口写入同步安全快照（`createSyncGuardBackup`）；新增 `recoverDeletedAndSync`，支持一键恢复软删除记录并同步回云端。
+- **快捷面板即时速记捕获与一键直写模式（`QuickPanelViewModel` / `QuickPanelView`）。** 搜索框输入 `; ` / `n `（便签）或 `t ` / `todo:`（待办）前缀即进入速记模式，自动解析 `#tag` 标签，`Enter` 直接存入内置 `速记与待办`（`builtin-inbox`）而不误执行旧词条且保持当前项目作用域不变；同时支持一键点击进入直写便签/待办模式（`startQuickCapture`，中途切换类型保留已输正文）、`⇧↩` 直存便签、`⌥↩` 直存待办，以及从快捷面板与菜单栏托盘一键将剪贴板存为速记便签。
+- **快捷面板全部项目作用域、类型筛选与全文预览。** 新增 `__all_projects__` 作用域（浏览与检索时自动排除已归档项目，且不覆盖持久化的默认当前项目），支持悬停打开作用域切换菜单与 `Tab` / `⇧Tab` 循环切换；新增类型筛选芯片（全部 / Prompt / 代码 / 便签与待办）与 `⌘Y` 全文预览抽屉，并实现 `Esc` 分层关闭（先关全文预览 → 再关作用域下拉 → 最后收起面板）。
+- **主窗口行内速记栏、空标题首行推导与批量管理增强。** 内容库顶部新增行内速记输入框（在「全部项目」下自动归入 `速记与待办` 并提取首行标题与 `#tag`）；新建词条或内联编辑留空标题时自动从正文首行生成标题；支持隐藏已完成项、一键清理当前范围或全局已完成项（`deleteCompleted`），以及跨分组拖拽移动词条（`moveEntries`）。
+
+### Changed
+
+- **已完成项自动下沉排序（SQL 与内存比较器双端对齐）。** `EntryRanking` 排序规则升级为 `未完成优先 (is_completed ASC) → 是否置顶 (is_pinned DESC) → frecency → 最近使用时间 → 使用次数`，勾选完成的待办或便签（即使曾置顶或刚更新）均自动下沉至未完成项下方；Android 移动端同步对齐该排序与防丢熔断逻辑。
+- **中文输入法组字（`hasMarkedText`）快捷键让行保护。** `AppDelegate` 与 `KeyAwareSearchField` 在检测到拼音/中文输入法处于未上屏组字态时，自动让行 `Esc`、`Enter`、`⇧↩` 与 `⌥↩`，避免选词或取消拼音时误关面板或误提交速记。
+- **900ms 防抖内联自动保存与零丢字切换保护。** 主窗口预览区内联编辑支持 900ms 防抖自动落盘（打字中途保留标题末尾空格与标签分隔符不被通知刷新冲掉）；在防抖窗口内点击置顶、改类型、克隆或切换选中词条时，均会先同步刷盘当前未保存修改，绝不因旧快照覆盖丢字。
+
+### Performance & Fixed
+
+- **内联编辑状态隔离与历史版本智能合并（`InlineEditorSession`）。** 将高频变化的标题、正文、标签草稿从 `MainWindowViewModel` 抽离到独立 `InlineEditorSession`，使每次按键触发 `0` 次主视图模型重绘广播；同一词条上的连续自动保存自动合并为单条 `EntryVersion` 快照（显式按 `⌘S` 手动保存仍独立留存新版本），消除版本列表膨胀。
+- **移除自定义鼠标/滚轮监听器并分离键盘与指针滚动。** 移除易引发点击吞字与滚动冲突的自定义事件监听器，新增 `scrollSelectionRevision`（快捷面板）与 `programmaticScrollRevision`（主窗口）：仅键盘上下键导航触发列表自动滚动定位，鼠标悬停或点击选中保持视口绝对稳定不跳动；切换项目作用域时改为同步落盘后再广播 `.currentProjectDidChange`，彻底消除跨组件读取竞态。
+
 ## [1.6.0] - 2026-11-06
 
 工作区三层分组、版本历史与双窗装配版本（V7）。在保持本地优先与单文件 SQLite 零云依赖默认行为的前提下，主窗口内容库升级为「速记与待办（Inbox）/ 常用类型（Categories）/ 项目管理（Projects）+ 项目归档」三层结构，新增「双窗对照与剪贴板装配台」（`参考窗口`）、词条每次修改自动生成不可变历史版本（`EntryVersion`）并支持一键回滚，以及可选的开源自托管云同步（`CloudSyncService` + `server/` + `mobile/`）。同时补齐 GitHub README 界面截图入库与全量文档同步。
@@ -132,7 +154,8 @@ The format is based on Keep a Changelog, and this project uses Conventional Comm
 > 1.1.2 及更早版本的条目已从本文件移除。这些版本的完整记录仍在 git 历史中
 > （`git log -- CHANGELOG.md`），其中 v1.1.2 的 tag 也仍在仓库里。
 
-[Unreleased]: https://github.com/qilaidev/PromptPanel/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/qilaidev/PromptPanel/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/qilaidev/PromptPanel/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/qilaidev/PromptPanel/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/qilaidev/PromptPanel/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/qilaidev/PromptPanel/compare/v1.3.0...v1.4.0

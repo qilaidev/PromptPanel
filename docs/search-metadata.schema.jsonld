@@ -31,8 +31,8 @@
       "operatingSystem": "macOS 14 or later",
       "runtimePlatform": "macOS",
       "programmingLanguage": "Swift",
-      "softwareVersion": "1.6.0",
-      "datePublished": "2026-11-06",
+      "softwareVersion": "1.7.0",
+      "datePublished": "2026-11-13",
       "isAccessibleForFree": true,
       "keywords": [
         "macOS prompt manager",
