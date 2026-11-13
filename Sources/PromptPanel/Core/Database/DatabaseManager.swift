@@ -140,11 +140,38 @@ final class DatabaseManager {
         let fileManager = FileManager.default
         try dbQueue.writeWithoutTransaction { db in
             try db.execute(sql: "PRAGMA journal_mode = WAL")
+            try db.execute(sql: "PRAGMA synchronous = NORMAL")
+            try db.execute(sql: "PRAGMA temp_store = MEMORY")
+            try db.execute(sql: "PRAGMA cache_size = -8000")
         }
         try runMigrations(on: dbQueue)
+        try ensurePerformanceIndexes(on: dbQueue)
 
         if fileManager.fileExists(atPath: databaseURL.path) {
             try fileManager.setAttributes([.posixPermissions: Constants.secureFilePermissions], ofItemAtPath: databaseURL.path)
+        }
+    }
+
+    private static func ensurePerformanceIndexes(on dbQueue: DatabaseQueue) throws {
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                    CREATE INDEX IF NOT EXISTS idx_entries_active_project_rank
+                    ON entries(deleted_at, project_id, is_completed, is_pinned, updated_at DESC)
+                    """
+            )
+            try db.execute(
+                sql: """
+                    CREATE INDEX IF NOT EXISTS idx_entries_active_rank
+                    ON entries(deleted_at, is_completed, is_pinned, updated_at DESC)
+                    """
+            )
+            try db.execute(
+                sql: """
+                    CREATE INDEX IF NOT EXISTS idx_projects_active_kind
+                    ON projects(deleted_at, is_archived, group_kind)
+                    """
+            )
         }
     }
 

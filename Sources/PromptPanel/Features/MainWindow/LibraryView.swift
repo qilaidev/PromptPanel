@@ -802,14 +802,14 @@ struct LibraryView: View {
                                     viewModel.togglePin(entry)
                                 }
                                 Menu("移动到项目…") {
-                                    ForEach(viewModel.projects.filter { $0.id != entry.projectId && !$0.isArchived }) { target in
+                                    ForEach(viewModel.targetProjects(excluding: entry.projectId)) { target in
                                         Button(target.name) {
                                             viewModel.updateEntryProject(entry, toProjectId: target.id)
                                         }
                                     }
                                 }
                                 Menu("克隆到…") {
-                                    ForEach(viewModel.projects.filter { $0.id != entry.projectId && !$0.isArchived }) { target in
+                                    ForEach(viewModel.targetProjects(excluding: entry.projectId)) { target in
                                         Button(target.name) {
                                             viewModel.cloneEntry(entry, toProjectId: target.id)
                                         }

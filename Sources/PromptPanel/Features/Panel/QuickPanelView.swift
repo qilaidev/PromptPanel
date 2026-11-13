@@ -985,6 +985,25 @@ struct QuickPanelView: View {
                     .buttonStyle(.plain)
 
                     Button {
+                        viewModel.quickCreateEntryFromPanel(type: .todo)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "checklist")
+                                .font(.icon(.small))
+                            Text("存为待办 (⌥↩)")
+                                .font(.ui(.caption, weight: .medium))
+                        }
+                        .foregroundStyle(Constants.VisualStyle.warn)
+                        .padding(.horizontal, 10)
+                        .frame(height: 24)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Constants.VisualStyle.warnDim)
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
                         viewModel.quickCreateEntryFromPanel(type: viewModel.defaultQuickCreateType)
                     } label: {
                         HStack(spacing: 4) {
@@ -1111,7 +1130,7 @@ struct QuickPanelView: View {
 
     private var emptyStateTitle: String {
         if !viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "全词库无匹配词条，按 ⇧Enter 可直接存为便签"
+            return "全词库无匹配词条，按 ⇧Enter 存为便签或 ⌥Enter 存为待办"
         }
         if viewModel.activeKindFilter != .all {
             return "当前筛选「\(viewModel.activeKindFilter.displayName)」暂无词条"

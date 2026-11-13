@@ -67,12 +67,11 @@ final class EntryRepository: @unchecked Sendable {
                   AND entries.project_id IN (?, ?)
                 \(EntryRanking.sqlOrderByClause(includeProjectPriority: true))
                 """
-            let rows = try Row.fetchAll(
+            return try Entry.fetchAll(
                 db,
                 sql: sql,
                 arguments: [currentProjectId, currentProjectId, defaultProjectId, Date()]
             )
-            return try rows.map { try Entry(row: $0) }
         }
     }
 
@@ -129,8 +128,7 @@ final class EntryRepository: @unchecked Sendable {
                 arguments += [token, token, token]
             }
             arguments += [Date()]
-            let rows = try Row.fetchAll(db, sql: sql, arguments: arguments)
-            let entries = try rows.map { try Entry(row: $0) }
+            let entries = try Entry.fetchAll(db, sql: sql, arguments: arguments)
             if let tag {
                 return Array(Self.applyTagFilter(entries, tag: tag).prefix(100))
             }
@@ -187,8 +185,7 @@ final class EntryRepository: @unchecked Sendable {
                 arguments += [token, token, token]
             }
             arguments += [Date()] // pp_frecency's `now`
-            let rows = try Row.fetchAll(db, sql: sql, arguments: arguments)
-            let entries = try rows.map { try Entry(row: $0) }
+            let entries = try Entry.fetchAll(db, sql: sql, arguments: arguments)
             if let tag {
                 return Array(Self.applyTagFilter(entries, tag: tag).prefix(100))
             }
@@ -443,9 +440,9 @@ final class EntryRepository: @unchecked Sendable {
         PPLogger.entry.debug("Completion state updated for entry: \(id) completed=\(isCompleted)")
     }
 
-    /// Soft-delete all active completed entries (optionally scoped to a specific project), returning the count of updated rows.
+    /// Soft-delete all active completed entries (optionally scoped to a specific project or excluding archived projects), returning the count of updated rows.
     @discardableResult
-    func deleteCompleted(projectId: String? = nil) throws -> Int {
+    func deleteCompleted(projectId: String? = nil, excludeArchivedProjects: Bool = false) throws -> Int {
         let deletedCount = try dbQueue.write { db -> Int in
             let now = Date()
             if let projectId {
@@ -459,6 +456,20 @@ final class EntryRepository: @unchecked Sendable {
                           AND project_id = ?
                         """,
                     arguments: [now, now, projectId]
+                )
+            } else if excludeArchivedProjects {
+                try db.execute(
+                    sql: """
+                        UPDATE entries
+                        SET deleted_at = ?,
+                            updated_at = ?
+                        WHERE deleted_at IS NULL
+                          AND is_completed = 1
+                          AND project_id IN (
+                              SELECT id FROM projects WHERE deleted_at IS NULL AND is_archived = 0
+                          )
+                        """,
+                    arguments: [now, now]
                 )
             } else {
                 try db.execute(
@@ -474,8 +485,39 @@ final class EntryRepository: @unchecked Sendable {
             }
             return db.changesCount
         }
-        PPLogger.entry.debug("Soft-deleted \(deletedCount) completed entries (projectId=\(projectId ?? "all"))")
+        PPLogger.entry.debug("Soft-deleted \(deletedCount) completed entries (projectId=\(projectId ?? "all"), excludeArchived=\(excludeArchivedProjects))")
         return deletedCount
+    }
+
+    /// Batch-move multiple entries to a target project in a single atomic transaction.
+    @discardableResult
+    func moveEntries(ids: [String], toProjectId targetProjectId: String) throws -> Int {
+        let uniqueIds = ids.uniqued()
+        guard !uniqueIds.isEmpty else { return 0 }
+        let movedCount = try dbQueue.write { db -> Int in
+            guard let targetProject = try Project.fetchOne(db, key: targetProjectId),
+                  targetProject.deletedAt == nil else {
+                throw RepositoryError.notFound("Project \(targetProjectId)")
+            }
+            let now = Date()
+            let placeholders = uniqueIds.map { _ in "?" }.joined(separator: ", ")
+            var arguments: StatementArguments = [targetProject.id, now, targetProject.id]
+            arguments += StatementArguments(uniqueIds)
+            try db.execute(
+                sql: """
+                    UPDATE entries
+                    SET project_id = ?,
+                        updated_at = ?
+                    WHERE deleted_at IS NULL
+                      AND project_id != ?
+                      AND id IN (\(placeholders))
+                    """,
+                arguments: arguments
+            )
+            return db.changesCount
+        }
+        PPLogger.entry.debug("Batch-moved \(movedCount) entries to project: \(targetProjectId)")
+        return movedCount
     }
 
     /// Soft-delete an entry by ID so cloud sync propagates a tombstone instead of resurrecting it.

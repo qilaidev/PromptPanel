@@ -111,14 +111,30 @@ enum EntryRanking {
 
     /// The comparator behind `sqlOrderByClause`, for the panel's in-memory re-sort.
     static func isOrderedBefore(_ lhs: Entry, _ rhs: Entry, currentProjectId: String?, now: Date) -> Bool {
+        let lhsScore = score(useCount: lhs.useCount, lastUsedAt: lhs.lastUsedAt, now: now)
+        let rhsScore = score(useCount: rhs.useCount, lastUsedAt: rhs.lastUsedAt, now: now)
+        return isOrderedBeforeWithPrecomputedScore(
+            lhs,
+            lhsScore: lhsScore,
+            rhs,
+            rhsScore: rhsScore,
+            currentProjectId: currentProjectId
+        )
+    }
+
+    static func isOrderedBeforeWithPrecomputedScore(
+        _ lhs: Entry,
+        lhsScore: Double,
+        _ rhs: Entry,
+        rhsScore: Double,
+        currentProjectId: String?
+    ) -> Bool {
         if lhs.isCompleted != rhs.isCompleted {
             return !lhs.isCompleted
         }
         if lhs.isPinned != rhs.isPinned {
             return lhs.isPinned
         }
-        let lhsScore = score(useCount: lhs.useCount, lastUsedAt: lhs.lastUsedAt, now: now)
-        let rhsScore = score(useCount: rhs.useCount, lastUsedAt: rhs.lastUsedAt, now: now)
         if lhsScore != rhsScore {
             return lhsScore > rhsScore
         }

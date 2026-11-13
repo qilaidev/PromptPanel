@@ -84,6 +84,7 @@ final class UpdaterService: NSObject, ObservableObject {
     private var canCheckObservation: NSKeyValueObservation?
     private var periodicTimer: Timer?
     private var isStarted = false
+    private(set) var isUpdateFlowInFlight = false
     private var stagedCandidate: ReleaseCandidate?
     private var stagedAppURL: URL?
     private var stagedRootDir: URL?
@@ -215,7 +216,10 @@ final class UpdaterService: NSObject, ObservableObject {
             }
             return
         }
-        guard canCheckForUpdates else { return }
+        guard canCheckForUpdates, !isUpdateFlowInFlight else { return }
+        isUpdateFlowInFlight = true
+        canCheckForUpdates = false
+        phase = .checking
         Task { @MainActor in
             await performNativeUpdateFlow(userInitiated: false, autoInstallWhenReady: true)
         }
@@ -235,6 +239,12 @@ final class UpdaterService: NSObject, ObservableObject {
         if case .readyToInstall = phase {
             return installStagedUpdateNow()
         }
+        if isUpdateFlowInFlight {
+            if case .downloading(let ver) = phase {
+                return "正在后台下载并校验 v\(ver)，完成后将自动安装…"
+            }
+            return "正在检查新版本，请稍候…"
+        }
         if case .checking = phase {
             return "正在检查新版本，请稍候…"
         }
@@ -242,6 +252,9 @@ final class UpdaterService: NSObject, ObservableObject {
             return "正在后台下载并校验 v\(ver)，完成后将自动安装…"
         }
 
+        isUpdateFlowInFlight = true
+        canCheckForUpdates = false
+        phase = .checking
         Task { @MainActor in
             await performNativeUpdateFlow(userInitiated: true, autoInstallWhenReady: true)
         }
@@ -249,6 +262,8 @@ final class UpdaterService: NSObject, ObservableObject {
     }
 
     private func performNativeUpdateFlow(userInitiated: Bool, autoInstallWhenReady: Bool) async {
+        isUpdateFlowInFlight = true
+        defer { isUpdateFlowInFlight = false }
         canCheckForUpdates = false
         phase = .checking
         let localVer = currentShortVersion
@@ -296,8 +311,9 @@ final class UpdaterService: NSObject, ObservableObject {
                 _ = installStagedUpdateNow()
             }
         } catch {
-            PPLogger.updater.error("Update flow failed: \(error.localizedDescription)")
-            phase = .failed(message: "更新检查失败：\(error.localizedDescription)")
+            let friendlyMessage = Self.friendlyUpdateErrorMessage(for: error)
+            PPLogger.updater.error("Update flow failed: \(friendlyMessage)")
+            phase = .failed(message: "更新检查失败：\(friendlyMessage)")
             canCheckForUpdates = true
         }
     }
@@ -491,6 +507,9 @@ final class UpdaterService: NSObject, ObservableObject {
             throw NSError(domain: "UpdaterService", code: 20, userInfo: [NSLocalizedDescriptionKey: "GitHub 地址无效"])
         }
         let data = try performSynchronousGET(url: apiURL, timeout: 12.0, accept: "application/vnd.github+json")
+        if CloudSyncService.looksLikeHTMLPayload(data) {
+            throw NSError(domain: "UpdaterService", code: 21, userInfo: [NSLocalizedDescriptionKey: "更新源返回了网页而非版本信息，请检查网络或代理设置"])
+        }
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw NSError(domain: "UpdaterService", code: 21, userInfo: [NSLocalizedDescriptionKey: "无法解析版本响应"])
         }
@@ -652,18 +671,74 @@ final class UpdaterService: NSObject, ObservableObject {
             sem.signal()
         }
         task.resume()
-        _ = sem.wait(timeout: .now() + timeout + 2.0)
+        if sem.wait(timeout: .now() + timeout + 2.0) == .timedOut {
+            task.cancel()
+            throw NSError(domain: "UpdaterService", code: 40, userInfo: [NSLocalizedDescriptionKey: "网络请求超时，请检查网络连接后重试"])
+        }
 
         if let resultErr {
-            throw resultErr
+            throw NSError(
+                domain: "UpdaterService",
+                code: 41,
+                userInfo: [NSLocalizedDescriptionKey: friendlyUpdateErrorMessage(for: resultErr)]
+            )
         }
         guard let http = resultResp as? HTTPURLResponse else {
-            throw NSError(domain: "UpdaterService", code: 40, userInfo: [NSLocalizedDescriptionKey: "网络请求超时"])
+            throw NSError(domain: "UpdaterService", code: 40, userInfo: [NSLocalizedDescriptionKey: "网络请求超时，请检查网络连接后重试"])
         }
         guard (200..<300).contains(http.statusCode), let data = resultData, !data.isEmpty else {
-            throw NSError(domain: "UpdaterService", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "服务器返回 HTTP \(http.statusCode)"])
+            throw NSError(
+                domain: "UpdaterService",
+                code: http.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: friendlyUpdateHTTPErrorMessage(statusCode: http.statusCode)]
+            )
         }
         return data
+    }
+
+    nonisolated static func friendlyUpdateHTTPErrorMessage(statusCode: Int) -> String {
+        switch statusCode {
+        case 403, 429:
+            return "GitHub 接口请求过于频繁或受限 (HTTP \(statusCode))，请稍后再试或配置同步镜像源"
+        case 404:
+            return "未找到最新发布版本信息 (HTTP 404)"
+        case 500, 502, 503, 504:
+            return "更新服务器暂时不可用 (HTTP \(statusCode))，请稍后重试"
+        default:
+            return "更新服务器返回异常状态 (HTTP \(statusCode))"
+        }
+    }
+
+    nonisolated static func friendlyUpdateErrorMessage(for error: Error) -> String {
+        let nsError = error as NSError
+        if nsError.domain == "UpdaterService",
+           let message = nsError.userInfo[NSLocalizedDescriptionKey] as? String,
+           !message.isEmpty {
+            return message
+        }
+        if nsError.domain == NSURLErrorDomain {
+            switch URLError.Code(rawValue: nsError.code) {
+            case .notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff:
+                return "当前网络未连接，请检查网络设置"
+            case .timedOut:
+                return "检查更新请求超时，请稍后重试"
+            case .cannotFindHost, .dnsLookupFailed:
+                return "无法解析更新服务器域名，请检查网络或 DNS 设置"
+            case .cannotConnectToHost:
+                return "无法连接到更新服务器，请检查网络或代理设置"
+            case .networkConnectionLost:
+                return "下载更新时网络连接中断，请稍后重试"
+            case .secureConnectionFailed,
+                 .serverCertificateHasBadDate,
+                 .serverCertificateUntrusted,
+                 .serverCertificateHasUnknownRoot,
+                 .serverCertificateNotYetValid:
+                return "HTTPS 安全连接校验失败，请检查系统时间或代理配置"
+            default:
+                break
+            }
+        }
+        return error.localizedDescription
     }
 
     private static func resolveConfiguration(bundle: Bundle) -> ConfigurationState {

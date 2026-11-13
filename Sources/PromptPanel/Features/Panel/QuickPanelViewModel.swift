@@ -150,7 +150,12 @@ final class QuickPanelViewModel: ObservableObject {
             }
         }
     }
-    @Published private(set) var unfilteredEntries: [Entry] = []
+    @Published private(set) var unfilteredEntries: [Entry] = [] {
+        didSet {
+            rebuildKindFilterCounts()
+        }
+    }
+    private var kindFilterCounts: [KindFilter: Int] = [:]
     @Published private(set) var entries: [Entry] = []
     @Published private(set) var projects: [Project] = []
     @Published private(set) var projectNamesById: [String: String] = [:]
@@ -786,6 +791,10 @@ final class QuickPanelViewModel: ObservableObject {
             try entryRepository.setCompleted(id: entry.id, isCompleted: nextState)
             NotificationCenter.default.post(name: .entriesDidChange, object: self)
             scheduleEntriesRefresh(delayMs: 0, reason: .dataChanged)
+            setTransientStatus(
+                nextState ? "已标记为完成：\(entry.title)" : "已恢复为待办：\(entry.title)",
+                tone: .info
+            )
         } catch {
             PPLogger.entry.error("Failed to toggle entry completed in panel: \(error.localizedDescription)")
             setStatus("更新完成状态失败，请重试。", tone: .error)
@@ -798,22 +807,51 @@ final class QuickPanelViewModel: ObservableObject {
         updated.isPinned.toggle()
         updated.updatedAt = Date()
         do {
-            try entryRepository.update(updated)
+            try entryRepository.update(updated, recordVersion: false)
             NotificationCenter.default.post(name: .entriesDidChange, object: self)
             scheduleEntriesRefresh(delayMs: 0, reason: .dataChanged)
+            setTransientStatus(
+                updated.isPinned ? "已置顶：\(updated.title)" : "已取消置顶：\(updated.title)",
+                tone: .info
+            )
         } catch {
             PPLogger.entry.error("Failed to toggle entry pin in panel: \(error.localizedDescription)")
             setStatus("更新置顶状态失败，请重试。", tone: .error)
         }
     }
 
-    func countForFilter(_ filter: KindFilter) -> Int {
-        guard filter != .all else { return unfilteredEntries.count }
-        return unfilteredEntries.reduce(into: 0) { count, entry in
-            if filter.matches(entry) {
-                count += 1
+    private func rebuildKindFilterCounts() {
+        var counts: [KindFilter: Int] = [
+            .all: unfilteredEntries.count,
+            .noteAndTodo: 0,
+            .note: 0,
+            .todo: 0,
+            .prompt: 0,
+            .code: 0,
+            .reply: 0
+        ]
+        for entry in unfilteredEntries {
+            switch Constants.EntryType.resolve(entry.type) {
+            case .note:
+                counts[.note, default: 0] += 1
+                counts[.noteAndTodo, default: 0] += 1
+            case .todo:
+                counts[.todo, default: 0] += 1
+                counts[.noteAndTodo, default: 0] += 1
+            case .prompt:
+                counts[.prompt, default: 0] += 1
+            case .code:
+                counts[.code, default: 0] += 1
+            case .reply:
+                counts[.reply, default: 0] += 1
             }
         }
+        kindFilterCounts = counts
+    }
+
+    func countForFilter(_ filter: KindFilter) -> Int {
+        guard filter != .all else { return unfilteredEntries.count }
+        return kindFilterCounts[filter] ?? 0
     }
 
     nonisolated static func filterEntries(_ entries: [Entry], by filter: KindFilter) -> [Entry] {
@@ -1069,15 +1107,40 @@ final class QuickPanelViewModel: ObservableObject {
         currentProjectId: String,
         now: Date = Date()
     ) -> [Entry] {
+        guard entries.count > 1 else { return entries }
         let priorityProjectId: String? = (currentProjectId == allProjectsScopeId || currentProjectId.isEmpty)
             ? nil
             : currentProjectId
-        return entries.sorted { lhs, rhs in
-            if lhs.isCompleted != rhs.isCompleted {
-                return !lhs.isCompleted
-            }
-            return EntryRanking.isOrderedBefore(lhs, rhs, currentProjectId: priorityProjectId, now: now)
+        let scores = entries.map {
+            EntryRanking.score(useCount: $0.useCount, lastUsedAt: $0.lastUsedAt, now: now)
         }
+        var alreadySorted = true
+        for index in 0..<(entries.count - 1) {
+            if EntryRanking.isOrderedBeforeWithPrecomputedScore(
+                entries[index + 1],
+                lhsScore: scores[index + 1],
+                entries[index],
+                rhsScore: scores[index],
+                currentProjectId: priorityProjectId
+            ) {
+                alreadySorted = false
+                break
+            }
+        }
+        if alreadySorted {
+            return entries
+        }
+        var indices = Array(entries.indices)
+        indices.sort { i, j in
+            EntryRanking.isOrderedBeforeWithPrecomputedScore(
+                entries[i],
+                lhsScore: scores[i],
+                entries[j],
+                rhsScore: scores[j],
+                currentProjectId: priorityProjectId
+            )
+        }
+        return indices.map { entries[$0] }
     }
 
     /// Extracts the first `#tag` token from the query, returning the remaining

@@ -292,6 +292,7 @@ struct CloudSyncHealthReport: Equatable, Sendable {
 enum CloudSyncError: LocalizedError, Equatable {
     case endpointNotConfigured
     case invalidEndpoint(String)
+    case syncInProgress
     case networkFailure(String)
     case invalidPayload(String)
 
@@ -301,6 +302,8 @@ enum CloudSyncError: LocalizedError, Equatable {
             return "尚未配置云端同步地址（支持 HTTPS 同步接口或 iCloud/网盘同步文件路径）。"
         case .invalidEndpoint(let raw):
             return "无效的同步地址：\(raw)"
+        case .syncInProgress:
+            return "云端同步正在进行中，请稍候重试。"
         case .networkFailure(let detail):
             return "云端同步请求失败：\(detail)"
         case .invalidPayload(let detail):
@@ -312,10 +315,27 @@ enum CloudSyncError: LocalizedError, Equatable {
 final class CloudSyncService: @unchecked Sendable {
     private let dbQueue: DatabaseQueue
     private let storageMaintenanceService: StorageMaintenanceService?
+    private let syncLock = NSLock()
+    private var isSyncOperationInFlight = false
 
     init(dbQueue: DatabaseQueue, storageMaintenanceService: StorageMaintenanceService? = nil) {
         self.dbQueue = dbQueue
         self.storageMaintenanceService = storageMaintenanceService
+    }
+
+    private func acquireSyncSlot() throws {
+        syncLock.lock()
+        defer { syncLock.unlock() }
+        guard !isSyncOperationInFlight else {
+            throw CloudSyncError.syncInProgress
+        }
+        isSyncOperationInFlight = true
+    }
+
+    private func releaseSyncSlot() {
+        syncLock.lock()
+        isSyncOperationInFlight = false
+        syncLock.unlock()
     }
 
     // MARK: - Device & Sync Metadata
@@ -850,12 +870,14 @@ final class CloudSyncService: @unchecked Sendable {
         endpoint: String,
         apiKey: String
     ) throws -> (projectsRestored: Int, entriesRestored: Int, syncSummary: CloudSyncSummary?) {
+        try acquireSyncSlot()
+        defer { releaseSyncSlot() }
         let restored = try recoverLocalSoftDeletedRecords()
         let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return (restored.projectsRestored, restored.entriesRestored, nil)
         }
-        let summary = try syncNow(endpoint: trimmed, apiKey: apiKey)
+        let summary = try syncNowUnlocked(endpoint: trimmed, apiKey: apiKey)
         return (restored.projectsRestored, restored.entriesRestored, summary)
     }
 
@@ -911,10 +933,18 @@ final class CloudSyncService: @unchecked Sendable {
             guard let httpResponse = response as? HTTPURLResponse,
                   (200..<300).contains(httpResponse.statusCode) else {
                 let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-                throw CloudSyncError.networkFailure("HTTP \(code)")
+                throw CloudSyncError.networkFailure(
+                    Self.friendlyHTTPErrorMessage(statusCode: code, responseData: data)
+                )
             }
 
-            let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+            if !data.isEmpty, Self.looksLikeHTMLPayload(data) {
+                throw CloudSyncError.invalidPayload("远端返回了网页而非健康检查 JSON（请检查同步地址或反向代理路径）")
+            }
+            let parsedObject = data.isEmpty ? [:] : (try? JSONSerialization.jsonObject(with: data) as? [String: Any])
+            guard let json = parsedObject else {
+                throw CloudSyncError.invalidPayload("远端未返回有效的 JSON 响应，请检查同步服务地址")
+            }
             let authenticated = (json["authenticated"] as? Bool) ?? !apiKey.isEmpty
             let namespace = json["namespace"] as? String
             let pCount = (json["projectCount"] as? Int) ?? 0
@@ -962,6 +992,12 @@ final class CloudSyncService: @unchecked Sendable {
     }
 
     func syncNow(endpoint: String, apiKey: String) throws -> CloudSyncSummary {
+        try acquireSyncSlot()
+        defer { releaseSyncSlot() }
+        return try syncNowUnlocked(endpoint: endpoint, apiKey: apiKey)
+    }
+
+    private func syncNowUnlocked(endpoint: String, apiKey: String) throws -> CloudSyncSummary {
         let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw CloudSyncError.endpointNotConfigured
@@ -998,9 +1034,17 @@ final class CloudSyncService: @unchecked Sendable {
         if FileManager.default.fileExists(atPath: fileURL.path) {
             let rawData = try Data(contentsOf: fileURL)
             if !rawData.isEmpty {
-                let openedData = try CloudSyncCrypto.openEnvelopeData(rawData, apiKey: apiKey)
-                let remoteEnvelope = try decoder.decode(CloudSyncEnvelope.self, from: openedData)
-                summary = try mergeRemoteEnvelope(remoteEnvelope)
+                do {
+                    let openedData = try CloudSyncCrypto.openEnvelopeData(rawData, apiKey: apiKey)
+                    let remoteEnvelope = try decoder.decode(CloudSyncEnvelope.self, from: openedData)
+                    summary = try mergeRemoteEnvelope(remoteEnvelope)
+                } catch let syncErr as CloudSyncError {
+                    throw syncErr
+                } catch {
+                    throw CloudSyncError.invalidPayload(
+                        Self.friendlyPayloadErrorMessage(for: rawData, underlyingError: error)
+                    )
+                }
             } else {
                 summary = try mergeRemoteEnvelope(buildLocalEnvelope())
             }
@@ -1036,7 +1080,9 @@ final class CloudSyncService: @unchecked Sendable {
                 throw CloudSyncError.networkFailure("Token 鉴权未通过 (HTTP 401)，请确认已填写不少于 12 位的专属 Token")
             }
             if !(200..<300).contains(httpResponse.statusCode) && httpResponse.statusCode != 404 {
-                throw CloudSyncError.networkFailure("远端拉取失败 (HTTP \(httpResponse.statusCode))")
+                throw CloudSyncError.networkFailure(
+                    Self.friendlyHTTPErrorMessage(statusCode: httpResponse.statusCode, responseData: getData)
+                )
             }
         }
 
@@ -1051,7 +1097,9 @@ final class CloudSyncService: @unchecked Sendable {
             } catch let syncErr as CloudSyncError {
                 throw syncErr
             } catch {
-                throw CloudSyncError.invalidPayload(error.localizedDescription)
+                throw CloudSyncError.invalidPayload(
+                    Self.friendlyPayloadErrorMessage(for: getData, underlyingError: error)
+                )
             }
         } else {
             summary = try mergeRemoteEnvelope(buildLocalEnvelope())
@@ -1073,7 +1121,9 @@ final class CloudSyncService: @unchecked Sendable {
         let (postData, postResponse) = try performSynchronousRequest(postRequest)
         if let httpResponse = postResponse as? HTTPURLResponse,
            !(200..<300).contains(httpResponse.statusCode) {
-            throw CloudSyncError.networkFailure("HTTP \(httpResponse.statusCode)")
+            throw CloudSyncError.networkFailure(
+                Self.friendlyHTTPErrorMessage(statusCode: httpResponse.statusCode, responseData: postData)
+            )
         }
         if !postData.isEmpty {
             do {
@@ -1100,8 +1150,12 @@ final class CloudSyncService: @unchecked Sendable {
                         arguments: [summaryText, summary.syncedAt]
                     )
                 }
+            } catch let syncErr as CloudSyncError {
+                throw syncErr
             } catch {
-                throw CloudSyncError.invalidPayload(error.localizedDescription)
+                throw CloudSyncError.invalidPayload(
+                    Self.friendlyPayloadErrorMessage(for: postData, underlyingError: error)
+                )
             }
         }
 
@@ -1110,7 +1164,7 @@ final class CloudSyncService: @unchecked Sendable {
 
     private func performSynchronousRequest(_ request: URLRequest, maxAttempts: Int = 2) throws -> (Data, URLResponse) {
         let attempts = max(1, maxAttempts)
-        var lastError: CloudSyncError = .networkFailure("无响应")
+        var lastError: CloudSyncError = .networkFailure("服务器无响应，请稍后重试")
 
         for attempt in 1...attempts {
             let semaphore = DispatchSemaphore(value: 0)
@@ -1129,7 +1183,7 @@ final class CloudSyncService: @unchecked Sendable {
             let waitTimeout = max(5.0, request.timeoutInterval) + 3.0
             if semaphore.wait(timeout: .now() + waitTimeout) == .timedOut {
                 task.cancel()
-                lastError = .networkFailure("网络请求超时")
+                lastError = .networkFailure("网络请求超时，请检查服务器或网络状态")
                 if attempt < attempts {
                     Thread.sleep(forTimeInterval: 0.25)
                     continue
@@ -1138,7 +1192,7 @@ final class CloudSyncService: @unchecked Sendable {
             }
 
             if let requestError {
-                lastError = .networkFailure(requestError.localizedDescription)
+                lastError = .networkFailure(Self.friendlyNetworkErrorMessage(for: requestError))
                 if attempt < attempts {
                     Thread.sleep(forTimeInterval: 0.25)
                     continue
@@ -1147,7 +1201,7 @@ final class CloudSyncService: @unchecked Sendable {
             }
 
             guard let urlResponse else {
-                lastError = .networkFailure("无响应")
+                lastError = .networkFailure("服务器无响应，请稍后重试")
                 if attempt < attempts {
                     Thread.sleep(forTimeInterval: 0.25)
                     continue
@@ -1166,6 +1220,111 @@ final class CloudSyncService: @unchecked Sendable {
         }
 
         throw lastError
+    }
+
+    static func looksLikeHTMLPayload(_ data: Data) -> Bool {
+        guard !data.isEmpty else { return false }
+        let prefixData = data.prefix(512)
+        guard let snippet = String(data: prefixData, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() else {
+            return false
+        }
+        return snippet.hasPrefix("<!doctype html")
+            || snippet.hasPrefix("<html")
+            || snippet.contains("<head>")
+            || snippet.contains("<body>")
+            || snippet.contains("502 bad gateway")
+            || snippet.contains("504 gateway time-out")
+    }
+
+    static func friendlyNetworkErrorMessage(for error: Error) -> String {
+        if let syncErr = error as? CloudSyncError {
+            return syncErr.localizedDescription
+        }
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain {
+            switch URLError.Code(rawValue: nsError.code) {
+            case .notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff:
+                return "当前网络未连接，请检查网络设置"
+            case .timedOut:
+                return "网络请求超时，请检查服务器或网络状态"
+            case .cannotFindHost, .dnsLookupFailed:
+                return "无法解析同步服务器域名，请检查地址是否正确"
+            case .cannotConnectToHost:
+                return "无法连接到同步服务器，请确认服务已启动且端口可达"
+            case .networkConnectionLost:
+                return "网络连接中断，请稍后重试"
+            case .secureConnectionFailed,
+                 .serverCertificateHasBadDate,
+                 .serverCertificateUntrusted,
+                 .serverCertificateHasUnknownRoot,
+                 .serverCertificateNotYetValid,
+                 .clientCertificateRejected:
+                return "HTTPS 安全连接或证书校验失败，请检查证书配置"
+            case .badURL, .unsupportedURL:
+                return "同步地址格式不正确"
+            default:
+                break
+            }
+        }
+        return error.localizedDescription
+    }
+
+    static func friendlyHTTPErrorMessage(statusCode: Int, responseData: Data? = nil) -> String {
+        var serverDetail: String?
+        if let responseData, !responseData.isEmpty, !looksLikeHTMLPayload(responseData),
+           let json = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any] {
+            if let err = (json["error"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !err.isEmpty {
+                serverDetail = String(err.prefix(80))
+            } else if let msg = (json["message"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !msg.isEmpty {
+                serverDetail = String(msg.prefix(80))
+            }
+        }
+
+        let baseMessage: String
+        switch statusCode {
+        case 400:
+            baseMessage = "同步请求参数或格式有误 (HTTP 400)"
+        case 401:
+            return "Token 鉴权未通过 (HTTP 401)，请确认已填写不少于 12 位的专属 Token"
+        case 403:
+            baseMessage = "访问被拒绝 (HTTP 403)，请检查 Token 权限或反向代理配置"
+        case 404:
+            baseMessage = "未找到同步接口 (HTTP 404)，请确认同步地址包含 /v1/sync"
+        case 413:
+            baseMessage = "同步数据体积超出服务器限制 (HTTP 413)"
+        case 429:
+            baseMessage = "同步请求过于频繁 (HTTP 429)，请稍后再试"
+        case 500:
+            baseMessage = "同步服务器内部错误 (HTTP 500)"
+        case 502, 503, 504:
+            baseMessage = "网关或同步服务暂时不可用 (HTTP \(statusCode))，请确认后端服务运行正常"
+        default:
+            baseMessage = "服务器返回异常状态 (HTTP \(statusCode))"
+        }
+        if let serverDetail {
+            return "\(baseMessage)：\(serverDetail)"
+        }
+        return baseMessage
+    }
+
+    static func friendlyPayloadErrorMessage(for data: Data, underlyingError: Error) -> String {
+        if let syncErr = underlyingError as? CloudSyncError {
+            return syncErr.localizedDescription
+        }
+        if looksLikeHTMLPayload(data) {
+            return "远端返回了网页而非同步数据（请检查同步地址或反向代理路径配置）"
+        }
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let errText = ((json["error"] as? String) ?? (json["message"] as? String))?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               !errText.isEmpty {
+                return "远端返回非同步数据：\(String(errText.prefix(80)))"
+            }
+            return "远端返回的 JSON 不是有效的 PromptPanel 同步包，请检查接口地址"
+        }
+        return "无法解析同步数据包（数据可能损坏或格式不兼容）"
     }
 
     static func makeEncoder() -> JSONEncoder {

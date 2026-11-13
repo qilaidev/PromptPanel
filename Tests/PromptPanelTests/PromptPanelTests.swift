@@ -2050,7 +2050,96 @@ public enum CoreTestSuite {
             try check(mainVM.commitInlineChanges(for: latestEntry))
             let versionsAfterExplicitSave = try entryRepo.fetchVersions(forEntryId: firstEntry.id)
             try check(versionsAfterExplicitSave.count == versionsBefore + 2, "Explicit manual save must still record a version snapshot")
-            _ = inboxProject
+
+            // 6. SQLite composite indexes, single-transaction batch move & archived-aware completed cleanup
+            let indexNames = try await manager.dbQueue.read { db in
+                try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'index'")
+            }
+            try check(indexNames.contains("idx_entries_active_project_rank"), "Expected composite index idx_entries_active_project_rank")
+            try check(indexNames.contains("idx_entries_active_rank"), "Expected composite index idx_entries_active_rank")
+            try check(indexNames.contains("idx_projects_active_kind"), "Expected composite index idx_projects_active_kind")
+
+            let batchMoved = mainVM.moveEntries(withIds: [e1.id, e2.id], toProjectId: projectBeta.id)
+            try check(batchMoved == 2, "Batch moveEntries must move both entries in one transaction")
+            try check(try entryRepo.fetchById(e1.id)?.projectId == projectBeta.id)
+            try check(try entryRepo.fetchById(e2.id)?.projectId == projectBeta.id)
+            _ = mainVM.moveEntries(withIds: [e1.id, e2.id], toProjectId: defaultProject.id)
+
+            let archivedProj = Project(id: "proj-archived-perf", name: "归档保护测试", groupKind: .project, isArchived: true)
+            try projectRepo.create(archivedProj)
+            let archivedDone = Entry(
+                id: "archived-done-item",
+                projectId: archivedProj.id,
+                title: "归档已完成项",
+                content: "不可被全库清理误删",
+                type: Constants.EntryType.todo.rawValue,
+                isCompleted: true
+            )
+            let activeDone = Entry(
+                id: "active-done-item",
+                projectId: inboxProject.id,
+                title: "活跃已完成项",
+                content: "应被单条 SQL 清理",
+                type: Constants.EntryType.todo.rawValue,
+                isCompleted: true
+            )
+            try entryRepo.create(archivedDone)
+            try entryRepo.create(activeDone)
+            let cleanedActiveOnly = try entryRepo.deleteCompleted(projectId: nil, excludeArchivedProjects: true)
+            try check(cleanedActiveOnly == 1)
+            try check(try entryRepo.fetchById(activeDone.id) == nil)
+            try check(try entryRepo.fetchById(archivedDone.id) != nil, "Archived completed entry must remain untouched")
+
+            // 7. QuickPanelViewModel O(1) kindFilterCounts & pin/complete transient status without version bloat
+            panelVM.activateScope(defaultProject.id)
+            await waitUntilAsync(timeout: 1.5) { !panelVM.isScopeSearchInFlight && panelVM.unfilteredEntries.count == 3 }
+            try check(panelVM.countForFilter(.all) == 3)
+            try check(panelVM.countForFilter(.prompt) == 1)
+            try check(panelVM.countForFilter(.code) == 1)
+            try check(panelVM.countForFilter(.note) == 1)
+            try check(panelVM.countForFilter(.noteAndTodo) == 1)
+            try check(panelVM.countForFilter(.reply) == 0)
+
+            let e3VersionsBeforePin = try entryRepo.fetchVersions(forEntryId: e3.id).count
+            panelVM.toggleEntryPinned(e3)
+            try check(panelVM.statusMessage?.contains("已置顶") == true)
+            let e3VersionsAfterPin = try entryRepo.fetchVersions(forEntryId: e3.id).count
+            try check(e3VersionsAfterPin == e3VersionsBeforePin, "Toggling pin must not create redundant EntryVersion snapshots")
+            panelVM.toggleEntryCompleted(e3)
+            try check(panelVM.statusMessage?.contains("已标记为完成") == true)
+
+            // 8. CloudSyncService & UpdaterService friendly Chinese error diagnostics & HTML gateway protection
+            let htmlGatewayData = Data("<!DOCTYPE html><html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>".utf8)
+            try check(CloudSyncService.looksLikeHTMLPayload(htmlGatewayData))
+            let htmlPayloadMsg = CloudSyncService.friendlyPayloadErrorMessage(
+                for: htmlGatewayData,
+                underlyingError: NSError(domain: "Test", code: 1)
+            )
+            try check(htmlPayloadMsg.contains("网页"), "HTML payload must produce a clear Chinese diagnostic")
+
+            let offlineError = NSError(domain: NSURLErrorDomain, code: URLError.notConnectedToInternet.rawValue)
+            try check(CloudSyncService.friendlyNetworkErrorMessage(for: offlineError).contains("网络未连接"))
+            try check(UpdaterService.friendlyUpdateErrorMessage(for: offlineError).contains("网络未连接"))
+            try check(CloudSyncService.friendlyHTTPErrorMessage(statusCode: 502, responseData: htmlGatewayData).contains("502"))
+            try check(UpdaterService.friendlyUpdateHTTPErrorMessage(statusCode: 429).contains("429"))
+
+            let corruptSyncFile = dbURL.deletingLastPathComponent().appendingPathComponent("corrupt-html-sync.json")
+            try htmlGatewayData.write(to: corruptSyncFile, options: .atomic)
+            let syncService = CloudSyncService(dbQueue: manager.dbQueue, storageMaintenanceService: maintenance)
+            var caughtFriendlyHTMLSyncError = false
+            do {
+                _ = try syncService.syncNow(endpoint: corruptSyncFile.path, apiKey: "")
+            } catch let error as CloudSyncError {
+                caughtFriendlyHTMLSyncError = error.localizedDescription.contains("网页")
+            }
+            try check(caughtFriendlyHTMLSyncError, "Syncing against an HTML file must surface a clear Chinese message")
+            try check(CloudSyncError.syncInProgress.localizedDescription.contains("正在进行中"))
+
+            mainVM.load()
+            let targetsExcludingDefault = mainVM.targetProjects(excluding: defaultProject.id)
+            try check(!targetsExcludingDefault.contains(where: { $0.id == defaultProject.id }))
+            try check(!targetsExcludingDefault.contains(where: { $0.id == archivedProj.id }))
+            try check(targetsExcludingDefault.contains(where: { $0.id == projectBeta.id }))
         }
     }
 }

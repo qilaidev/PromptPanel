@@ -171,7 +171,16 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
-    @Published private(set) var projects: [Project] = []
+    @Published private(set) var projects: [Project] = [] {
+        didSet {
+            rebuildProjectPartitions()
+        }
+    }
+    private(set) var cachedInboxProject: Project?
+    private(set) var cachedCategoryProjects: [Project] = []
+    private(set) var cachedActiveProjects: [Project] = []
+    private(set) var cachedArchivedProjects: [Project] = []
+    private(set) var nonArchivedProjects: [Project] = []
     @Published private(set) var entries: [Entry] = []
     @Published private(set) var displayedEntries: [Entry] = []
     @Published private(set) var recentExecutionLogs: [ExecutionLog] = []
@@ -506,6 +515,39 @@ final class MainWindowViewModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.bannerAutoDismissInterval, execute: workItem)
     }
 
+    private func rebuildProjectPartitions() {
+        var inbox: Project?
+        var categories: [Project] = []
+        var active: [Project] = []
+        var archived: [Project] = []
+        var nonArchived: [Project] = []
+
+        for project in projects {
+            if project.groupKind == .inbox, inbox == nil {
+                inbox = project
+            }
+            if project.isArchived {
+                archived.append(project)
+            } else {
+                nonArchived.append(project)
+                switch project.groupKind {
+                case .category:
+                    categories.append(project)
+                case .project:
+                    active.append(project)
+                case .inbox:
+                    break
+                }
+            }
+        }
+
+        cachedInboxProject = inbox
+        cachedCategoryProjects = categories
+        cachedActiveProjects = active
+        cachedArchivedProjects = archived
+        nonArchivedProjects = nonArchived
+    }
+
     var selectedProject: Project? {
         projects.first(where: { $0.id == selectedProjectId })
     }
@@ -515,19 +557,23 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     var inboxProject: Project? {
-        projects.first(where: { $0.groupKind == .inbox })
+        cachedInboxProject
     }
 
     var categoryProjects: [Project] {
-        projects.filter { $0.groupKind == .category && !$0.isArchived }
+        cachedCategoryProjects
     }
 
     var activeProjects: [Project] {
-        projects.filter { $0.groupKind == .project && !$0.isArchived }
+        cachedActiveProjects
     }
 
     var archivedProjects: [Project] {
-        projects.filter { $0.isArchived }
+        cachedArchivedProjects
+    }
+
+    func targetProjects(excluding projectId: String) -> [Project] {
+        nonArchivedProjects.filter { $0.id != projectId }
     }
 
     /// Ordered non-archived projects for the top-left context switcher & scroll cycling.
@@ -543,7 +589,7 @@ final class MainWindowViewModel: ObservableObject {
         for project in activeProjects where seen.insert(project.id).inserted {
             ordered.append(project)
         }
-        for project in projects where !project.isArchived && seen.insert(project.id).inserted {
+        for project in nonArchivedProjects where seen.insert(project.id).inserted {
             ordered.append(project)
         }
         return ordered
@@ -551,12 +597,12 @@ final class MainWindowViewModel: ObservableObject {
 
     var quickCaptureTargetProjectId: String {
         let resolvedInboxId = inboxProject?.id
-            ?? (try? projectRepository.fetchById(Constants.inboxProjectId))?.id
+            ?? (projects.isEmpty ? (try? projectRepository.fetchById(Constants.inboxProjectId))?.id : nil)
             ?? (currentProjectId.isEmpty ? appState.effectiveProjectId : currentProjectId)
         if quickCapturePreferInbox || selectedProjectId == Self.allProjectsSelection {
             return resolvedInboxId
         }
-        if let selected = selectedProject ?? (try? projectRepository.fetchById(selectedProjectId)) {
+        if let selected = selectedProject ?? (projects.isEmpty ? (try? projectRepository.fetchById(selectedProjectId)) : nil) {
             if selected.isArchived {
                 return resolvedInboxId
             }
@@ -573,7 +619,7 @@ final class MainWindowViewModel: ObservableObject {
         if targetId == Constants.inboxProjectId {
             return Constants.inboxProjectName
         }
-        if let fetched = try? projectRepository.fetchById(targetId) {
+        if projects.isEmpty, let fetched = try? projectRepository.fetchById(targetId) {
             return fetched.name
         }
         return Constants.inboxProjectName
@@ -702,8 +748,14 @@ final class MainWindowViewModel: ObservableObject {
             selectedEntryId = displayedEntries.first?.id
         }
         if let entry = selectedEntry {
-            let shouldForceSync = inlineDraftEntryId != entry.id || !hasUnsavedInlineChanges(for: entry)
-            syncInlineDraft(with: entry, force: shouldForceSync, preserveSavedState: inlineDraftEntryId == entry.id)
+            let isSameEntry = inlineDraftEntryId == entry.id
+            let hasLiveTyping = isSameEntry && (
+                hasUnsavedInlineChanges(for: entry)
+                || inlineAutoSaveState == .pending
+                || inlineAutoSaveState == .saving
+                || inlineAutoSaveState == .invalid
+            )
+            syncInlineDraft(with: entry, force: !hasLiveTyping, preserveSavedState: isSameEntry)
         }
         refreshSelectedEntryVersions()
         refreshReferenceEntries()
@@ -1255,7 +1307,7 @@ final class MainWindowViewModel: ObservableObject {
         updated.isPinned.toggle()
         updated.updatedAt = Date()
         do {
-            try entryRepository.update(updated)
+            try entryRepository.update(updated, recordVersion: false)
             if inlineDraftEntryId == updated.id {
                 isSyncingInlineDraftProgrammatically = true
                 inlineDraftIsPinned = updated.isPinned
@@ -1851,6 +1903,8 @@ final class MainWindowViewModel: ObservableObject {
             bannerMessage = "请等待“\(activeMaintenanceTask ?? "当前操作")”结束后再试。"
             return
         }
+        pendingAutoCloudSyncWorkItem?.cancel()
+        pendingAutoCloudSyncWorkItem = nil
         saveCloudSyncSettings()
         let endpoint = cloudSyncEndpoint
         let apiKey = cloudSyncApiKey
@@ -1892,6 +1946,8 @@ final class MainWindowViewModel: ObservableObject {
             bannerMessage = "请等待“\(activeMaintenanceTask ?? "当前操作")”结束后再试。"
             return
         }
+        pendingAutoCloudSyncWorkItem?.cancel()
+        pendingAutoCloudSyncWorkItem = nil
         saveCloudSyncSettings()
         let endpoint = cloudSyncEndpoint
         let apiKey = cloudSyncApiKey
@@ -2520,59 +2576,30 @@ final class MainWindowViewModel: ObservableObject {
         }
 
         let archivedIds = Set(archivedProjects.map(\.id))
-        if archivedIds.isEmpty {
-            do {
-                let deletedCount = try entryRepository.deleteCompleted(projectId: nil)
-                guard deletedCount > 0 else {
-                    bannerMessage = "当前分组没有已完成记录。"
-                    return 0
-                }
-                entries.removeAll(where: \.isCompleted)
-                refreshEntryFacets()
-                refreshDisplayedEntries()
-                NotificationCenter.default.post(name: .entriesDidChange, object: nil)
-                bannerMessage = "已清理 \(deletedCount) 条已完成记录。"
-                return deletedCount
-            } catch {
-                PPLogger.entry.error("Failed to clear all completed entries: \(error.localizedDescription)")
-                bannerMessage = "清理已完成记录失败，请重试。"
+        do {
+            let deletedCount = try entryRepository.deleteCompleted(
+                projectId: nil,
+                excludeArchivedProjects: !archivedIds.isEmpty
+            )
+            guard deletedCount > 0 else {
+                bannerMessage = "当前分组没有已完成记录。"
                 return 0
             }
-        }
-
-        let candidates: [Entry] = {
-            if let fetched = try? entryRepository.fetchAll(excludeArchivedProjects: true) {
-                return fetched.filter(\.isCompleted)
+            if archivedIds.isEmpty {
+                entries.removeAll(where: \.isCompleted)
+            } else {
+                entries.removeAll { $0.isCompleted && !archivedIds.contains($0.projectId) }
             }
-            return entries.filter { $0.isCompleted && !archivedIds.contains($0.projectId) }
-        }()
-
-        guard !candidates.isEmpty else {
-            bannerMessage = "当前分组没有已完成记录。"
-            return 0
-        }
-
-        var deletedIds = Set<String>()
-        for entry in candidates {
-            do {
-                try entryRepository.delete(id: entry.id)
-                deletedIds.insert(entry.id)
-            } catch {
-                PPLogger.entry.error("Failed to clear completed entry \(entry.id): \(error.localizedDescription)")
-            }
-        }
-
-        guard !deletedIds.isEmpty else {
+            refreshEntryFacets()
+            refreshDisplayedEntries()
+            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            bannerMessage = "已清理 \(deletedCount) 条已完成记录。"
+            return deletedCount
+        } catch {
+            PPLogger.entry.error("Failed to clear all completed entries: \(error.localizedDescription)")
             bannerMessage = "清理已完成记录失败，请重试。"
             return 0
         }
-
-        entries.removeAll { deletedIds.contains($0.id) }
-        refreshEntryFacets()
-        refreshDisplayedEntries()
-        NotificationCenter.default.post(name: .entriesDidChange, object: nil)
-        bannerMessage = "已清理 \(deletedIds.count) 条已完成记录。"
-        return deletedIds.count
     }
 
     func requestDeleteEntry(_ entry: Entry) {
@@ -2586,7 +2613,7 @@ final class MainWindowViewModel: ObservableObject {
         updated.projectId = targetProjectId
         updated.updatedAt = Date()
         do {
-            try entryRepository.update(updated)
+            try entryRepository.update(updated, recordVersion: false)
             if inlineDraftEntryId == updated.id {
                 isSyncingInlineDraftProgrammatically = true
                 inlineDraftProjectId = targetProjectId
@@ -2622,25 +2649,25 @@ final class MainWindowViewModel: ObservableObject {
             return 1
         }
 
-        var movedCount = 0
-        for id in uniqueIds {
-            guard var entry = (try? entryRepository.fetchById(id)) ?? entries.first(where: { $0.id == id }),
-                  entry.projectId != targetProjectId else {
-                continue
+        let movedCount = (try? entryRepository.moveEntries(ids: uniqueIds, toProjectId: targetProjectId)) ?? 0
+        if movedCount > 0 {
+            let movedIdSet = Set(uniqueIds)
+            if !inlineDraftEntryId.isEmpty, movedIdSet.contains(inlineDraftEntryId) {
+                isSyncingInlineDraftProgrammatically = true
+                inlineDraftProjectId = targetProjectId
+                isSyncingInlineDraftProgrammatically = false
             }
-            entry.projectId = targetProjectId
-            entry.updatedAt = Date()
-            if (try? entryRepository.update(entry)) != nil {
-                movedCount += 1
-                if inlineDraftEntryId == entry.id {
-                    isSyncingInlineDraftProgrammatically = true
-                    inlineDraftProjectId = targetProjectId
-                    isSyncingInlineDraftProgrammatically = false
+            if selectedProjectId != Self.allProjectsSelection && selectedProjectId != targetProjectId {
+                entries.removeAll { movedIdSet.contains($0.id) }
+            } else {
+                let now = Date()
+                for idx in entries.indices where movedIdSet.contains(entries[idx].id) {
+                    entries[idx].projectId = targetProjectId
+                    entries[idx].updatedAt = now
                 }
             }
-        }
-
-        if movedCount > 0 {
+            refreshEntryFacets()
+            refreshDisplayedEntries()
             NotificationCenter.default.post(name: .entriesDidChange, object: nil)
             bannerMessage = "已将 \(movedCount) 条内容移至「\(projectName(for: targetProjectId))」。"
         }
@@ -2654,7 +2681,7 @@ final class MainWindowViewModel: ObservableObject {
         updated.type = newType
         updated.updatedAt = Date()
         do {
-            try entryRepository.update(updated)
+            try entryRepository.update(updated, recordVersion: false)
             if inlineDraftEntryId == updated.id {
                 isSyncingInlineDraftProgrammatically = true
                 inlineDraftType = newType
