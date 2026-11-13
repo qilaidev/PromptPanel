@@ -413,9 +413,27 @@ public enum CoreTestSuite {
         try check(
             PanelService.desiredActivationPolicy(isPanelVisible: false, isMainWindowVisible: false) == .accessory
         )
+
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        try check(!delegate.applicationShouldSaveApplicationState(app))
+        try check(!delegate.applicationShouldRestoreApplicationState(app))
+        delegate.setupMainMenu()
+        try check(app.mainMenu?.items.count == 3)
+        let appSubmenuItems = app.mainMenu?.items.first?.submenu?.items ?? []
+        try check(appSubmenuItems.contains(where: { $0.keyEquivalent == "," }))
+        let editSubmenuItems = app.mainMenu?.items.dropFirst().first?.submenu?.items ?? []
+        try check(editSubmenuItems.contains(where: { $0.keyEquivalent == "v" }))
+        try check(editSubmenuItems.contains(where: { $0.keyEquivalent == "a" }))
     }
 
     static func verifyKeyCommands() throws {
+        try check(
+            QuickPanelViewModel.panelKeyCommand(
+                modifierFlags: [.command],
+                charactersIgnoringModifiers: ","
+            ) == .openPreferences
+        )
         try check(
             QuickPanelViewModel.panelKeyCommand(
                 keyCode: 53,

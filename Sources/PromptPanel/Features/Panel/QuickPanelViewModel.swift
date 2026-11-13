@@ -181,6 +181,7 @@ final class QuickPanelViewModel: ObservableObject {
     private let panelOpenTracker: PanelOpenTracker?
     private let onSetPanelPinned: (Bool) -> Bool
     private let onOpenSettings: () -> Void
+    private let onOpenPreferences: () -> Void
     private let onClosePanel: () -> Void
     private var cancellables = Set<AnyCancellable>()
     private let searchQueue = DispatchQueue(label: "PromptPanel.quick-panel.search", qos: .userInteractive)
@@ -203,6 +204,7 @@ final class QuickPanelViewModel: ObservableObject {
         panelOpenTracker: PanelOpenTracker? = nil,
         onSetPanelPinned: @escaping (Bool) -> Bool = { _ in false },
         onOpenSettings: @escaping () -> Void = {},
+        onOpenPreferences: (() -> Void)? = nil,
         onClosePanel: @escaping () -> Void
     ) {
         self.appState = appState
@@ -216,6 +218,7 @@ final class QuickPanelViewModel: ObservableObject {
         self.panelOpenTracker = panelOpenTracker
         self.onSetPanelPinned = onSetPanelPinned
         self.onOpenSettings = onOpenSettings
+        self.onOpenPreferences = onOpenPreferences ?? onOpenSettings
         self.onClosePanel = onClosePanel
         self.currentProjectId = appState.effectiveProjectId
 
@@ -1192,6 +1195,7 @@ final class QuickPanelViewModel: ObservableObject {
         case quickCreateEntry
         case quickCreateNote
         case quickCreateTodo
+        case openPreferences
         case closePanel
     }
 
@@ -1241,6 +1245,8 @@ final class QuickPanelViewModel: ObservableObject {
             return .togglePreview
         case "n":
             return .quickCreateEntry
+        case ",":
+            return .openPreferences
         default:
             return nil
         }
@@ -1286,6 +1292,8 @@ final class QuickPanelViewModel: ObservableObject {
             quickCreateEntryFromPanel(type: .note)
         case .quickCreateTodo:
             quickCreateEntryFromPanel(type: .todo)
+        case .openPreferences:
+            onOpenPreferences()
         case .closePanel:
             handleEscape()
         }

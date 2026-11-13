@@ -185,6 +185,7 @@ final class PanelService {
         panel.becomesKeyOnlyIfNeeded = false
         panel.animationBehavior = .none
         panel.isReleasedWhenClosed = false
+        panel.isRestorable = false
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true

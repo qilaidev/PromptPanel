@@ -226,6 +226,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         false
     }
 
+    func applicationShouldSaveApplicationState(_ app: NSApplication) -> Bool {
+        false
+    }
+
+    func applicationShouldRestoreApplicationState(_ app: NSApplication) -> Bool {
+        false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard mainWindowViewModel != nil else { return false }
+        if appState?.isPanelVisible == true {
+            return false
+        }
+        if !flag {
+            openMainWindow(targetTab: .library)
+        } else {
+            mainWindow?.makeKeyAndOrderFront(nil)
+        }
+        return true
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         mainWindowViewModel?.commitPendingInlineChangesIfNeeded()
         mainWindowViewModel?.cancelPendingBackgroundTasks()
@@ -459,6 +480,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.panelService.hide()
                 self?.openMainWindow(targetTab: .library)
             },
+            onOpenPreferences: { [weak self] in
+                self?.panelService.hide()
+                self?.openMainWindow(targetTab: .settings)
+            },
             onClosePanel: { [weak self] in
                 self?.panelService.hide()
             }
@@ -545,6 +570,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         )
         trayManager.setup()
+        setupMainMenu()
 
         // Keep NSWindow / NSPanel chrome in sync with the user's theme.
         themeCancellable = appState.$appTheme
@@ -768,6 +794,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.center()
             window.contentView = NSHostingView(rootView: contentView)
             window.isReleasedWhenClosed = false
+            window.isRestorable = false
             window.animationBehavior = .none
             window.titlebarAppearsTransparent = false
             window.isMovableByWindowBackground = true
@@ -804,6 +831,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             window.contentView = NSHostingView(rootView: contentView)
             window.isReleasedWhenClosed = false
+            window.isRestorable = false
             window.delegate = self
             referenceWindow = window
         }
@@ -972,6 +1000,121 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         PPLogger.app.info("Switched activation policy to \(String(describing: desiredPolicy))")
+    }
+
+    // MARK: - Native AppKit Main Menu (Replaces SwiftUI Empty Settings Scene)
+
+    func setupMainMenu() {
+        let mainMenu = NSMenu()
+
+        // 1. Application Menu ("项目快贴")
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu(title: Constants.appName)
+
+        let openLibraryItem = NSMenuItem(
+            title: "打开主界面",
+            action: #selector(handleMenuOpenMainWindow),
+            keyEquivalent: ""
+        )
+        openLibraryItem.target = self
+        appMenu.addItem(openLibraryItem)
+
+        let settingsItem = NSMenuItem(
+            title: "偏好设置…",
+            action: #selector(handleMenuOpenSettings),
+            keyEquivalent: ","
+        )
+        settingsItem.keyEquivalentModifierMask = [.command]
+        settingsItem.target = self
+        appMenu.addItem(settingsItem)
+
+        let checkUpdatesItem = NSMenuItem(
+            title: "检查更新…",
+            action: #selector(handleMenuCheckForUpdates),
+            keyEquivalent: ""
+        )
+        checkUpdatesItem.target = self
+        appMenu.addItem(checkUpdatesItem)
+
+        appMenu.addItem(NSMenuItem.separator())
+
+        let hideItem = NSMenuItem(
+            title: "隐藏 \(Constants.appName)",
+            action: #selector(NSApplication.hide(_:)),
+            keyEquivalent: "h"
+        )
+        appMenu.addItem(hideItem)
+
+        let hideOthersItem = NSMenuItem(
+            title: "隐藏其他",
+            action: #selector(NSApplication.hideOtherApplications(_:)),
+            keyEquivalent: "h"
+        )
+        hideOthersItem.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(hideOthersItem)
+
+        let showAllItem = NSMenuItem(
+            title: "全部显示",
+            action: #selector(NSApplication.unhideAllApplications(_:)),
+            keyEquivalent: ""
+        )
+        appMenu.addItem(showAllItem)
+
+        appMenu.addItem(NSMenuItem.separator())
+
+        let quitItem = NSMenuItem(
+            title: "退出 \(Constants.appName)",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+        appMenu.addItem(quitItem)
+
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        // 2. Edit Menu ("编辑" — required for NSTextField/NSTextView ⌘C/⌘V/⌘X/⌘A/⌘Z responder chain)
+        let editMenuItem = NSMenuItem()
+        let editMenu = NSMenu(title: "编辑")
+        editMenu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
+        let redoItem = NSMenuItem(title: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
+        redoItem.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(redoItem)
+        editMenu.addItem(NSMenuItem.separator())
+        editMenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
+        // 3. Window Menu ("窗口")
+        let windowMenuItem = NSMenuItem()
+        let windowMenu = NSMenu(title: "窗口")
+        windowMenu.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowMenu.addItem(withTitle: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenuItem.submenu = windowMenu
+        mainMenu.addItem(windowMenuItem)
+
+        let app = NSApplication.shared
+        app.mainMenu = mainMenu
+        app.windowsMenu = windowMenu
+    }
+
+    @objc private func handleMenuOpenMainWindow() {
+        panelService?.hide()
+        openMainWindow(targetTab: .library)
+    }
+
+    @objc private func handleMenuOpenSettings() {
+        panelService?.hide()
+        openMainWindow(targetTab: .settings)
+    }
+
+    @objc private func handleMenuCheckForUpdates() {
+        guard let updaterService else { return }
+        let msg = updaterService.checkForUpdates()
+        mainWindowViewModel?.bannerMessage = msg
+        toastService?.show(message: msg, isSuccess: true)
     }
 }
 
