@@ -6,6 +6,16 @@ The format is based on Keep a Changelog, and this project uses Conventional Comm
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-11-13
+
+跨端一键更新与后台自动更新版本（`1.7.2+13`）。打通 macOS 桌面端、Android 移动端与自托管同步服务端的双源（同步节点镜像优先 + GitHub Releases 兜底）SHA-256 校验更新闭环，告别手动翻找安装包与覆盖拖拽。
+
+### Added
+
+- **macOS 原生一键更新与后台静默升级（`UpdaterService` / `SettingsView` / `TrayManager` / `AppDelegate`）。** 在保留 Sparkle 企业签名源支持的同时，内置免配置发行版自更新引擎：支持在「设置 → 通用 → 软件版本」或菜单栏「检查更新…」一键检测、下载、校验 SHA-256 与 Bundle 代码签名（`codesign --verify --deep --strict`），升级前自动冲刷内联草稿并生成 `update` 安全数据库快照（`createUpdateSafetyBackup`），原子替换 `/Applications/PromptPanel.app`（失败自动回滚 `.old`）、剥离隔离属性并自动重启；开启「自动更新」后每 4 小时静默巡检并在后台空闲无窗口打开时无感完成升级。
+- **Android 移动端应用内一键安装更新与后台预下载（`UpdateApkProvider` / `UpdateDownloadTask` / `MainActivity` / `assets/index.html`）。** 新增原生 `ContentProvider` 安装包分发与 `REQUEST_INSTALL_PACKAGES` 权限衔接（首次授权「允许安装未知应用」返回后自动续装）；「设置 → 偏好 → 版本与一键更新」支持开启「自动检查并预下载更新」、复制安装包直链及点击「检查并一键更新」，后台静默下载并完成 SHA-256 校验后在顶部横幅弹出「立即安装」一键原位覆盖升级，完整保留 SQLite 词库与 KeyStore 加密令牌。
+- **自托管同步服务端发行包镜像中继与极速直链（`server/promptpanel_sync_server.py` `v2.2.0`）。** 新增 `GET /v1/update` 最新版本清单接口及 `/download/android`、`/download/macos`、`/download/dmg` 磁盘缓存流式下载接口（64KB 分块校验 SHA-256 并自动淘汰历史旧包），使国内或局域网设备无需直连 GitHub 即可满速完成一键更新。
+
 ## [1.7.1] - 2026-11-13
 
 跨端同步稳定性根因修复、双端扫码/粘贴一键配对与移动端交互打磨补丁版本（`1.7.1+12`）。彻底解决手机端修改便签/待办无法同步回电脑、开启自动同步后缺少自动拉取以及电脑端复制配置在手机端无法导入的三项核心阻断问题，并同步落地手机端底部五栏导航（设置下沉）、列表左右滑动手势与双端一键新建待办体验。
