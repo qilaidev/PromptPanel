@@ -5,11 +5,13 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.graphics.Color;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.security.keystore.KeyGenParameterSpec;
@@ -20,6 +22,7 @@ import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -64,8 +67,11 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
     private static final String DB_STORE_KEY = "envelope_v2";
     private static final long SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000L; // 5 minutes throttle for rolling snapshots
 
+    private static final int REQUEST_SELECT_FILE = 1001;
+
     private WebView webView;
     private SQLiteDatabase sqliteDb;
+    private ValueCallback<Uri[]> filePathCallback;
     private volatile boolean hasOpenModal = false;
     private volatile String pendingThemeMode = "system";
     private volatile String cachedStoreJson = null;
@@ -87,7 +93,7 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
         settings.setDatabaseEnabled(true);
         // Keep asset/file loading compatible across all OEM ROMs while blocking cross-file URL access
         settings.setAllowFileAccess(true);
-        settings.setAllowContentAccess(false);
+        settings.setAllowContentAccess(true);
         settings.setAllowFileAccessFromFileURLs(false);
         settings.setAllowUniversalAccessFromFileURLs(false);
         settings.setSaveFormData(false);
@@ -96,13 +102,48 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
         settings.setTextZoom(100);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
 
-        webView.setWebChromeClient(new WebChromeClient());
+        webView.setWebChromeClient(new SafeWebChromeClient(this));
         webView.setWebViewClient(new SafeWebViewClient());
         webView.addJavascriptInterface(this, "AndroidBridge");
         webView.setOnKeyListener(this);
 
         setContentView(webView);
         webView.loadUrl("file:///android_asset/index.html");
+    }
+
+    boolean openQrImagePicker(ValueCallback<Uri[]> callback) {
+        if (filePathCallback != null) {
+            filePathCallback.onReceiveValue(null);
+        }
+        filePathCallback = callback;
+        try {
+            Intent pickIntent = new Intent(Intent.ACTION_GET_CONTENT);
+            pickIntent.addCategory(Intent.CATEGORY_OPENABLE);
+            pickIntent.setType("image/*");
+            startActivityForResult(Intent.createChooser(pickIntent, "选择配对二维码图片"), REQUEST_SELECT_FILE);
+            return true;
+        } catch (Exception e) {
+            filePathCallback = null;
+            return false;
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == REQUEST_SELECT_FILE) {
+            if (filePathCallback != null) {
+                Uri[] results = null;
+                if (resultCode == Activity.RESULT_OK && data != null && data.getData() != null) {
+                    results = new Uri[]{data.getData()};
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    results = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
+                }
+                filePathCallback.onReceiveValue(results);
+                filePathCallback = null;
+            }
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
     }
 
     @Override
@@ -583,7 +624,7 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
                 conn.setUseCaches(false);
                 conn.setRequestProperty("Accept", "application/json");
                 conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-                conn.setRequestProperty("User-Agent", "PromptPanel-Android/1.7.0");
+                conn.setRequestProperty("User-Agent", "PromptPanel-Android/1.7.1");
                 if (!cleanToken.isEmpty()) {
                     conn.setRequestProperty("Authorization", "Bearer " + cleanToken);
                 }

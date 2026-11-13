@@ -600,7 +600,43 @@
   .content-list {
     flex: 1;
     overflow-y: auto;
+    overflow-x: hidden;
     background: var(--surface);
+  }
+
+  .entry-swipe-wrap {
+    position: relative;
+    overflow: hidden;
+    background: var(--surface);
+    touch-action: pan-y;
+  }
+
+  .swipe-bg {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    font-size: 11px;
+    font-weight: 600;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 100ms var(--ease);
+  }
+
+  .swipe-bg.swiping-left {
+    background: var(--danger-dim);
+    color: var(--danger);
+    justify-content: flex-end;
+    opacity: 1;
+  }
+
+  .swipe-bg.swiping-right {
+    background: var(--success-dim);
+    color: var(--success);
+    justify-content: flex-start;
+    opacity: 1;
   }
 
   .entry-row {
@@ -611,7 +647,107 @@
     padding: 8px 12px;
     background: var(--surface);
     cursor: pointer;
-    transition: background-color 120ms var(--ease);
+    transition: background-color 120ms var(--ease), transform 160ms var(--ease);
+    will-change: transform;
+  }
+
+  .quick-jot-wrap {
+    padding: 6px 12px 8px;
+    background: var(--surface);
+    border-bottom: 0.5px solid var(--divider);
+    flex-shrink: 0;
+  }
+
+  .quick-jot-box {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 32px;
+    padding: 3px 4px 3px 8px;
+    border-radius: 6px;
+    background: var(--input-fill);
+    border: 0.5px solid var(--border);
+  }
+
+  .quick-jot-box:focus-within {
+    border-color: var(--accent-border);
+  }
+
+  .quick-jot-input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    outline: none;
+    padding: 0;
+  }
+
+  .quick-jot-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .jot-action-btn {
+    height: 24px;
+    padding: 0 8px;
+    border-radius: 5px;
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 600;
+    border: 0.5px solid var(--border);
+    background: var(--tint-subtle);
+    color: var(--text-sub);
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .jot-action-btn.todo {
+    background: var(--warn-dim);
+    border-color: rgba(212, 163, 90, 0.35);
+    color: var(--warn);
+  }
+
+  .jot-action-btn.note {
+    background: var(--accent-dim);
+    border-color: var(--accent-border);
+    color: var(--accent);
+  }
+
+  .sync-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .sync-dot.ok {
+    background: var(--success);
+  }
+
+  .sync-dot.err {
+    background: var(--danger);
+  }
+
+  .banner-undo-btn {
+    height: 20px;
+    padding: 0 8px;
+    border-radius: 4px;
+    border: 0.5px solid var(--accent-border);
+    background: var(--accent-dim);
+    color: var(--accent);
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 600;
+    display: none;
+    align-items: center;
+    cursor: pointer;
+    flex-shrink: 0;
   }
 
   .entry-row:active {
@@ -1615,12 +1751,12 @@
       <select id="scopeBindSelect" class="scope-native-select" onchange="onChangeCurrentScope(this.value)" aria-label="切换当前面板绑定项目"></select>
     </div>
 
-    <div class="segmented-control">
-      <button id="segLibrary" class="segment-btn active" onclick="switchMainSegment('library')">内容库</button>
-      <button id="segSettings" class="segment-btn" onclick="switchMainSegment('settings')">设置</button>
-    </div>
-
     <div class="topbar-actions">
+      <button id="topbarSyncBtn" class="quiet-btn" onclick="onTapTopbarSync()" title="一键双向云同步（未配置时跳转设置）">
+        <span id="topbarSyncDot" class="sync-dot"></span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        <span>同步</span>
+      </button>
       <button class="quiet-btn" onclick="openReferenceModal()" title="打开参考与剪贴板装配台">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
         <span>参考窗</span>
@@ -1628,10 +1764,11 @@
     </div>
   </header>
 
-  <!-- Transient Status Banner (Mirrors SettingsBanner) -->
+  <!-- Transient Status Banner (Mirrors SettingsBanner, with Undo support) -->
   <div id="bannerStrip" class="banner-strip">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
     <span id="bannerText" class="banner-text"></span>
+    <button id="bannerUndoBtn" class="banner-undo-btn" onclick="undoLastDeletedEntry()">撤销</button>
     <button class="clear-btn" style="display:inline-flex;" onclick="dismissBanner()" aria-label="关闭提示">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>
@@ -1647,6 +1784,15 @@
         <button id="clearSearchBtn" class="clear-btn" onclick="clearSearch()" aria-label="清除搜索">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
+      </div>
+    </div>
+
+    <!-- Inline Quick Capture for Todo & Note (Zero-modal 1-tap capture) -->
+    <div id="mobileQuickJotWrap" class="quick-jot-wrap">
+      <div class="quick-jot-box">
+        <input id="mobileQuickJotInput" class="quick-jot-input" type="text" placeholder="快速输入待办或随手记（支持 #标签，回车即存待办）…" onkeydown="if(event.key==='Enter'){event.preventDefault();submitMobileQuickJot('todo');}" />
+        <button type="button" class="jot-action-btn todo" onclick="submitMobileQuickJot('todo')">+ 待办</button>
+        <button type="button" class="jot-action-btn note" onclick="submitMobileQuickJot('note')">+ 便签</button>
       </div>
     </div>
 
@@ -1684,30 +1830,6 @@
     </div>
 
     <main id="entryList" class="content-list"></main>
-
-    <!-- 4-Section Sidebar Architecture on Mobile Bottom Bar -->
-    <nav class="bottom-nav">
-      <div class="nav-item" id="nav-0" onclick="switchTab(0)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
-        <span class="nav-label">全部内容</span>
-        <span id="navCount0" class="nav-count">0</span>
-      </div>
-      <div class="nav-item active" id="nav-1" onclick="switchTab(1)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>
-        <span class="nav-label">速记待办</span>
-        <span id="navCount1" class="nav-count">0</span>
-      </div>
-      <div class="nav-item" id="nav-2" onclick="switchTab(2)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
-        <span class="nav-label">常用类型</span>
-        <span id="navCount2" class="nav-count">0</span>
-      </div>
-      <div class="nav-item" id="nav-3" onclick="switchTab(3)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-        <span class="nav-label">项目</span>
-        <span id="navCount3" class="nav-count">0</span>
-      </div>
-    </nav>
   </div>
 
   <!-- Settings Segment (Mirrors SettingsView.swift: 偏好 / 维护) -->
@@ -1725,7 +1847,7 @@
       </div>
       <div class="health-inline">
         <span class="status-dot"></span>
-        <span id="healthInlineText">SQLite WAL · KeyStore AES-256 · v1.7.0 (11)</span>
+        <span id="healthInlineText">SQLite WAL · KeyStore AES-256 · v1.7.1 (12)</span>
       </div>
     </div>
 
@@ -1765,18 +1887,23 @@
           <span class="settings-card-title">云端同步 (CloudSyncService v2)</span>
           <span id="syncBadgeText" class="kbd-badge">未检测</span>
         </div>
+        <div class="btn-row" style="margin-bottom:10px;">
+          <button class="btn-secondary" style="flex:1;" onclick="pasteSyncConfigFromClipboard()">粘贴剪贴板配置</button>
+          <button class="btn-secondary" style="flex:1;" onclick="triggerQrScanInput()">扫码读取配对图</button>
+          <input id="qrFileInput" type="file" accept="image/*" capture="environment" style="display:none;" onchange="onSelectQrImage(this)" />
+        </div>
         <div class="form-group">
-          <label class="form-label">自托管同步服务地址 (HTTP / HTTPS)</label>
-          <input id="syncEndpoint" class="form-input" type="url" placeholder="https://your-server.example.com/v1/sync" />
+          <label class="form-label">自托管同步服务地址（支持直接粘贴电脑端配对 JSON）</label>
+          <input id="syncEndpoint" class="form-input" type="url" placeholder="https://your-server.example.com/v1/sync" onpaste="handleSyncInputPaste(event)" onchange="saveSyncSettings(true)" />
         </div>
         <div class="form-group">
           <label class="form-label">访问令牌 (Bearer Token，不少于 12 位)</label>
-          <input id="syncToken" class="form-input" type="password" placeholder="与 macOS 端一致的访问令牌" />
+          <input id="syncToken" class="form-input" type="password" placeholder="与 macOS 端一致的访问令牌" onpaste="handleSyncInputPaste(event)" onchange="saveSyncSettings(true)" />
         </div>
         <div class="settings-row" style="padding:6px 0 10px;">
           <div>
             <div class="settings-row-label">修改后自动同步</div>
-            <div class="settings-row-desc">保存词条或打开应用时自动拉取并推送增量</div>
+            <div class="settings-row-desc">保存词条、前台唤醒及后台定时自动双向同步</div>
           </div>
           <button id="autoSyncSwitch" type="button" role="switch" aria-checked="false" class="switch-toggle" onclick="toggleAutoSyncSwitch()" aria-label="修改后自动同步"></button>
         </div>
@@ -1811,6 +1938,34 @@
       </div>
     </div>
   </div>
+
+  <!-- Unified 5-Tab Bottom Bar (Thumb-friendly Mobile Ergonomics) -->
+  <nav class="bottom-nav">
+    <div class="nav-item" id="nav-0" onclick="switchTab(0)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+      <span class="nav-label">全部</span>
+      <span id="navCount0" class="nav-count">0</span>
+    </div>
+    <div class="nav-item active" id="nav-1" onclick="switchTab(1)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>
+      <span class="nav-label">速记</span>
+      <span id="navCount1" class="nav-count">0</span>
+    </div>
+    <div class="nav-item" id="nav-2" onclick="switchTab(2)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+      <span class="nav-label">类型</span>
+      <span id="navCount2" class="nav-count">0</span>
+    </div>
+    <div class="nav-item" id="nav-3" onclick="switchTab(3)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      <span class="nav-label">项目</span>
+      <span id="navCount3" class="nav-count">0</span>
+    </div>
+    <div class="nav-item" id="nav-4" onclick="switchMainSegment('settings')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      <span class="nav-label">设置</span>
+    </div>
+  </nav>
 </div>
 
 <!-- 词条详情与内联编辑面板 (Mirrors PreviewPane + VersionHistoryPopover) -->
@@ -2312,6 +2467,106 @@ function defaultSeedStore() {
   };
 }
 
+function pickNewerSide(rec) {
+  const cu = String(rec.updatedAt || '');
+  const su = String(rec.updated_at || '');
+  if (cu && su) return cu >= su;
+  return !!cu;
+}
+
+function pickPairField(rec, camelKey, snakeKey, preferCamel, fallback, allowNull = false) {
+  const k1 = preferCamel ? camelKey : snakeKey;
+  const k2 = preferCamel ? snakeKey : camelKey;
+  if (k1 in rec && (rec[k1] !== undefined && (allowNull || rec[k1] !== null || !(k2 in rec)))) return rec[k1];
+  if (k2 in rec && rec[k2] !== undefined) return rec[k2];
+  return fallback;
+}
+
+function normalizeProject(raw) {
+  if (!raw || typeof raw !== 'object') return raw;
+  const p = Object.assign({}, raw);
+  const preferCamel = pickNewerSide(p);
+  const cu = String(p.updatedAt || '');
+  const su = String(p.updated_at || '');
+  const resolvedUpdated = (cu && su) ? (cu >= su ? cu : su) : (cu || su || new Date().toISOString());
+  const isDef = !!pickPairField(p, 'isDefault', 'is_default', preferCamel, false);
+  p.isDefault = isDef;
+  p.groupKindRaw = preferCamel
+    ? (p.groupKindRaw || p.groupKind || p.group_kind || (isDef ? 'category' : 'project'))
+    : (p.group_kind || p.groupKindRaw || p.groupKind || (isDef ? 'category' : 'project'));
+  p.isArchived = !!pickPairField(p, 'isArchived', 'is_archived', preferCamel, false);
+  p.iconName = pickPairField(p, 'iconName', 'icon_name', preferCamel, null, true);
+  p.sortOrder = Number(pickPairField(p, 'sortOrder', 'sort_order', preferCamel, 0)) || 0;
+  p.createdAt = String(pickPairField(p, 'createdAt', 'created_at', preferCamel, resolvedUpdated) || resolvedUpdated);
+  p.updatedAt = resolvedUpdated;
+  p.deletedAt = pickPairField(p, 'deletedAt', 'deleted_at', preferCamel, null, true);
+  delete p.is_default;
+  delete p.group_kind;
+  delete p.groupKind;
+  delete p.is_archived;
+  delete p.icon_name;
+  delete p.sort_order;
+  delete p.created_at;
+  delete p.updated_at;
+  delete p.deleted_at;
+  return p;
+}
+
+function normalizeEntry(raw) {
+  if (!raw || typeof raw !== 'object') return raw;
+  const e = Object.assign({}, raw);
+  const preferCamel = pickNewerSide(e);
+  const cu = String(e.updatedAt || '');
+  const su = String(e.updated_at || '');
+  const resolvedUpdated = (cu && su) ? (cu >= su ? cu : su) : (cu || su || new Date().toISOString());
+  e.projectId = String(pickPairField(e, 'projectId', 'project_id', preferCamel, BUILTIN_INBOX_ID) || BUILTIN_INBOX_ID);
+  e.isPinned = !!pickPairField(e, 'isPinned', 'is_pinned', preferCamel, false);
+  e.isCompleted = !!pickPairField(e, 'isCompleted', 'is_completed', preferCamel, false);
+  e.sortOrder = Number(pickPairField(e, 'sortOrder', 'sort_order', preferCamel, 0)) || 0;
+  e.useCount = Math.max(Number(e.useCount || 0) || 0, Number(e.use_count || 0) || 0);
+  const luc = e.lastUsedAt || null;
+  const lus = e.last_used_at || null;
+  e.lastUsedAt = (luc && lus) ? (new Date(luc) >= new Date(lus) ? luc : lus) : (luc || lus || null);
+  e.createdAt = String(pickPairField(e, 'createdAt', 'created_at', preferCamel, resolvedUpdated) || resolvedUpdated);
+  e.updatedAt = resolvedUpdated;
+  e.deletedAt = pickPairField(e, 'deletedAt', 'deleted_at', preferCamel, null, true);
+  e.sourceEntryId = pickPairField(e, 'sourceEntryId', 'source_entry_id', preferCamel, null, true);
+  e.tags = Array.isArray(e.tags) ? e.tags : [];
+  delete e.project_id;
+  delete e.is_pinned;
+  delete e.is_completed;
+  delete e.sort_order;
+  delete e.use_count;
+  delete e.last_used_at;
+  delete e.created_at;
+  delete e.updated_at;
+  delete e.deleted_at;
+  delete e.source_entry_id;
+  return e;
+}
+
+function normalizeVersion(raw) {
+  if (!raw || typeof raw !== 'object') return raw;
+  const v = Object.assign({}, raw);
+  v.entryId = String(v.entryId || v.entry_id || '');
+  v.versionNumber = Number(v.versionNumber || v.version_number || 1) || 1;
+  v.changeNote = v.changeNote !== undefined ? v.changeNote : (v.change_note !== undefined ? v.change_note : null);
+  v.createdAt = String(v.createdAt || v.created_at || new Date().toISOString());
+  delete v.entry_id;
+  delete v.version_number;
+  delete v.change_note;
+  delete v.created_at;
+  return v;
+}
+
+function normalizeStore() {
+  store.projects = (store.projects || []).map(normalizeProject);
+  store.entries = (store.entries || []).map(normalizeEntry);
+  store.versions = (store.versions || []).map(normalizeVersion);
+}
+
+let lastDeletedEntryId = null;
+
 function loadPreferencesAndStore() {
   try {
     let savedTheme = 'system';
@@ -2342,15 +2597,18 @@ function loadPreferencesAndStore() {
         store = parsed;
         store.entries = store.entries || [];
         store.versions = store.versions || [];
+        normalizeStore();
         return;
       }
     }
   } catch (e) {}
   store = defaultSeedStore();
+  normalizeStore();
   persistStore();
 }
 
 function persistStore(triggerAuto = false) {
+  normalizeStore();
   store.exportedAt = new Date().toISOString();
   const raw = JSON.stringify(store);
   try {
@@ -2365,22 +2623,29 @@ function persistStore(triggerAuto = false) {
     clearTimeout(window.__autoSyncTimer);
     window.__autoSyncTimer = setTimeout(() => {
       triggerCloudSync(true);
-    }, 1200);
+    }, 1000);
   }
 }
 
-function showBanner(msg) {
+function showBanner(msg, withUndo = false) {
   const strip = document.getElementById('bannerStrip');
+  const undoBtn = document.getElementById('bannerUndoBtn');
   document.getElementById('bannerText').textContent = msg;
+  if (undoBtn) {
+    undoBtn.style.display = withUndo ? 'inline-flex' : 'none';
+  }
   strip.classList.add('visible');
   clearTimeout(window.__bannerTimer);
   window.__bannerTimer = setTimeout(() => {
     strip.classList.remove('visible');
-  }, 5000);
+    if (undoBtn) undoBtn.style.display = 'none';
+  }, withUndo ? 6500 : 5000);
 }
 
 function dismissBanner() {
   document.getElementById('bannerStrip').classList.remove('visible');
+  const undoBtn = document.getElementById('bannerUndoBtn');
+  if (undoBtn) undoBtn.style.display = 'none';
 }
 
 function showToast(msg) {
@@ -2431,12 +2696,20 @@ function formatRelativeTime(iso) {
   return formatShortDay(iso);
 }
 
+function updateBottomNavActiveState() {
+  for (let i = 0; i < 4; i++) {
+    const el = document.getElementById('nav-' + i);
+    if (el) el.classList.toggle('active', mainSegment === 'library' && i === currentTab);
+  }
+  const navSettings = document.getElementById('nav-4');
+  if (navSettings) navSettings.classList.toggle('active', mainSegment === 'settings');
+}
+
 function switchMainSegment(seg) {
   mainSegment = seg;
-  document.getElementById('segLibrary').classList.toggle('active', seg === 'library');
-  document.getElementById('segSettings').classList.toggle('active', seg === 'settings');
   document.getElementById('librarySegment').style.display = seg === 'library' ? 'flex' : 'none';
   document.getElementById('settingsSegment').style.display = seg === 'settings' ? 'block' : 'none';
+  updateBottomNavActiveState();
   syncModalOpenBridge();
   if (seg === 'settings') {
     renderSettingsView();
@@ -2513,12 +2786,79 @@ function clearSearch() {
 
 function switchTab(idx) {
   currentTab = idx;
+  mainSegment = 'library';
+  document.getElementById('librarySegment').style.display = 'flex';
+  document.getElementById('settingsSegment').style.display = 'none';
   entryKindFilter = null;
   entryTagFilter = null;
-  for (let i = 0; i < 4; i++) {
-    document.getElementById('nav-' + i).classList.toggle('active', i === idx);
-  }
+  updateBottomNavActiveState();
+  syncModalOpenBridge();
   render();
+}
+
+function extractQuickTagsAndContent(rawText) {
+  const tags = [];
+  const words = [];
+  for (const token of String(rawText || '').trim().split(/\s+/)) {
+    if (token.startsWith('#') && token.length > 1) {
+      const cleanTag = token.slice(1).replace(/[,，、;；]+$/g, '').slice(0, 10);
+      if (cleanTag) {
+        if (!tags.includes(cleanTag)) tags.push(cleanTag);
+        continue;
+      }
+    }
+    words.push(token);
+  }
+  const cleaned = words.join(' ').trim() || String(rawText || '').trim();
+  return { content: cleaned, tags };
+}
+
+function submitMobileQuickJot(type) {
+  const inputEl = document.getElementById('mobileQuickJotInput');
+  const raw = (inputEl && inputEl.value ? inputEl.value : '').trim();
+  if (!raw) {
+    showToast('请先输入内容，或点右侧剪贴板图标导入');
+    if (inputEl) inputEl.focus();
+    return;
+  }
+  const parsed = extractQuickTagsAndContent(raw);
+  const now = new Date().toISOString();
+  const targetProjId = (currentTab === 2 || currentTab === 3) && selectedGroupId
+    ? selectedGroupId
+    : BUILTIN_INBOX_ID;
+  const title = parsed.content.split('\n')[0].slice(0, 28) || (type === 'todo' ? '待办事项' : '随手速记');
+  const newId = 'mob-' + Date.now();
+  store.entries.unshift({
+    id: newId,
+    projectId: targetProjId,
+    title: title,
+    content: parsed.content,
+    type: type || 'todo',
+    isPinned: false,
+    isCompleted: false,
+    sortOrder: 0,
+    useCount: 0,
+    lastUsedAt: null,
+    createdAt: now,
+    updatedAt: now,
+    deletedAt: null,
+    sourceEntryId: null,
+    tags: parsed.tags
+  });
+  store.versions.push({
+    id: newId + '-v1',
+    entryId: newId,
+    versionNumber: 1,
+    title: title,
+    content: parsed.content,
+    changeNote: '快速速记',
+    createdAt: now
+  });
+  if (inputEl) inputEl.value = '';
+  if (entryKindFilter && entryKindFilter !== type) entryKindFilter = null;
+  persistStore(true);
+  render();
+  showToast((type === 'todo' ? '已添加待办：' : '已记便签：') + title);
 }
 
 function selectGroup(id) {
@@ -2811,27 +3151,30 @@ function render() {
       : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 
     html += `
-      <div class="entry-row ${pinned ? 'pinned-row' : ''}" onclick="openEditorSheet('${item.id}')">
-        ${leadingHtml}
-        <div class="entry-main">
-          <div class="entry-header">
-            <div class="entry-title ${done ? 'done' : ''}">${escapeHtml(item.title)}</div>
-            ${pinned ? `<svg class="pin-glyph" viewBox="0 0 24 24" fill="currentColor"><path d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>` : ''}
-            ${useCount > 0 ? `<span class="level-badge" style="color:${level.color};background:${level.bg};">${useCount}次</span>` : ''}
-            <span class="type-badge">${typeInfo.name}</span>
+      <div class="entry-swipe-wrap" data-entry-id="${item.id}" ontouchstart="onRowTouchStart(event, this)" ontouchmove="onRowTouchMove(event, this)" ontouchend="onRowTouchEnd(event, this)" ontouchcancel="onRowTouchCancel(this)">
+        <div class="swipe-bg"><span class="swipe-hint-text">左滑删除</span></div>
+        <div class="entry-row ${pinned ? 'pinned-row' : ''}" onclick="if(!window.__suppressNextRowTap)openEditorSheet('${item.id}')">
+          ${leadingHtml}
+          <div class="entry-main">
+            <div class="entry-header">
+              <div class="entry-title ${done ? 'done' : ''}">${escapeHtml(item.title)}</div>
+              ${pinned ? `<svg class="pin-glyph" viewBox="0 0 24 24" fill="currentColor"><path d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>` : ''}
+              ${useCount > 0 ? `<span class="level-badge" style="color:${level.color};background:${level.bg};">${useCount}次</span>` : ''}
+              <span class="type-badge">${typeInfo.name}</span>
+            </div>
+            <div class="entry-preview ${done ? 'done' : ''}">${escapeHtml(previewLine)}</div>
+            <div class="entry-meta">
+              <span>${escapeHtml(lastUsedStr)}</span>
+              <span class="meta-sep">·</span>
+              <span class="${currentTab === 0 ? 'meta-proj' : 'meta-mono'}">${escapeHtml(secondMeta)}</span>
+              <span class="meta-spacer"></span>
+              ${tags.length > 0 ? `<div class="tag-chips">${tagsHtml}</div>` : ''}
+            </div>
           </div>
-          <div class="entry-preview ${done ? 'done' : ''}">${escapeHtml(previewLine)}</div>
-          <div class="entry-meta">
-            <span>${escapeHtml(lastUsedStr)}</span>
-            <span class="meta-sep">·</span>
-            <span class="${currentTab === 0 ? 'meta-proj' : 'meta-mono'}">${escapeHtml(secondMeta)}</span>
-            <span class="meta-spacer"></span>
-            ${tags.length > 0 ? `<div class="tag-chips">${tagsHtml}</div>` : ''}
-          </div>
+          <button class="row-copy-btn ${isCopied ? 'copied' : ''}" onclick="event.stopPropagation(); copyEntry('${item.id}')" aria-label="复制内容">
+            ${copyIcon}
+          </button>
         </div>
-        <button class="row-copy-btn ${isCopied ? 'copied' : ''}" onclick="event.stopPropagation(); copyEntry('${item.id}')" aria-label="复制内容">
-          ${copyIcon}
-        </button>
       </div>
       ${idx < items.length - 1 ? '<div class="row-divider"></div>' : ''}
     `;
@@ -2839,13 +3182,119 @@ function render() {
   listEl.innerHTML = html;
 }
 
-function toggleTodoDone(entryId) {
+let swipeState = null;
+
+function onRowTouchStart(ev, wrapEl) {
+  if (!ev.touches || ev.touches.length !== 1) return;
+  const t = ev.touches[0];
+  swipeState = {
+    wrap: wrapEl,
+    row: wrapEl.querySelector('.entry-row'),
+    bg: wrapEl.querySelector('.swipe-bg'),
+    hint: wrapEl.querySelector('.swipe-hint-text'),
+    id: wrapEl.getAttribute('data-entry-id'),
+    startX: t.clientX,
+    startY: t.clientY,
+    dx: 0,
+    locked: null
+  };
+  if (swipeState.row) swipeState.row.style.transition = 'none';
+}
+
+function onRowTouchMove(ev, wrapEl) {
+  if (!swipeState || swipeState.wrap !== wrapEl || !ev.touches || ev.touches.length !== 1) return;
+  const t = ev.touches[0];
+  const dx = t.clientX - swipeState.startX;
+  const dy = t.clientY - swipeState.startY;
+  if (!swipeState.locked) {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    swipeState.locked = Math.abs(dx) > Math.abs(dy) * 1.25 ? 'x' : 'y';
+  }
+  if (swipeState.locked !== 'x') return;
+  if (ev.cancelable) ev.preventDefault();
+  swipeState.dx = Math.max(-116, Math.min(104, dx));
+  if (swipeState.row) {
+    swipeState.row.style.transform = `translateX(${swipeState.dx}px)`;
+  }
+  if (swipeState.bg && swipeState.hint) {
+    if (swipeState.dx < -16) {
+      swipeState.bg.className = 'swipe-bg swiping-left';
+      swipeState.hint.textContent = swipeState.dx <= -68 ? '松手删除词条' : '继续左滑删除';
+    } else if (swipeState.dx > 16) {
+      swipeState.bg.className = 'swipe-bg swiping-right';
+      swipeState.hint.textContent = swipeState.dx >= 68 ? '松手切换完成' : '右滑切换完成';
+    } else {
+      swipeState.bg.className = 'swipe-bg';
+    }
+  }
+}
+
+function onRowTouchCancel(wrapEl) {
+  if (!swipeState || swipeState.wrap !== wrapEl) return;
+  if (swipeState.row) {
+    swipeState.row.style.transition = '';
+    swipeState.row.style.transform = '';
+  }
+  if (swipeState.bg) swipeState.bg.className = 'swipe-bg';
+  swipeState = null;
+}
+
+function onRowTouchEnd(ev, wrapEl) {
+  if (!swipeState || swipeState.wrap !== wrapEl) return;
+  const st = swipeState;
+  swipeState = null;
+  if (st.row) st.row.style.transition = '';
+  if (st.locked === 'x' && Math.abs(st.dx) > 10) {
+    window.__suppressNextRowTap = true;
+    setTimeout(() => { window.__suppressNextRowTap = false; }, 260);
+  }
+  if (st.locked === 'x' && st.dx <= -68) {
+    softDeleteEntryWithUndo(st.id);
+    return;
+  }
+  if (st.locked === 'x' && st.dx >= 68) {
+    if (st.row) st.row.style.transform = '';
+    if (st.bg) st.bg.className = 'swipe-bg';
+    toggleTodoDone(st.id);
+    return;
+  }
+  if (st.row) st.row.style.transform = '';
+  if (st.bg) st.bg.className = 'swipe-bg';
+}
+
+function softDeleteEntryWithUndo(entryId) {
   const item = (store.entries || []).find(e => e.id === entryId);
   if (!item) return;
-  item.isCompleted = !(item.isCompleted || item.is_completed);
+  const now = new Date().toISOString();
+  item.deletedAt = now;
+  item.updatedAt = now;
+  lastDeletedEntryId = item.id;
+  persistStore(true);
+  render();
+  showBanner('已删除：' + item.title, true);
+}
+
+function undoLastDeletedEntry() {
+  if (!lastDeletedEntryId) return;
+  const item = (store.entries || []).find(e => e.id === lastDeletedEntryId);
+  lastDeletedEntryId = null;
+  dismissBanner();
+  if (!item) return;
+  item.deletedAt = null;
   item.updatedAt = new Date().toISOString();
   persistStore(true);
   render();
+  showToast('已撤销删除：' + item.title);
+}
+
+function toggleTodoDone(entryId) {
+  const item = (store.entries || []).find(e => e.id === entryId);
+  if (!item) return;
+  item.isCompleted = !item.isCompleted;
+  item.updatedAt = new Date().toISOString();
+  persistStore(true);
+  render();
+  showToast(item.isCompleted ? '已标记完成' : '已恢复未完成');
 }
 
 function writeSystemClipboard(label, text) {
@@ -3188,14 +3637,9 @@ function saveCurrentEntry() {
 
 function deleteCurrentEntry() {
   if (!editingEntryId) return;
-  const item = (store.entries || []).find(e => e.id === editingEntryId);
-  if (!item) return;
-  item.deletedAt = new Date().toISOString();
-  item.updatedAt = item.deletedAt;
-  persistStore(true);
+  const targetId = editingEntryId;
   closeModals();
-  render();
-  showBanner('已删除词条：' + item.title);
+  softDeleteEntryWithUndo(targetId);
 }
 
 /* Clone Entry to Another Project */
@@ -3530,10 +3974,188 @@ function syncAutoSyncSwitchUI(checked) {
   sw.setAttribute('aria-checked', checked ? 'true' : 'false');
 }
 
+function updateTopbarSyncIndicator(state) {
+  const dot = document.getElementById('topbarSyncDot');
+  if (!dot) return;
+  dot.classList.remove('ok', 'err');
+  if (state === 'err') {
+    dot.classList.add('err');
+    return;
+  }
+  const creds = getSyncCredentials();
+  if (state === 'ok' || (creds.ep && isAutoSyncEnabled())) {
+    dot.classList.add('ok');
+  }
+}
+
+function hydrateSyncInputsFromStorage() {
+  const creds = getSyncCredentials();
+  const epEl = document.getElementById('syncEndpoint');
+  const tkEl = document.getElementById('syncToken');
+  if (epEl) epEl.value = creds.ep;
+  if (tkEl) tkEl.value = creds.tk;
+  syncAutoSyncSwitchUI(isAutoSyncEnabled());
+  updateTopbarSyncIndicator();
+}
+
+function onTapTopbarSync() {
+  const creds = getSyncCredentials();
+  if (!creds.ep) {
+    switchMainSegment('settings');
+    showToast('请先粘贴剪贴板配置或扫码导入同步服务');
+    return;
+  }
+  triggerCloudSync(false);
+}
+
+function parseSyncConfigText(rawText) {
+  const trimmed = String(rawText || '').trim();
+  if (!trimmed) return null;
+
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const obj = JSON.parse(trimmed);
+      if (obj && typeof obj === 'object' && !Array.isArray(obj.projects) && !Array.isArray(obj.entries)) {
+        const ep = String(obj.endpoint || obj.syncEndpoint || obj.cloudSyncEndpoint || obj.url || '').trim();
+        const tk = String(obj.apiKey || obj.token || obj.bearerToken || obj.cloudSyncApiKey || '').trim();
+        const autoVal = obj.autoSync !== undefined ? !!obj.autoSync : (obj.cloudSyncEnabled !== undefined ? !!obj.cloudSyncEnabled : true);
+        if (ep || tk) {
+          return { endpoint: ep, apiKey: tk, autoSync: autoVal };
+        }
+      }
+    } catch (e) {}
+  }
+
+  if (/^promptpanel:\/\/sync/i.test(trimmed)) {
+    try {
+      const u = new URL(trimmed);
+      const ep = (u.searchParams.get('endpoint') || u.searchParams.get('url') || '').trim();
+      const tk = (u.searchParams.get('apiKey') || u.searchParams.get('token') || '').trim();
+      const autoParam = u.searchParams.get('autoSync');
+      const autoVal = autoParam === null ? true : (autoParam !== '0' && autoParam !== 'false');
+      if (ep || tk) {
+        return { endpoint: ep, apiKey: tk, autoSync: autoVal };
+      }
+    } catch (e) {}
+  }
+
+  if (/^https?:\/\/\S+$/i.test(trimmed)) {
+    return { endpoint: trimmed, apiKey: '', autoSync: null };
+  }
+
+  return null;
+}
+
+function applyParsedSyncConfig(cfg, sourceLabel) {
+  if (!cfg) return false;
+  const epEl = document.getElementById('syncEndpoint');
+  const tkEl = document.getElementById('syncToken');
+  if (cfg.endpoint && epEl) epEl.value = cfg.endpoint;
+  if (cfg.apiKey && tkEl) tkEl.value = cfg.apiKey;
+  saveSyncSettings(true);
+
+  if (cfg.endpoint && (cfg.autoSync === true || cfg.autoSync === null)) {
+    onToggleAutoSync(true);
+    syncAutoSyncSwitchUI(true);
+  }
+  updateTopbarSyncIndicator();
+
+  if (cfg.endpoint) {
+    showBanner(`已从${sourceLabel}导入同步配置，正在拉取云端词库…`);
+    triggerCloudSync(false);
+  } else {
+    showToast(`已从${sourceLabel}填入访问令牌`);
+  }
+  return true;
+}
+
+function pasteSyncConfigFromClipboard() {
+  const applyRaw = (raw) => {
+    const cfg = parseSyncConfigText(raw);
+    if (!cfg) {
+      showToast('剪贴板未识别到电脑端同步配置 JSON 或 URL');
+      return;
+    }
+    applyParsedSyncConfig(cfg, '剪贴板');
+  };
+
+  const syncClip = readSystemClipboard();
+  if (syncClip && syncClip.trim()) {
+    applyRaw(syncClip);
+    return;
+  }
+  if (navigator.clipboard && navigator.clipboard.readText) {
+    navigator.clipboard.readText()
+      .then(txt => applyRaw(txt || ''))
+      .catch(() => showToast('剪贴板为空或无读取权限'));
+    return;
+  }
+  showToast('剪贴板为空，请先在电脑端点击「复制手机配置」');
+}
+
+function handleSyncInputPaste(event) {
+  const clipData = event && (event.clipboardData || window.clipboardData);
+  if (!clipData) return;
+  const pasted = (clipData.getData('text') || '').trim();
+  if (!pasted) return;
+  if (pasted.startsWith('{') || /^promptpanel:\/\/sync/i.test(pasted)) {
+    const cfg = parseSyncConfigText(pasted);
+    if (cfg) {
+      event.preventDefault();
+      applyParsedSyncConfig(cfg, '粘贴配置');
+    }
+  }
+}
+
+function triggerQrScanInput() {
+  const input = document.getElementById('qrFileInput');
+  if (input) input.click();
+}
+
+async function onSelectQrImage(inputEl) {
+  const file = inputEl && inputEl.files && inputEl.files[0];
+  if (!file) return;
+  try {
+    if (typeof window.BarcodeDetector === 'function') {
+      const detector = new BarcodeDetector({ formats: ['qr_code'] });
+      const bitmap = await createImageBitmap(file);
+      const codes = await detector.detect(bitmap);
+      if (bitmap && bitmap.close) bitmap.close();
+      if (codes && codes.length > 0 && codes[0].rawValue) {
+        const cfg = parseSyncConfigText(codes[0].rawValue);
+        if (cfg) {
+          applyParsedSyncConfig(cfg, '配对二维码');
+          return;
+        }
+      }
+      showToast('未在图片中识别到有效的 PromptPanel 配对二维码');
+    } else {
+      showBanner('当前系统 WebView 不支持图片二维码直读，请用系统相机扫码复制文本后点「粘贴剪贴板配置」');
+    }
+  } catch (e) {
+    showBanner('二维码解析失败，请用系统相机扫码复制文本后点「粘贴剪贴板配置」');
+  } finally {
+    inputEl.value = '';
+  }
+}
+
 function toggleAutoSyncSwitch() {
+  saveSyncSettings(true);
   const next = !isAutoSyncEnabled();
+  if (next && !getSyncCredentials().ep) {
+    syncAutoSyncSwitchUI(false);
+    showToast('请先填写或粘贴云端同步服务地址');
+    return;
+  }
   onToggleAutoSync(next);
   syncAutoSyncSwitchUI(next);
+  updateTopbarSyncIndicator();
+  if (next) {
+    showToast('已开启自动同步，正在执行首次同步…');
+    triggerCloudSync(false);
+  } else {
+    showToast('已关闭自动同步');
+  }
 }
 
 function onToggleAutoSync(checked) {
@@ -3544,10 +4166,7 @@ function onToggleAutoSync(checked) {
 }
 
 function renderSettingsView() {
-  const creds = getSyncCredentials();
-  document.getElementById('syncEndpoint').value = creds.ep;
-  document.getElementById('syncToken').value = creds.tk;
-  syncAutoSyncSwitchUI(isAutoSyncEnabled());
+  hydrateSyncInputsFromStorage();
   syncSortSelectUI();
 
   const pCount = activeProjectsList().length;
@@ -3573,9 +4192,12 @@ function renderSettingsView() {
   }).join('');
 }
 
-function saveSyncSettings() {
-  const ep = (document.getElementById('syncEndpoint').value || '').trim();
-  const tk = (document.getElementById('syncToken').value || '').trim();
+function saveSyncSettings(silent = false) {
+  const epEl = document.getElementById('syncEndpoint');
+  const tkEl = document.getElementById('syncToken');
+  if (!epEl || !tkEl) return;
+  const ep = (epEl.value || '').trim();
+  const tk = (tkEl.value || '').trim();
   if (window.AndroidBridge && AndroidBridge.saveSettings) {
     AndroidBridge.saveSettings(ep, tk);
     localStorage.removeItem('promptpanel_cloud_api_key');
@@ -3583,7 +4205,13 @@ function saveSyncSettings() {
     localStorage.setItem('promptpanel_cloud_endpoint', ep);
     localStorage.setItem('promptpanel_cloud_api_key', tk);
   }
-  showToast('同步配置已加密保存');
+  updateTopbarSyncIndicator();
+  if (!silent) {
+    showToast('同步配置已加密保存');
+    if (isAutoSyncEnabled() && ep) {
+      triggerCloudSync(true);
+    }
+  }
 }
 
 function resolveSyncUrl(rawEndpoint) {
@@ -3626,7 +4254,7 @@ function resolveHealthUrl(rawEndpoint) {
 }
 
 function testCloudConnection() {
-  saveSyncSettings();
+  saveSyncSettings(true);
   const { ep, tk } = getSyncCredentials();
   if (!ep) {
     showToast('请先填写云端同步地址');
@@ -3652,10 +4280,12 @@ function testCloudConnection() {
           const ns = info.namespace ? `空间 ${info.namespace}` : '已连接';
           document.getElementById('syncBadgeText').textContent = '连接正常';
           document.getElementById('syncStatusText').textContent = `连接正常 · ${latency} ms · ${ns}（云端 ${pCnt} 组 / ${eCnt} 条 / ${vCnt} 版）`;
+          updateTopbarSyncIndicator('ok');
           showToast('连接正常 (' + latency + ' ms)');
         } else {
           document.getElementById('syncBadgeText').textContent = 'HTTP ' + code;
           document.getElementById('syncStatusText').textContent = '连接失败：HTTP ' + code;
+          updateTopbarSyncIndicator('err');
           showToast('连接失败 (HTTP ' + code + ')');
         }
       } else {
@@ -3663,6 +4293,7 @@ function testCloudConnection() {
       }
     } catch (e) {
       document.getElementById('syncBadgeText').textContent = '连接异常';
+      updateTopbarSyncIndicator('err');
       showToast('检测异常: ' + e.message);
     }
   }, 30);
@@ -3672,21 +4303,25 @@ function mergeRemoteEnvelope(remote) {
   const stats = { pNew: 0, pUpd: 0, eNew: 0, eUpd: 0, conflicts: 0, protectedCount: 0 };
   if (!remote || typeof remote !== 'object') return stats;
 
+  normalizeStore();
+  const remoteProjects = (remote.projects || []).filter(p => p && p.id).map(normalizeProject);
+  const remoteEntries = (remote.entries || []).filter(e => e && e.id).map(normalizeEntry);
+  const remoteVersions = (remote.versions || []).filter(v => v && v.id).map(normalizeVersion);
+
   const remappedProjectIds = {};
-  const localDefault = (store.projects || []).find(p => p.isDefault || p.is_default);
+  const localDefault = (store.projects || []).find(p => p.isDefault);
 
   // Anti-data-loss circuit breaker: detect abnormal mass-tombstone deletes
   const localActiveEntries = activeEntriesList();
   const localActiveById = {};
   localActiveEntries.forEach(e => { localActiveById[e.id] = e; });
   let remoteDeletingCount = 0;
-  for (const rawEntry of (remote.entries || [])) {
-    if (!rawEntry || !rawEntry.id) continue;
-    const local = localActiveById[rawEntry.id];
-    const rDeleted = !!(rawEntry.deletedAt || rawEntry.deleted_at);
+  for (const re of remoteEntries) {
+    const local = localActiveById[re.id];
+    const rDeleted = !!re.deletedAt;
     if (local && rDeleted) {
-      const rTime = new Date(rawEntry.updatedAt || rawEntry.updated_at || 0).getTime();
-      const lTime = new Date(local.updatedAt || local.updated_at || 0).getTime();
+      const rTime = new Date(re.updatedAt || 0).getTime();
+      const lTime = new Date(local.updatedAt || 0).getTime();
       if (rTime > lTime) remoteDeletingCount++;
     }
   }
@@ -3695,23 +4330,20 @@ function mergeRemoteEnvelope(remote) {
     (remoteDeletingCount >= 3 && (remoteDeletingCount / Math.max(1, localActiveCount)) >= 0.25) ||
     (localActiveCount >= 2 && remoteDeletingCount === localActiveCount);
 
-  for (const rp of (remote.projects || [])) {
-    if (!rp || !rp.id) continue;
-    const isRemoteDefault = !!(rp.isDefault || rp.is_default);
+  for (const rp of remoteProjects) {
+    const isRemoteDefault = !!rp.isDefault;
     const idx = store.projects.findIndex(p => p.id === rp.id);
     if (idx >= 0) {
       const lp = store.projects[idx];
-      const rTime = new Date(rp.updatedAt || rp.updated_at || 0).getTime();
-      const lTime = new Date(lp.updatedAt || lp.updated_at || 0).getTime();
+      const rTime = new Date(rp.updatedAt || 0).getTime();
+      const lTime = new Date(lp.updatedAt || 0).getTime();
       if (rTime > lTime) {
-        const lDeleted = !!(lp.deletedAt || lp.deleted_at);
-        const rDeleted = !!(rp.deletedAt || rp.deleted_at);
+        const lDeleted = !!lp.deletedAt;
+        const rDeleted = !!rp.deletedAt;
         if (!lDeleted && rDeleted && shouldBlockMassDeletions) {
           const healedTime = new Date(Math.max(Date.now(), rTime + 2000)).toISOString();
           lp.updatedAt = healedTime;
-          if ('updated_at' in lp) lp.updated_at = healedTime;
           lp.deletedAt = null;
-          if ('deleted_at' in lp) lp.deleted_at = null;
           stats.protectedCount++;
         } else {
           store.projects[idx] = rp;
@@ -3722,25 +4354,22 @@ function mergeRemoteEnvelope(remote) {
       remappedProjectIds[rp.id] = localDefault.id;
     } else {
       store.projects.push(rp);
-      if (!rp.deletedAt && !rp.deleted_at) stats.pNew++;
+      if (!rp.deletedAt) stats.pNew++;
     }
   }
 
-  for (const rawEntry of (remote.entries || [])) {
-    if (!rawEntry || !rawEntry.id) continue;
-    const re = Object.assign({}, rawEntry);
-    const rawPid = re.projectId || re.project_id;
-    if (rawPid && remappedProjectIds[rawPid]) {
-      re.projectId = remappedProjectIds[rawPid];
-      if ('project_id' in re) re.project_id = remappedProjectIds[rawPid];
+  for (const rawRe of remoteEntries) {
+    const re = Object.assign({}, rawRe);
+    if (re.projectId && remappedProjectIds[re.projectId]) {
+      re.projectId = remappedProjectIds[re.projectId];
     }
     const idx = store.entries.findIndex(e => e.id === re.id);
     if (idx >= 0) {
       const local = store.entries[idx];
-      const remoteTime = new Date(re.updatedAt || re.updated_at || 0).getTime();
-      const localTime = new Date(local.updatedAt || local.updated_at || 0).getTime();
+      const remoteTime = new Date(re.updatedAt || 0).getTime();
+      const localTime = new Date(local.updatedAt || 0).getTime();
       const hasTextDiff = (local.content || '') !== (re.content || '') || (local.title || '') !== (re.title || '');
-      const isRemoteDeletion = !(local.deletedAt || local.deleted_at) && !!(re.deletedAt || re.deleted_at);
+      const isRemoteDeletion = !local.deletedAt && !!re.deletedAt;
       if (remoteTime > localTime) {
         if (hasTextDiff || isRemoteDeletion) {
           const vers = versionsForEntry(local.id);
@@ -3759,9 +4388,9 @@ function mergeRemoteEnvelope(remote) {
             stats.conflicts++;
           }
         }
-        re.useCount = Math.max(local.useCount || local.use_count || 0, re.useCount || re.use_count || 0);
-        const lUsed = local.lastUsedAt || local.last_used_at;
-        const rUsed = re.lastUsedAt || re.last_used_at;
+        re.useCount = Math.max(local.useCount || 0, re.useCount || 0);
+        const lUsed = local.lastUsedAt;
+        const rUsed = re.lastUsedAt;
         const mergedUsed = (lUsed && rUsed)
           ? (new Date(lUsed) > new Date(rUsed) ? lUsed : rUsed)
           : (lUsed || rUsed || null);
@@ -3770,9 +4399,7 @@ function mergeRemoteEnvelope(remote) {
           local.useCount = re.useCount;
           local.lastUsedAt = mergedUsed;
           local.updatedAt = healedTime;
-          if ('updated_at' in local) local.updated_at = healedTime;
           local.deletedAt = null;
-          if ('deleted_at' in local) local.deleted_at = null;
           stats.protectedCount++;
           continue;
         }
@@ -3792,14 +4419,14 @@ function mergeRemoteEnvelope(remote) {
               title: re.title,
               content: re.content,
               changeNote: '远端并发历史版本自动留存',
-              createdAt: re.updatedAt || re.updated_at || new Date().toISOString()
+              createdAt: re.updatedAt || new Date().toISOString()
             });
             stats.conflicts++;
           }
         }
-        local.useCount = Math.max(local.useCount || local.use_count || 0, re.useCount || re.use_count || 0);
-        const lUsed = local.lastUsedAt || local.last_used_at;
-        const rUsed = re.lastUsedAt || re.last_used_at;
+        local.useCount = Math.max(local.useCount || 0, re.useCount || 0);
+        const lUsed = local.lastUsedAt;
+        const rUsed = re.lastUsedAt;
         if (lUsed && rUsed) {
           local.lastUsedAt = new Date(lUsed) > new Date(rUsed) ? lUsed : rUsed;
         } else if (rUsed && !lUsed) {
@@ -3808,41 +4435,37 @@ function mergeRemoteEnvelope(remote) {
       }
     } else {
       store.entries.push(re);
-      if (!re.deletedAt && !re.deleted_at) stats.eNew++;
+      if (!re.deletedAt) stats.eNew++;
     }
   }
 
   // Revive any soft-deleted project that still contains active entries
   const neededProjectIds = new Set();
   for (const e of activeEntriesList()) {
-    const pid = e.projectId || e.project_id;
-    if (pid) neededProjectIds.add(pid);
+    if (e.projectId) neededProjectIds.add(e.projectId);
   }
   for (const p of (store.projects || [])) {
-    if (neededProjectIds.has(p.id) && (p.deletedAt || p.deleted_at)) {
-      const revivedTime = new Date(Math.max(Date.now(), new Date(p.updatedAt || p.updated_at || 0).getTime() + 2000)).toISOString();
+    if (neededProjectIds.has(p.id) && p.deletedAt) {
+      const revivedTime = new Date(Math.max(Date.now(), new Date(p.updatedAt || 0).getTime() + 2000)).toISOString();
       p.deletedAt = null;
-      if ('deleted_at' in p) p.deleted_at = null;
       p.updatedAt = revivedTime;
-      if ('updated_at' in p) p.updated_at = revivedTime;
       stats.protectedCount++;
     }
   }
 
-  for (const rv of (remote.versions || [])) {
-    if (!rv || !rv.id) continue;
-    const rvEntryId = rv.entryId || rv.entry_id;
-    const rvNum = rv.versionNumber || rv.version_number;
+  for (const rv of remoteVersions) {
     const exists = store.versions.some(v =>
-      v.id === rv.id || ((v.entryId || v.entry_id) === rvEntryId && (v.versionNumber || v.version_number) === rvNum)
+      v.id === rv.id || (v.entryId === rv.entryId && v.versionNumber === rv.versionNumber)
     );
     if (!exists) store.versions.push(rv);
   }
   return stats;
 }
 
+let isSyncInFlight = false;
+
 function triggerCloudSync(silent = false) {
-  if (mainSegment === 'settings') saveSyncSettings();
+  if (mainSegment === 'settings') saveSyncSettings(true);
   const { ep, tk } = getSyncCredentials();
   if (!ep) {
     if (!silent) {
@@ -3851,6 +4474,9 @@ function triggerCloudSync(silent = false) {
     }
     return;
   }
+  if (isSyncInFlight) return;
+  isSyncInFlight = true;
+
   const syncUrl = resolveSyncUrl(ep);
   if (!silent) showToast('正在同步…');
 
@@ -3862,10 +4488,12 @@ function triggerCloudSync(silent = false) {
         const getCode = parseInt(getRes.slice(0, nl), 10);
         const getBody = getRes.slice(nl + 1).trim();
         if (getCode === 401) {
+          updateTopbarSyncIndicator('err');
           if (!silent) showBanner('Token 鉴权未通过 (HTTP 401)，请确认不少于 12 位专属 Token');
           return;
         }
         if ((getCode < 200 || getCode >= 300) && getCode !== 404) {
+          updateTopbarSyncIndicator('err');
           if (!silent) showToast('远端拉取失败 (HTTP ' + getCode + ')');
           return;
         }
@@ -3893,17 +4521,22 @@ function triggerCloudSync(silent = false) {
           const summary = `上次同步：${new Date().toLocaleTimeString()}（项目 +${s1.pNew}/更${s1.pUpd}，词条 +${s1.eNew}/更${s1.eUpd}，冲突版本保护 ${s1.conflicts}${protSuffix}）`;
           document.getElementById('syncStatusText').textContent = summary;
           document.getElementById('syncBadgeText').textContent = '已同步';
+          updateTopbarSyncIndicator('ok');
           if (!silent) showBanner(summary);
           render();
           if (mainSegment === 'settings') renderSettingsView();
-        } else if (!silent) {
-          showToast('同步失败 (HTTP ' + postCode + ')');
+        } else {
+          updateTopbarSyncIndicator('err');
+          if (!silent) showToast('同步失败 (HTTP ' + postCode + ')');
         }
       } else if (!silent) {
         showToast('请在 Android 客户端内执行同步');
       }
     } catch (e) {
+      updateTopbarSyncIndicator('err');
       if (!silent) showToast('同步异常: ' + e.message);
+    } finally {
+      isSyncInFlight = false;
     }
   }, 40);
 }
@@ -3925,6 +4558,14 @@ function confirmImportJson() {
   const raw = (document.getElementById('importJsonTextarea').value || '').trim();
   if (!raw) {
     showToast('请粘贴 JSON 内容');
+    return;
+  }
+  const syncCfg = parseSyncConfigText(raw);
+  if (syncCfg) {
+    closeModals();
+    switchMainSegment('settings');
+    switchSettingsArea('preferences');
+    applyParsedSyncConfig(syncCfg, 'JSON 粘贴框');
     return;
   }
   try {
@@ -3968,10 +4609,24 @@ window.__handleBackPress = function() {
 };
 
 window.__onAppResume = function() {
-  if (isAutoSyncEnabled()) {
+  if (isAutoSyncEnabled() && getSyncCredentials().ep) {
     triggerCloudSync(true);
   }
 };
+
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'visible' && isAutoSyncEnabled() && getSyncCredentials().ep) {
+    triggerCloudSync(true);
+  }
+});
+
+setInterval(function() {
+  if (document.visibilityState === 'visible' && isAutoSyncEnabled() && getSyncCredentials().ep) {
+    const openEditors = document.getElementById('editorModal');
+    if (openEditors && openEditors.classList.contains('open')) return;
+    triggerCloudSync(true);
+  }
+}, 45000);
 
 function escapeHtml(str) {
   return String(str || '')
@@ -3982,7 +4637,11 @@ function escapeHtml(str) {
 }
 
 loadPreferencesAndStore();
+hydrateSyncInputsFromStorage();
 render();
+if (isAutoSyncEnabled() && getSyncCredentials().ep) {
+  setTimeout(function() { triggerCloudSync(true); }, 900);
+}
 </script>
 </body>
 </html>
