@@ -346,7 +346,7 @@ public class UpdateDownloadTask implements Runnable {
                 conn.setConnectTimeout(connectTimeout);
                 conn.setReadTimeout(readTimeout);
                 conn.setUseCaches(false);
-                conn.setRequestProperty("User-Agent", "PromptPanel-Android-Updater/1.7.3");
+                conn.setRequestProperty("User-Agent", "PromptPanel-Android-Updater/1.7.4");
                 conn.setRequestProperty("Accept", accept);
                 int code = conn.getResponseCode();
                 if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
@@ -388,7 +388,7 @@ public class UpdateDownloadTask implements Runnable {
                 conn.setConnectTimeout(12000);
                 conn.setReadTimeout(60000);
                 conn.setUseCaches(false);
-                conn.setRequestProperty("User-Agent", "PromptPanel-Android-Updater/1.7.3");
+                conn.setRequestProperty("User-Agent", "PromptPanel-Android-Updater/1.7.4");
                 int code = conn.getResponseCode();
                 if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
                     String loc = conn.getHeaderField("Location");

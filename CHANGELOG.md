@@ -6,6 +6,18 @@ The format is based on Keep a Changelog, and this project uses Conventional Comm
 
 ## [Unreleased]
 
+## [1.7.4] - 2026-11-13
+
+全链路性能提速、跨端容错加固与交互细节精修版本（`1.7.4+15`）。对 macOS 桌面端、Android 移动端及自托管同步服务端（`v2.2.1`）进行深度性能优化、并发重入防护与异常自愈升级。
+
+### Changed & Improved
+
+- **macOS 桌面端 SQLite 索引、主线程减负与面板/内容库响应加速（`DatabaseManager` / `EntryRepository` / `EntryRanking` / `QuickPanelViewModel` / `MainWindowViewModel` / `LibraryView`）。** 数据库初始化启用 `PRAGMA synchronous = NORMAL`、`temp_store = MEMORY`、`cache_size = -8000`，并幂等创建复合索引 `idx_entries_active_project_rank`、`idx_entries_active_rank`、`idx_projects_active_kind`；新增 `moveEntries(ids:toProjectId:)` 单事务批量迁移词条与 `deleteCompleted(projectId:excludeArchivedProjects:)` 单条 SQL 原子清理已完成项；`EntryRanking` 与快捷面板引入预计算 Frecency 分数与 $O(N)$ 已排序快速跳过路径，并将类型筛选计数（`countForFilter`）与侧边栏分组派生列表改为单次预计算 $O(1)$ 读取；置顶、移动分组、切换类型等纯元数据变更跳过冗余历史版本快照写入；快捷面板搜索空状态新增「存为待办 (`⌥↩`)」快捷按钮，主窗口内联编辑在草稿输入期屏蔽外部通知覆盖防丢字。
+- **macOS 桌面端云端同步与自更新重入防护及中文错误诊断（`CloudSyncService` / `UpdaterService`）。** `CloudSyncService` 新增内部并发重入锁（`syncInProgress`）并在手动触发同步/恢复时取消待执行的自动同步计时任务，彻底消除自动轮询与手动同步竞态；`CloudSyncService` 与 `UpdaterService` 均新增 Nginx 502/504 等 HTML 错误页拦截、超时取消保护及底层 `URLError` / HTTP 状态码（含 GitHub 403/429 限流）友好中文诊断提示。
+- **Android 移动端渲染帧率、左滑手势锁定、KeyStore 缓存与 SQLite 快照自愈（`mobile/android/assets/index.html` / `MainActivity.java` / `UpdateDownloadTask.java`）。** 前端引入分组 Map 索引、预编译搜索 Token 缓存、`requestAnimationFrame` 合并渲染、120ms 搜索防抖与 45ms 持久化写盘防抖（退后台/页面卸载/同步前强制冲刷）；列表左滑操作增加 10px 阈值方向锁、单卡互斥展开与自动动画时长恢复，搜索无结果空状态支持一键新建「存为便签 / 存为待办」；原生层缓存 AndroidKeyStore AES-256 硬件主密钥与 HKDF-SHA256 派生密钥、开启 SQLite WAL `busy_timeout=5000` 并支持主记录损坏时自动回退 `store_snapshots` 最新历史快照自愈，网络与更新下载异常统一转换为中文诊断提示。
+- **自托管同步服务端单次扫描内存合并与更新镜像并发加固（`server/promptpanel_sync_server.py` `v2.2.1`）。** `merge_envelope_into_db()` 改为单次扫描加载并解密构建内存字典索引（配合 `_AESGCM_CACHE` 与 `_TOKEN_DERIVED_CACHE` 缓存），消除单次 `POST /v1/sync` 内重复多遍全表查询与解密开销；`count_namespace_stats()` 合并为单条 `GROUP BY` 查询；更新镜像缓存拆分 `_MANIFEST_REFRESH_LOCK` 与按资产名隔离的 `_ASSET_DOWNLOAD_LOCKS`，采用 `.manifest.<uuid>.json.tmp` 原子替换并按 `(mtime_ns, st_size)` 缓存资产 SHA-256；加固截断请求体、非法 gzip/JSON 与客户端断连处理，确保异常请求稳定返回干净 `400` JSON。
+- **仓库合规治理（`.gitignore`）。** 补齐 `.env*`（保留 `!.env.example`）、`*.session*`、`tdata/`、`*.pem`、`*.key` 与嵌套 `*/**/.git/` 忽略规则。
+
 ## [1.7.3] - 2026-11-13
 
 macOS 空白设置窗口根治与原生菜单栏接管补丁版本（`1.7.3+14`）。彻底消除桌面端偶发或重开应用时弹出的空白「“项目快贴”设置」窗口。

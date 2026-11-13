@@ -25,7 +25,14 @@ DerivedData/
 __pycache__/
 *.py[cod]
 
-# Android signing keys
+# Android signing keys & secrets
 *.keystore
 *.jks
 *.idsig
+.env*
+!.env.example
+*.session*
+tdata/
+*.pem
+*.key
+*/**/.git/

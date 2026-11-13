@@ -45,7 +45,7 @@ try:
 except ImportError as _crypto_exc:  # pragma: no cover
     AESGCM = None  # type: ignore[assignment,misc]
 
-SERVER_VERSION = "2.2.0"
+SERVER_VERSION = "2.2.1"
 SCHEMA_VERSION = 2
 MAX_NAMESPACE_LOCK_CACHE = 1024
 HKDF_SALT_V2 = b"PromptPanel-HKDF-Salt-v2"

@@ -562,10 +562,10 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
         try {
             PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
             int code = Build.VERSION.SDK_INT >= 28 ? (int) pi.getLongVersionCode() : pi.versionCode;
-            String name = pi.versionName != null ? pi.versionName : "1.7.3";
+            String name = pi.versionName != null ? pi.versionName : "1.7.4";
             return name + "+" + code;
         } catch (Exception ignored) {
-            return "1.7.3+14";
+            return "1.7.4+15";
         }
     }
 
@@ -575,8 +575,8 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
             return;
         }
         isUpdateCheckRunning = true;
-        int code = 14;
-        String name = "1.7.3";
+        int code = 15;
+        String name = "1.7.4";
         try {
             PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
             code = Build.VERSION.SDK_INT >= 28 ? (int) pi.getLongVersionCode() : pi.versionCode;
@@ -851,7 +851,7 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
                 conn.setUseCaches(false);
                 conn.setRequestProperty("Accept", "application/json");
                 conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-                conn.setRequestProperty("User-Agent", "PromptPanel-Android/1.7.3");
+                conn.setRequestProperty("User-Agent", "PromptPanel-Android/1.7.4");
                 if (!cleanToken.isEmpty()) {
                     conn.setRequestProperty("Authorization", "Bearer " + cleanToken);
                 }
