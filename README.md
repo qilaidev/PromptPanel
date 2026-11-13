@@ -4,6 +4,8 @@
 
 # PromptPanel | 项目快贴
 
+[**English**](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
+
 ### 面向 ChatGPT、Claude、Cursor、Copilot、VS Code 和终端的 macOS 原生 Prompt 管理器 / 片段启动器
 ### Native macOS prompt manager and snippet launcher for ChatGPT, Claude, Cursor, Copilot, VS Code, and Terminal.
 
@@ -19,8 +21,6 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 [![Apple Silicon & Intel](https://img.shields.io/badge/Arch-Apple%20Silicon%20%26%20Intel-blue.svg)](#installation)
 [![Local-first · No cloud](https://img.shields.io/badge/Local--first-No%20cloud-brightgreen.svg)](#privacy--data)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-success.svg)](.github/CONTRIBUTING.md)
-
-[**English**](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
 
 [**FAQ**](docs/FAQ.md) · [**Docs**](docs/README.md) · [**LLM index**](llms.txt) · [**CodeMeta**](codemeta.json) · [**Schema.org**](docs/search-metadata.schema.jsonld) · [**Changelog**](CHANGELOG.md) · [**Contributing**](.github/CONTRIBUTING.md)
 

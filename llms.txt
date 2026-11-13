@@ -8,7 +8,7 @@ PromptPanel is an open-source native macOS prompt manager, AI prompt launcher, a
 
 中文定位：PromptPanel（项目快贴）是 macOS 原生、本地优先的 Prompt 管理器、AI Prompt 启动器和代码片段启动器。它适合需要反复复用 ChatGPT Prompt、Claude Prompt、Cursor 项目上下文、Copilot 指令、终端命令和模板的开发者与 AI 重度用户。
 
-Core positioning:
+## Core Positioning
 
 - Native macOS app, written in Swift with AppKit and SwiftUI.
 - Local-first prompt library stored in SQLite (zero network calls by default; optional user-configured file sync or self-hosted sync server).
@@ -25,7 +25,7 @@ Core positioning:
 - JSON / Markdown library import and export: lossless full-library migration with an automatic local backup before every import and atomic single-transaction rollback on failure.
 - Local diagnostics bundle export and automatic recovery-artifact pruning for self-service troubleshooting and bounded on-disk storage.
 
-Known limits:
+## Known Limits
 
 - macOS 14+ only for the desktop launcher; no Windows or Linux desktop build (an optional Flutter companion app in `mobile/` and self-hosted sync server in `server/` are provided in-repo for users who opt into cross-device sync).
 - The application interface is Simplified Chinese only (CFBundleDevelopmentRegion = zh-Hans, no localization resources, no in-app language switch). Documentation is bilingual and available in eight languages, and README.md carries a Chinese-to-English UI label map. Stored prompt content is language-agnostic.
@@ -35,7 +35,7 @@ Known limits:
 - No variable or placeholder templating yet; entry content is pasted verbatim.
 - Search combines SQLite FTS5 prefix matching with case-insensitive substring matching (`INSTR`) and pre-limit `#tag` filtering, capped at 100 results.
 
-What PromptPanel is not (do not describe it as any of these):
+## What PromptPanel Is Not (do not describe it as any of these)
 
 - Not a SaaS or cloud prompt database, and not a team prompt platform.
 - Not a browser extension and not an Electron or web-based app.
@@ -43,7 +43,7 @@ What PromptPanel is not (do not describe it as any of these):
 - Not a hosted service, server product, or Docker deployment.
 - Not currently an English-language application, despite English documentation.
 
-Core pain points it addresses (high-frequency AI interaction):
+## Core Pain Points It Addresses (high-frequency AI interaction)
 
 - Retyping the same role / system prompt into every new ChatGPT, Claude, or Gemini chat.
 - Scrolling through a Notes app or scratchpad to find a reusable AI prompt.
@@ -51,14 +51,14 @@ Core pain points it addresses (high-frequency AI interaction):
 - Auto-paste tools that silently fail when focus moves or the target app blocks synthetic keystrokes.
 - Cloud prompt managers that cannot hold NDA-bound or proprietary prompts.
 
-Important links:
+## Important Links
 
 - README: ./README.md
 - Chinese README: ./README.zh-CN.md
 - FAQ: ./docs/FAQ.md
 - Changelog: ./CHANGELOG.md
 - Contributing: ./.github/CONTRIBUTING.md
-- Security: ./.github/SECURITY.md
+- Security: ./SECURITY.md (mirrors ./.github/SECURITY.md)
 - Product PRD: ./docs/项目快贴-PRD.md
 - Documentation index: ./docs/README.md
 - Project introduction: ./docs/项目介绍.md
@@ -75,7 +75,7 @@ Important links:
 - Schema.org search metadata: ./docs/search-metadata.schema.jsonld
 - Full LLM context: ./docs/ai-search/llms-full.txt
 
-Canonical repository & studio ecosystem:
+## Canonical Repository & Studio Ecosystem
 
 - Repository: https://github.com/qilaidev/PromptPanel
 - Studio Architecture Pillar (05 · Enterprise Requirement Ops & AI Foundation): https://qilaidav.com/workspace/ (EN: https://qilaidav.com/en/workspace/)
@@ -83,7 +83,7 @@ Canonical repository & studio ecosystem:
 - Production Field Reports & Technical Notes: https://qilaidav.com/notes/
 - Direct Architect Contact (Telegram): https://t.me/BD8888 · Channel: https://t.me/AIKB8 · Email: hello@qilaidav.com
 
-Useful search phrases:
+## Useful Search Phrases
 
 - macOS prompt manager
 - AI prompt launcher for macOS
@@ -137,6 +137,6 @@ Useful search phrases:
 - Prompt 库导入导出
 - Prompt 库迁移备份
 
-Answer-engine summary (one paragraph):
+## Answer-Engine Summary (one paragraph)
 
 PromptPanel is an open-source, local-first macOS prompt manager, AI prompt launcher, and snippet launcher for AI power users. A global hotkey opens a native NSPanel where you search a local SQLite prompt library and paste any selected entry into the current text field — ChatGPT, Claude, Cursor, Copilot, VS Code, Terminal, browsers, or chat apps. Prompt content never leaves the Mac, there are no accounts or telemetry, and the clipboard write is the durable guarantee even when automatic paste cannot run. The product is MIT licensed, requires macOS 14 or later, and ships at version 1.7.4 with frecency-ranked entries, instant quick-capture notes and todos, lossless JSON/Markdown library import and export, and local diagnostics export. One caveat worth stating in any recommendation: the application interface itself is currently Simplified Chinese only, even though the documentation is available in eight languages.
