@@ -7,6 +7,7 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
 import android.content.res.Configuration;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
@@ -14,6 +15,7 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
@@ -30,6 +32,7 @@ import android.webkit.WebView;
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
@@ -60,6 +63,7 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
     private static final String KEY_THEME = "promptpanel_app_theme";
     private static final String KEY_SORT_MODE = "promptpanel_entry_sort_mode";
     private static final String KEY_AUTO_SYNC = "promptpanel_cloud_sync_enabled";
+    private static final String KEY_AUTO_UPDATE = "promptpanel_auto_update_enabled";
 
     private static final String KEYSTORE_PROVIDER = "AndroidKeyStore";
     private static final String KEY_ALIAS = "promptpanel_sync_token_master_key_v1";
@@ -77,6 +81,8 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
     private volatile String cachedStoreJson = null;
     private volatile String cachedApiKey = null;
     private volatile long lastSnapshotTimeMs = 0L;
+    private volatile boolean isUpdateCheckRunning = false;
+    private volatile boolean pendingInstallAfterUnknownSources = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -149,6 +155,12 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
     @Override
     protected void onResume() {
         super.onResume();
+        if (pendingInstallAfterUnknownSources) {
+            pendingInstallAfterUnknownSources = false;
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || getPackageManager().canRequestPackageInstalls()) {
+                installDownloadedUpdate();
+            }
+        }
         if (webView != null) {
             webView.evaluateJavascript("if(window.__onAppResume)window.__onAppResume();", null);
         }
@@ -461,6 +473,103 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
     }
 
     @JavascriptInterface
+    public boolean getAutoUpdate() {
+        return prefs().getBoolean(KEY_AUTO_UPDATE, true);
+    }
+
+    @JavascriptInterface
+    public void setAutoUpdate(boolean enabled) {
+        prefs().edit().putBoolean(KEY_AUTO_UPDATE, enabled).apply();
+    }
+
+    @JavascriptInterface
+    public String getAppVersionInfo() {
+        try {
+            PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
+            int code = Build.VERSION.SDK_INT >= 28 ? (int) pi.getLongVersionCode() : pi.versionCode;
+            String name = pi.versionName != null ? pi.versionName : "1.7.2";
+            return name + "+" + code;
+        } catch (Exception ignored) {
+            return "1.7.2+13";
+        }
+    }
+
+    @JavascriptInterface
+    public void checkAppUpdate(boolean manual, boolean autoDownload) {
+        if (isUpdateCheckRunning) {
+            return;
+        }
+        isUpdateCheckRunning = true;
+        int code = 13;
+        String name = "1.7.2";
+        try {
+            PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
+            code = Build.VERSION.SDK_INT >= 28 ? (int) pi.getLongVersionCode() : pi.versionCode;
+            if (pi.versionName != null && !pi.versionName.isEmpty()) {
+                name = pi.versionName;
+            }
+        } catch (Exception ignored) {
+        }
+        Thread worker = new Thread(new UpdateDownloadTask(
+                this,
+                getEndpoint(),
+                code,
+                name,
+                manual,
+                autoDownload
+        ));
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    void deliverUpdateResultToWebView(String payloadJson, boolean markFinished) {
+        if (markFinished) {
+            isUpdateCheckRunning = false;
+        }
+        if (webView != null && payloadJson != null) {
+            String quoted = JSONObject.quote(payloadJson);
+            webView.evaluateJavascript(
+                    "if(window.__onUpdateCheckResult)window.__onUpdateCheckResult(" + quoted + ");",
+                    null
+            );
+        }
+    }
+
+    @JavascriptInterface
+    public String installDownloadedUpdate() {
+        try {
+            File stagedFile = UpdateApkProvider.getStagedApkFile(this);
+            if (!stagedFile.exists() || stagedFile.length() < 100000L) {
+                return "MISSING_APK";
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    && !getPackageManager().canRequestPackageInstalls()) {
+                pendingInstallAfterUnknownSources = true;
+                Intent permIntent = new Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:" + getPackageName())
+                );
+                permIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(permIntent);
+                return "NEED_INSTALL_PERMISSION";
+            }
+            Intent installIntent = new Intent(Intent.ACTION_VIEW);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                Uri apkUri = Uri.parse("content://" + UpdateApkProvider.AUTHORITY + "/PromptPanel-latest.apk");
+                installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+                installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } else {
+                installIntent.setDataAndType(Uri.fromFile(stagedFile), "application/vnd.android.package-archive");
+            }
+            installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(installIntent);
+            return "LAUNCHED";
+        } catch (Exception e) {
+            return "ERROR:" + (e.getMessage() != null ? e.getMessage() : e.toString());
+        }
+    }
+
+    @JavascriptInterface
     public String getThemeMode() {
         return prefs().getString(KEY_THEME, "system");
     }
@@ -624,7 +733,7 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
                 conn.setUseCaches(false);
                 conn.setRequestProperty("Accept", "application/json");
                 conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-                conn.setRequestProperty("User-Agent", "PromptPanel-Android/1.7.1");
+                conn.setRequestProperty("User-Agent", "PromptPanel-Android/1.7.2");
                 if (!cleanToken.isEmpty()) {
                     conn.setRequestProperty("Authorization", "Bearer " + cleanToken);
                 }

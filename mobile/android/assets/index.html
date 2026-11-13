@@ -1764,11 +1764,12 @@
     </div>
   </header>
 
-  <!-- Transient Status Banner (Mirrors SettingsBanner, with Undo support) -->
+  <!-- Transient Status Banner (Mirrors SettingsBanner, with Undo & 1-Tap Update Install) -->
   <div id="bannerStrip" class="banner-strip">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
     <span id="bannerText" class="banner-text"></span>
     <button id="bannerUndoBtn" class="banner-undo-btn" onclick="undoLastDeletedEntry()">撤销</button>
+    <button id="bannerInstallBtn" class="banner-undo-btn" onclick="triggerInstallReadyUpdate()">立即安装</button>
     <button class="clear-btn" style="display:inline-flex;" onclick="dismissBanner()" aria-label="关闭提示">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>
@@ -1847,7 +1848,7 @@
       </div>
       <div class="health-inline">
         <span class="status-dot"></span>
-        <span id="healthInlineText">SQLite WAL · KeyStore AES-256 · v1.7.1 (12)</span>
+        <span id="healthInlineText">SQLite WAL · KeyStore AES-256 · v1.7.2 (13)</span>
       </div>
     </div>
 
@@ -1880,6 +1881,25 @@
             <option value="alpha">按字母</option>
           </select>
         </div>
+      </div>
+
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <span class="settings-card-title">版本与一键更新</span>
+          <span id="updateVersionBadge" class="kbd-badge">v1.7.2 (13)</span>
+        </div>
+        <div class="settings-row" style="padding:4px 0 10px;">
+          <div>
+            <div class="settings-row-label">自动检查并预下载更新</div>
+            <div class="settings-row-desc">优先走已配置的同步节点镜像极速校验下载，就绪后一键安装免卸载</div>
+          </div>
+          <button id="autoUpdateSwitch" type="button" role="switch" aria-checked="true" class="switch-toggle checked" onclick="toggleAutoUpdateSwitch()" aria-label="自动检查并预下载更新"></button>
+        </div>
+        <div class="btn-row">
+          <button id="checkUpdatePrimaryBtn" class="btn-primary" style="flex:1;" onclick="onTapCheckOrInstallUpdate()">检查并一键更新</button>
+          <button class="btn-secondary" onclick="copyDirectAndroidDownloadLink()">复制安装包直链</button>
+        </div>
+        <div id="appUpdateStatusText" style="margin-top:8px;font-family:var(--font-mono);font-size:11px;color:var(--text-sub);line-height:1.45;">当前版本 v1.7.2 (13) · 已启用后台自动预下载</div>
       </div>
 
       <div class="settings-card">
@@ -2627,25 +2647,33 @@ function persistStore(triggerAuto = false) {
   }
 }
 
-function showBanner(msg, withUndo = false) {
+function showBanner(msg, withUndo = false, withInstall = false) {
   const strip = document.getElementById('bannerStrip');
   const undoBtn = document.getElementById('bannerUndoBtn');
+  const installBtn = document.getElementById('bannerInstallBtn');
   document.getElementById('bannerText').textContent = msg;
   if (undoBtn) {
     undoBtn.style.display = withUndo ? 'inline-flex' : 'none';
   }
+  if (installBtn) {
+    installBtn.style.display = withInstall ? 'inline-flex' : 'none';
+  }
   strip.classList.add('visible');
   clearTimeout(window.__bannerTimer);
+  const timeoutMs = withInstall ? 15000 : (withUndo ? 6500 : 5000);
   window.__bannerTimer = setTimeout(() => {
     strip.classList.remove('visible');
     if (undoBtn) undoBtn.style.display = 'none';
-  }, withUndo ? 6500 : 5000);
+    if (installBtn) installBtn.style.display = 'none';
+  }, timeoutMs);
 }
 
 function dismissBanner() {
   document.getElementById('bannerStrip').classList.remove('visible');
   const undoBtn = document.getElementById('bannerUndoBtn');
+  const installBtn = document.getElementById('bannerInstallBtn');
   if (undoBtn) undoBtn.style.display = 'none';
+  if (installBtn) installBtn.style.display = 'none';
 }
 
 function showToast(msg) {
@@ -3995,8 +4023,198 @@ function hydrateSyncInputsFromStorage() {
   if (epEl) epEl.value = creds.ep;
   if (tkEl) tkEl.value = creds.tk;
   syncAutoSyncSwitchUI(isAutoSyncEnabled());
+  syncAutoUpdateSwitchUI(isAutoUpdateEnabled());
+  refreshAppUpdateCardUI();
   updateTopbarSyncIndicator();
 }
+
+let appUpdatePhase = { state: 'idle', version: '1.7.2', build: 13, message: '' };
+let lastAutoUpdateCheckMs = 0;
+
+function getInstalledAppVersionLabel() {
+  if (window.AndroidBridge && AndroidBridge.getAppVersionInfo) {
+    const raw = String(AndroidBridge.getAppVersionInfo() || '').trim();
+    const parts = raw.split('+');
+    if (parts.length === 2) {
+      return `v${parts[0]} (${parts[1]})`;
+    }
+    if (raw) return 'v' + raw;
+  }
+  return 'v1.7.2 (13)';
+}
+
+function isAutoUpdateEnabled() {
+  if (window.AndroidBridge && AndroidBridge.getAutoUpdate) {
+    return !!AndroidBridge.getAutoUpdate();
+  }
+  const v = localStorage.getItem('promptpanel_auto_update_enabled');
+  return v === null ? true : (v === 'true');
+}
+
+function syncAutoUpdateSwitchUI(checked) {
+  const sw = document.getElementById('autoUpdateSwitch');
+  if (!sw) return;
+  sw.classList.toggle('checked', !!checked);
+  sw.setAttribute('aria-checked', checked ? 'true' : 'false');
+}
+
+function toggleAutoUpdateSwitch() {
+  const next = !isAutoUpdateEnabled();
+  if (window.AndroidBridge && AndroidBridge.setAutoUpdate) {
+    AndroidBridge.setAutoUpdate(next);
+  }
+  localStorage.setItem('promptpanel_auto_update_enabled', next ? 'true' : 'false');
+  syncAutoUpdateSwitchUI(next);
+  refreshAppUpdateCardUI();
+  if (next) {
+    showToast('已开启自动检查并预下载更新');
+    triggerSilentUpdateCheckIfNeeded(true);
+  } else {
+    showToast('已关闭自动更新，仍可点击一键更新');
+  }
+}
+
+function refreshAppUpdateCardUI() {
+  const verLabel = getInstalledAppVersionLabel();
+  const healthEl = document.getElementById('healthInlineText');
+  if (healthEl) {
+    healthEl.textContent = `SQLite WAL · KeyStore AES-256 · ${verLabel}`;
+  }
+  const badgeEl = document.getElementById('updateVersionBadge');
+  const btnEl = document.getElementById('checkUpdatePrimaryBtn');
+  const statusEl = document.getElementById('appUpdateStatusText');
+  if (!btnEl || !statusEl) return;
+
+  const st = appUpdatePhase.state;
+  if (st === 'checking') {
+    if (badgeEl) badgeEl.textContent = '检查中';
+    btnEl.textContent = '正在检查更新…';
+    btnEl.disabled = true;
+    statusEl.textContent = '正在连接更新源查询最新版本…';
+  } else if (st === 'downloading') {
+    if (badgeEl) badgeEl.textContent = '下载中';
+    btnEl.textContent = `正在下载校验 v${appUpdatePhase.version}…`;
+    btnEl.disabled = true;
+    statusEl.textContent = `正在下载新版本 v${appUpdatePhase.version} 并校验 SHA-256 签名…`;
+  } else if (st === 'ready') {
+    if (badgeEl) badgeEl.textContent = `新版 v${appUpdatePhase.version}`;
+    btnEl.textContent = `立即安装 v${appUpdatePhase.version}`;
+    btnEl.disabled = false;
+    statusEl.textContent = `新版本 v${appUpdatePhase.version} 已下载并校验通过，点击即可原位覆盖升级（数据完整保留）`;
+  } else if (st === 'available') {
+    if (badgeEl) badgeEl.textContent = `有新版 v${appUpdatePhase.version}`;
+    btnEl.textContent = `一键下载安装 v${appUpdatePhase.version}`;
+    btnEl.disabled = false;
+    statusEl.textContent = `发现新版本 v${appUpdatePhase.version}，点击即可自动下载并调起安装`;
+  } else if (st === 'up_to_date') {
+    if (badgeEl) badgeEl.textContent = verLabel;
+    btnEl.textContent = '检查并一键更新';
+    btnEl.disabled = false;
+    statusEl.textContent = `已是最新版本 ${verLabel}`;
+  } else if (st === 'error') {
+    if (badgeEl) badgeEl.textContent = verLabel;
+    btnEl.textContent = '重试一键更新';
+    btnEl.disabled = false;
+    statusEl.textContent = `上次检查未完成：${appUpdatePhase.message || '请检查网络'}`;
+  } else {
+    if (badgeEl) badgeEl.textContent = verLabel;
+    btnEl.textContent = '检查并一键更新';
+    btnEl.disabled = false;
+    statusEl.textContent = `当前版本 ${verLabel} · ${isAutoUpdateEnabled() ? '已启用后台自动预下载' : '手动检查模式'}`;
+  }
+}
+
+function onTapCheckOrInstallUpdate() {
+  if (appUpdatePhase.state === 'ready') {
+    triggerInstallReadyUpdate();
+    return;
+  }
+  if (window.AndroidBridge && AndroidBridge.checkAppUpdate) {
+    saveSyncSettings(true);
+    showToast('正在检查并获取最新安装包…');
+    AndroidBridge.checkAppUpdate(true, true);
+  } else {
+    copyDirectAndroidDownloadLink();
+  }
+}
+
+function triggerInstallReadyUpdate() {
+  dismissBanner();
+  if (window.AndroidBridge && AndroidBridge.installDownloadedUpdate) {
+    const res = String(AndroidBridge.installDownloadedUpdate() || '');
+    if (res === 'NEED_INSTALL_PERMISSION') {
+      showBanner('首次应用内升级请开启「允许安装未知应用」，开启后将自动弹出安装界面');
+    } else if (res === 'MISSING_APK') {
+      appUpdatePhase.state = 'idle';
+      refreshAppUpdateCardUI();
+      if (AndroidBridge.checkAppUpdate) {
+        AndroidBridge.checkAppUpdate(true, true);
+      }
+    } else if (res.startsWith('ERROR:')) {
+      showBanner('调起系统安装器失败：' + res.slice(6));
+    }
+  }
+}
+
+function resolveDirectAndroidApkUrl() {
+  const { ep } = getSyncCredentials();
+  if (ep) {
+    try {
+      const u = new URL(ep);
+      if (u.protocol === 'http:' || u.protocol === 'https:') {
+        u.pathname = '/download/android';
+        u.search = '';
+        return u.toString();
+      }
+    } catch (e) {}
+  }
+  return 'https://github.com/qilaidev/PromptPanel/releases/latest';
+}
+
+function copyDirectAndroidDownloadLink() {
+  const url = resolveDirectAndroidApkUrl();
+  writeSystemClipboard('PromptPanel Android Download URL', url);
+  showBanner('已复制安装包直链：' + url);
+}
+
+function triggerSilentUpdateCheckIfNeeded(forceNow = false) {
+  if (!(window.AndroidBridge && AndroidBridge.checkAppUpdate)) return;
+  if (!isAutoUpdateEnabled() && !forceNow) return;
+  if (appUpdatePhase.state === 'ready' || appUpdatePhase.state === 'downloading' || appUpdatePhase.state === 'checking') {
+    return;
+  }
+  const now = Date.now();
+  if (!forceNow && now - lastAutoUpdateCheckMs < 4 * 3600 * 1000) {
+    return;
+  }
+  lastAutoUpdateCheckMs = now;
+  AndroidBridge.checkAppUpdate(false, true);
+}
+
+window.__onUpdateCheckResult = function(rawJson) {
+  try {
+    const data = typeof rawJson === 'string' ? JSON.parse(rawJson) : rawJson;
+    if (!data || !data.state) return;
+    appUpdatePhase = {
+      state: data.state,
+      version: data.version || '',
+      build: data.build || 0,
+      message: data.message || ''
+    };
+    refreshAppUpdateCardUI();
+    if (data.state === 'up_to_date' && data.manual) {
+      showBanner('当前已是最新版本 ' + getInstalledAppVersionLabel());
+    } else if (data.state === 'ready') {
+      if (data.manual) {
+        triggerInstallReadyUpdate();
+      } else {
+        showBanner('新版本 v' + data.version + ' 已在后台下载校验就绪', false, true);
+      }
+    } else if (data.state === 'error' && data.manual) {
+      showBanner('检查更新失败：' + (data.message || '网络不可达'));
+    }
+  } catch (e) {}
+};
 
 function onTapTopbarSync() {
   const creds = getSyncCredentials();
@@ -4612,6 +4830,7 @@ window.__onAppResume = function() {
   if (isAutoSyncEnabled() && getSyncCredentials().ep) {
     triggerCloudSync(true);
   }
+  triggerSilentUpdateCheckIfNeeded(false);
 };
 
 document.addEventListener('visibilitychange', function() {
@@ -4641,6 +4860,9 @@ hydrateSyncInputsFromStorage();
 render();
 if (isAutoSyncEnabled() && getSyncCredentials().ep) {
   setTimeout(function() { triggerCloudSync(true); }, 900);
+}
+if (isAutoUpdateEnabled()) {
+  setTimeout(function() { triggerSilentUpdateCheckIfNeeded(true); }, 2500);
 }
 </script>
 </body>
