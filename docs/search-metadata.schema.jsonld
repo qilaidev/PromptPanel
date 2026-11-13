@@ -100,7 +100,11 @@
       "author": {
         "@type": "Person",
         "name": "qilaidev",
-        "url": "https://github.com/qilaidev"
+        "url": "https://github.com/qilaidev",
+        "sameAs": [
+          "https://qilaidav.com",
+          "https://github.com/qilaidev"
+        ]
       },
       "screenshot": [
         "https://raw.githubusercontent.com/qilaidev/PromptPanel/main/docs/ui-qa/latest/panel-light.png",

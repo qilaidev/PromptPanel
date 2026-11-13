@@ -11,6 +11,7 @@ PromptPanel（项目快贴）是一款本地优先的 **macOS Prompt 管理器**
 
 PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, and **snippet launcher**. It is built for developers and AI power users who reuse multiline prompts, coding templates, project context blocks, terminal commands, and reply snippets across apps.
 
+[![Release Readiness](https://github.com/qilaidev/PromptPanel/actions/workflows/macos-release-readiness.yml/badge.svg)](https://github.com/qilaidev/PromptPanel/actions/workflows/macos-release-readiness.yml)
 [![Release: v1.7.4](https://img.shields.io/badge/Release-v1.7.4-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: macOS 14+](https://img.shields.io/badge/Platform-macOS%2014%2B-lightgrey.svg)](https://www.apple.com/macos)
@@ -21,7 +22,7 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 
 [**English**](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
 
-[**FAQ**](docs/FAQ.md) · [**Docs**](docs/README.md) · [**LLM index**](llms.txt) · [**Changelog**](CHANGELOG.md) · [**Contributing**](.github/CONTRIBUTING.md)
+[**FAQ**](docs/FAQ.md) · [**Docs**](docs/README.md) · [**LLM index**](llms.txt) · [**CodeMeta**](codemeta.json) · [**Schema.org**](docs/search-metadata.schema.jsonld) · [**Changelog**](CHANGELOG.md) · [**Contributing**](.github/CONTRIBUTING.md)
 
 </div>
 
@@ -489,6 +490,19 @@ PromptPanel stands on:
 [MIT](LICENSE) © 2026 qilaidev and PromptPanel contributors.
 
 ---
+
+<details>
+<summary>Search Intent &amp; Query Mapping (AI &amp; Search Discovery)</summary>
+
+| Search Intent | Representative Queries | Target Capability |
+|---|---|---|
+| Native macOS AI prompt manager | `macOS prompt manager`, `NSPanel prompt launcher Mac` | Floating `NSPanel` (`⌥2` configurable hotkey) built with Swift 5.10, AppKit, and SwiftUI |
+| Keyboard-first auto-paste utility | `global hotkey paste prompt macOS`, `Raycast snippets open source alternative` | Clipboard-first guarantee + best-effort `CGEvent` `⌘V` auto-paste into the active app |
+| Offline & NDA-safe prompt storage | `local-first AI prompt library offline`, `private ChatGPT Claude Cursor prompts` | Local SQLite database + immutable `EntryVersion` rollback + `0` telemetry + JSON/MD export |
+| Hybrid FTS5 & tag retrieval | `sqlite fts5 prompt launcher macOS`, `frecency ranked snippet picker` | SQLite FTS5 prefix match + substring fallback + `#tag` filter + pin & frecency ranking |
+| Developer IDE & terminal speed | `Cursor Copilot prompt snippet launcher`, `TextExpander Espanso alternative` | Native `NSPanel` pre-warmed at launch (`< 300 ms` focus, `< 50 ms` search targets; no Electron) |
+
+</details>
 
 <sub>**Keywords** (so you can actually find this when you search): macOS prompt manager · AI prompt launcher · ChatGPT prompt manager macOS · Claude prompt library · Cursor snippet manager · Copilot prompt template launcher · open-source TextExpander alternative · Espanso alternative · Raycast snippets alternative · Alfred snippet replacement · global hotkey paste macOS · local-first prompt library · offline AI prompt storage · native Swift NSPanel app · AI workflow productivity tool · prompt template manager macOS · snippet launcher macOS · keyboard-first prompt picker · LLM prompt library Mac · prompt engineering toolkit macOS · Cursor prompt manager · fast local prompt launcher for AI · NDA-safe prompt storage.</sub>
 

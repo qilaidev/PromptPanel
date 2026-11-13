@@ -108,14 +108,22 @@
     {
       "@type": "Person",
       "givenName": "qilaidev",
-      "url": "https://github.com/qilaidev"
+      "url": "https://github.com/qilaidev",
+      "sameAs": [
+        "https://qilaidav.com",
+        "https://github.com/qilaidev"
+      ]
     }
   ],
   "maintainer": [
     {
       "@type": "Person",
       "givenName": "qilaidev",
-      "url": "https://github.com/qilaidev"
+      "url": "https://github.com/qilaidev",
+      "sameAs": [
+        "https://qilaidav.com",
+        "https://github.com/qilaidev"
+      ]
     }
   ]
 }

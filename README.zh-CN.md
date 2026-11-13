@@ -9,6 +9,7 @@
 
 PromptPanel 是一款本地优先的 **macOS Prompt 管理器**、**AI Prompt 启动器** 和 **代码片段启动器**：全局快捷键唤出快捷面板，瞬间检索你的 **Prompt 库 / 代码片段 / 模板**，把内容一键送进 **ChatGPT、Claude、Cursor、Copilot、VS Code、终端、浏览器或任意输入框**。
 
+[![Release Readiness](https://github.com/qilaidev/PromptPanel/actions/workflows/macos-release-readiness.yml/badge.svg)](https://github.com/qilaidev/PromptPanel/actions/workflows/macos-release-readiness.yml)
 [![Release: v1.7.4](https://img.shields.io/badge/Release-v1.7.4-blue.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: macOS 14+](https://img.shields.io/badge/Platform-macOS%2014%2B-lightgrey.svg)](https://www.apple.com/macos)
@@ -19,7 +20,7 @@ PromptPanel 是一款本地优先的 **macOS Prompt 管理器**、**AI Prompt �
 
 [English](README.md) · [**简体中文**](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
 
-[**FAQ**](docs/FAQ.md) · [**文档**](docs/README.md) · [**LLM 索引**](llms.txt) · [**变更记录**](CHANGELOG.md) · [**贡献指南**](.github/CONTRIBUTING.md)
+[**FAQ**](docs/FAQ.md) · [**文档**](docs/README.md) · [**LLM 索引**](llms.txt) · [**CodeMeta**](codemeta.json) · [**Schema.org**](docs/search-metadata.schema.jsonld) · [**变更记录**](CHANGELOG.md) · [**贡献指南**](.github/CONTRIBUTING.md)
 
 </div>
 
@@ -480,6 +481,19 @@ PromptPanel 站在以下肩膀上：
 [MIT](LICENSE) © 2026 qilaidev 与 PromptPanel 贡献者。
 
 ---
+
+<details>
+<summary>搜索意图与检索词映射 / Search Intent &amp; Query Mapping</summary>
+
+| 搜索场景 / Search Intent | 高频检索词 / Representative Queries | 对应能力 / Target Capability |
+|---|---|---|
+| 原生 macOS Prompt 管理器 | `macOS prompt manager`, `NSPanel 浮窗提示词工具` | Swift 5.10 + AppKit/SwiftUI 原生 `NSPanel` 浮窗（默认热键 `⌥2`，可自定义） |
+| 全局热键复制与自动粘贴 | `全局快捷键粘贴 prompt`, `TextExpander Espanso 开源替代` | 先写入剪贴板兜底，再经 Accessibility 权限以 `CGEvent` 发送 `⌘V` 贴回原焦点 |
+| 离线与 NDA 安全存储 | `本地优先 AI 提示词库`, `不上云 ChatGPT Claude 提示词管理` | 本地 SQLite 单库 + `EntryVersion` 不可变历史回滚 + 零遥测 + JSON/MD 无损导入导出 |
+| 混合检索与频率衰减排序 | `sqlite fts5 prompt 启动器`, `macOS 代码片段标签检索` | SQLite FTS5 前缀匹配 + 子串回退 + `#tag` 过滤 + 置顶与时间衰减频率排序 |
+| Cursor / 终端原生低延迟 | `Cursor 提示词启动器`, `Raycast Snippets 开源替代` | 启动即预热原生浮窗（`< 300 ms` 聚焦 / `< 50 ms` 搜索预算，无 Electron） |
+
+</details>
 
 <sub>**关键词**（方便你搜到）：macOS Prompt 管理 · AI Prompt 启动器 · ChatGPT Prompt 管理 macOS · Claude Prompt 库 · Cursor 代码片段管理 · Copilot 模板启动器 · 开源 TextExpander 替代 · Espanso 替代 · Raycast 替代 · Alfred Snippets 替代 · 全局快捷键粘贴 · 本地优先 Prompt 库 · 离线 AI Prompt 存储 · 原生 Swift NSPanel 应用 · AI 工作流效率工具 · Prompt 模板管理 macOS · macOS 片段启动器 · 键盘优先 Prompt 选择器 · LLM Prompt 仓库 Mac · Prompt 工程工具箱 · Cursor Prompt 管理器 · NDA 安全的本地 Prompt 存储 · 项目快贴.</sub>
 

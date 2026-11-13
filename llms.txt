@@ -75,9 +75,13 @@ Important links:
 - Schema.org search metadata: ./docs/search-metadata.schema.jsonld
 - Full LLM context: ./docs/ai-search/llms-full.txt
 
-Canonical repository:
+Canonical repository & studio ecosystem:
 
-- https://github.com/qilaidev/PromptPanel
+- Repository: https://github.com/qilaidev/PromptPanel
+- Studio Architecture Pillar (05 · Enterprise Requirement Ops & AI Foundation): https://qilaidav.com/workspace/ (EN: https://qilaidav.com/en/workspace/)
+- Studio Homepage: https://qilaidav.com/ (EN: https://qilaidav.com/en/)
+- Production Field Reports & Technical Notes: https://qilaidav.com/notes/
+- Direct Architect Contact (Telegram): https://t.me/BD8888 · Channel: https://t.me/AIKB8 · Email: hello@qilaidav.com
 
 Useful search phrases:
 
