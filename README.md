@@ -409,7 +409,7 @@ PromptPanel follows a **deliberately focused** roadmap. Core principles remain s
 
 See [docs/路线图与贡献指南.md](docs/路线图与贡献指南.md) for prioritization rules, [CHANGELOG.md](CHANGELOG.md) for what's shipped, and [issues](https://github.com/qilaidev/PromptPanel/issues) for public planning.
 
-## Frequently asked questions
+## Frequently asked questions (FAQ)
 
 For a longer FAQ, see [FAQ.md](docs/FAQ.md). The greatest hits:
 
