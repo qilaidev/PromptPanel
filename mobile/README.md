@@ -22,4 +22,4 @@
 ./mobile/build-android.sh
 ```
 
-构建脚本会编译 `mobile/android/` 原生宿主与离线前端资产，执行 4 字节对齐（`zipalign`），并使用 RSA-2048 发行密钥同时完成 **V1 (JAR) + V2 + V3** 全签名与 `apksigner verify` 校验，产物输出至 `dist/release/PromptPanel-1.7.0+11-android.apk`。
+构建脚本会编译 `mobile/android/` 原生宿主与离线前端资产，执行 4 字节对齐（`zipalign`），并使用 RSA-2048 发行密钥同时完成 **V1 (JAR) + V2 + V3** 全签名与 `apksigner verify` 校验，产物输出至 `dist/release/PromptPanel-1.7.1+12-android.apk`。
