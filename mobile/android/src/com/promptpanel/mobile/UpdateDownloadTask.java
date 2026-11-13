@@ -78,7 +78,11 @@ public class UpdateDownloadTask implements Runnable {
 
             dispatchState("downloading", remoteVer, remoteBuild, "", false);
 
-            File partFile = new File(stagedFile.getParentFile(), "PromptPanel-latest.apk.part");
+            File parentDir = stagedFile.getParentFile();
+            if (parentDir != null && !parentDir.exists()) {
+                parentDir.mkdirs();
+            }
+            File partFile = new File(parentDir, "PromptPanel-latest.apk.part");
             if (partFile.exists()) {
                 partFile.delete();
             }
@@ -106,13 +110,26 @@ public class UpdateDownloadTask implements Runnable {
                 stagedFile.delete();
             }
             if (!partFile.renameTo(stagedFile)) {
-                throw new IllegalStateException("写入更新缓存目录失败");
+                copyFileFallback(partFile, stagedFile);
+                partFile.delete();
             }
 
             dispatchState("ready", remoteVer, remoteBuild, "", true);
         } catch (Exception e) {
-            String msg = e.getMessage() != null ? e.getMessage() : e.toString();
+            String msg = MainActivity.translateNetworkException(e);
             dispatchState("error", localVersionName, localVersionCode, msg, true);
+        }
+    }
+
+    private static void copyFileFallback(File src, File dst) throws Exception {
+        try (FileInputStream fis = new FileInputStream(src);
+             FileOutputStream fos = new FileOutputStream(dst)) {
+            byte[] buf = new byte[32768];
+            int n;
+            while ((n = fis.read(buf)) > 0) {
+                fos.write(buf, 0, n);
+            }
+            fos.flush();
         }
     }
 

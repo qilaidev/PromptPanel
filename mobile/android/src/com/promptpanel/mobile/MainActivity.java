@@ -33,11 +33,16 @@ import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.ConnectException;
 import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.SocketTimeoutException;
 import java.net.URL;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.security.SecureRandom;
@@ -51,6 +56,7 @@ import javax.crypto.Mac;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
+import javax.net.ssl.SSLException;
 
 import org.json.JSONObject;
 
@@ -79,7 +85,11 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
     private volatile boolean hasOpenModal = false;
     private volatile String pendingThemeMode = "system";
     private volatile String cachedStoreJson = null;
+    private volatile String lastPersistedStoreJson = null;
     private volatile String cachedApiKey = null;
+    private volatile SecretKey cachedHardwareSecretKey = null;
+    private volatile String cachedDerivedToken = null;
+    private volatile byte[] cachedDerivedAeadKey = null;
     private volatile long lastSnapshotTimeMs = 0L;
     private volatile boolean isUpdateCheckRunning = false;
     private volatile boolean pendingInstallAfterUnknownSources = false;
@@ -198,6 +208,8 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
                 sqliteDb.enableWriteAheadLogging();
             }
+            execPragmaQuietly(sqliteDb, "PRAGMA busy_timeout=5000");
+            execPragmaQuietly(sqliteDb, "PRAGMA synchronous=NORMAL");
             sqliteDb.execSQL(
                     "CREATE TABLE IF NOT EXISTS kv_store ("
                             + "k TEXT PRIMARY KEY, "
@@ -212,6 +224,31 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
             );
         }
         return sqliteDb;
+    }
+
+    private void execPragmaQuietly(SQLiteDatabase db, String pragmaSql) {
+        Cursor c = null;
+        try {
+            c = db.rawQuery(pragmaSql, null);
+            if (c != null) {
+                c.moveToFirst();
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (c != null) {
+                c.close();
+            }
+        }
+    }
+
+    private String decodeStoredPayload(String rawVal) {
+        if (rawVal == null || rawVal.isEmpty()) {
+            return "";
+        }
+        if (rawVal.startsWith("v1:") || rawVal.startsWith("fb:")) {
+            return decryptToken(rawVal);
+        }
+        return rawVal;
     }
 
     private void initSqliteStorageAndMigrate() {
@@ -239,17 +276,39 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
             cursor = db.rawQuery("SELECT v FROM kv_store WHERE k = ? LIMIT 1", new String[]{DB_STORE_KEY});
             if (cursor != null && cursor.moveToFirst()) {
                 String rawVal = cursor.getString(0);
-                if (rawVal != null && (rawVal.startsWith("v1:") || rawVal.startsWith("fb:"))) {
-                    cachedStoreJson = decryptToken(rawVal);
-                } else {
-                    cachedStoreJson = rawVal != null ? rawVal : "";
+                String decoded = decodeStoredPayload(rawVal);
+                if (decoded != null && !decoded.isEmpty()) {
+                    cachedStoreJson = decoded;
+                    lastPersistedStoreJson = decoded;
+                    return cachedStoreJson;
                 }
-                return cachedStoreJson;
             }
         } catch (Exception ignored) {
         } finally {
             if (cursor != null) {
                 cursor.close();
+            }
+        }
+
+        // Self-healing fallback: attempt recovery from rolling snapshots if primary row is missing or unreadable
+        Cursor snapCursor = null;
+        try {
+            snapCursor = db.rawQuery("SELECT payload FROM store_snapshots ORDER BY id DESC LIMIT 5", null);
+            if (snapCursor != null) {
+                while (snapCursor.moveToNext()) {
+                    String snapRaw = snapCursor.getString(0);
+                    String recovered = decodeStoredPayload(snapRaw);
+                    if (recovered != null && !recovered.trim().isEmpty()) {
+                        cachedStoreJson = recovered;
+                        writeSqliteStore(db, recovered, false);
+                        return cachedStoreJson;
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (snapCursor != null) {
+                snapCursor.close();
             }
         }
         return "";
@@ -258,6 +317,9 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
     private void writeSqliteStore(SQLiteDatabase db, String json, boolean forceSnapshot) {
         String safeJson = json != null ? json : "";
         cachedStoreJson = safeJson;
+        if (!forceSnapshot && safeJson.equals(lastPersistedStoreJson) && !safeJson.isEmpty()) {
+            return;
+        }
         String encryptedAtRest = safeJson.isEmpty() ? "" : encryptToken(safeJson);
         String toPersist = !encryptedAtRest.isEmpty() ? encryptedAtRest : safeJson;
         long now = System.currentTimeMillis();
@@ -284,18 +346,23 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
                 );
             }
             db.setTransactionSuccessful();
+            lastPersistedStoreJson = safeJson;
         } finally {
             db.endTransaction();
         }
     }
 
-    private SecretKey getOrCreateHardwareSecretKey() throws Exception {
+    private synchronized SecretKey getOrCreateHardwareSecretKey() throws Exception {
+        if (cachedHardwareSecretKey != null) {
+            return cachedHardwareSecretKey;
+        }
         KeyStore ks = KeyStore.getInstance(KEYSTORE_PROVIDER);
         ks.load(null);
         if (ks.containsAlias(KEY_ALIAS)) {
             KeyStore.Entry entry = ks.getEntry(KEY_ALIAS, null);
             if (entry instanceof KeyStore.SecretKeyEntry) {
-                return ((KeyStore.SecretKeyEntry) entry).getSecretKey();
+                cachedHardwareSecretKey = ((KeyStore.SecretKeyEntry) entry).getSecretKey();
+                return cachedHardwareSecretKey;
             }
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -309,7 +376,8 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
                     .setKeySize(256)
                     .build();
             keyGen.init(spec);
-            return keyGen.generateKey();
+            cachedHardwareSecretKey = keyGen.generateKey();
+            return cachedHardwareSecretKey;
         }
         return null;
     }
@@ -318,19 +386,23 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
         if (plainToken == null || plainToken.isEmpty()) {
             return "";
         }
-        try {
-            SecretKey key = getOrCreateHardwareSecretKey();
-            if (key != null) {
-                Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-                cipher.init(Cipher.ENCRYPT_MODE, key);
-                byte[] iv = cipher.getIV();
-                byte[] cipherBytes = cipher.doFinal(plainToken.getBytes(StandardCharsets.UTF_8));
-                return "v1:"
-                        + Base64.encodeToString(iv, Base64.NO_WRAP)
-                        + ":"
-                        + Base64.encodeToString(cipherBytes, Base64.NO_WRAP);
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                SecretKey key = getOrCreateHardwareSecretKey();
+                if (key != null) {
+                    Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+                    cipher.init(Cipher.ENCRYPT_MODE, key);
+                    byte[] iv = cipher.getIV();
+                    byte[] cipherBytes = cipher.doFinal(plainToken.getBytes(StandardCharsets.UTF_8));
+                    return "v1:"
+                            + Base64.encodeToString(iv, Base64.NO_WRAP)
+                            + ":"
+                            + Base64.encodeToString(cipherBytes, Base64.NO_WRAP);
+                }
+                break;
+            } catch (Exception ignored) {
+                cachedHardwareSecretKey = null;
             }
-        } catch (Exception ignored) {
         }
         // Graceful fallback if OEM KeyStore is unavailable on a custom ROM
         return "fb:" + Base64.encodeToString(plainToken.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
@@ -353,20 +425,23 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
         if (sep <= 0) {
             return "";
         }
-        try {
-            SecretKey key = getOrCreateHardwareSecretKey();
-            if (key == null) {
-                return "";
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                SecretKey key = getOrCreateHardwareSecretKey();
+                if (key == null) {
+                    return "";
+                }
+                byte[] iv = Base64.decode(payload.substring(0, sep), Base64.NO_WRAP);
+                byte[] cipherBytes = Base64.decode(payload.substring(sep + 1), Base64.NO_WRAP);
+                Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+                cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(128, iv));
+                byte[] plain = cipher.doFinal(cipherBytes);
+                return new String(plain, StandardCharsets.UTF_8);
+            } catch (Exception ignored) {
+                cachedHardwareSecretKey = null;
             }
-            byte[] iv = Base64.decode(payload.substring(0, sep), Base64.NO_WRAP);
-            byte[] cipherBytes = Base64.decode(payload.substring(sep + 1), Base64.NO_WRAP);
-            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-            cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(128, iv));
-            byte[] plain = cipher.doFinal(cipherBytes);
-            return new String(plain, StandardCharsets.UTF_8);
-        } catch (Exception ignored) {
-            return "";
         }
+        return "";
     }
 
     private void migrateLegacyPlaintextToken() {
@@ -622,12 +697,52 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
     private static final byte[] WIRE_AAD_V2 = "promptpanel-aead-v2".getBytes(StandardCharsets.UTF_8);
     private final SecureRandom secureRandom = new SecureRandom();
 
-    private byte[] deriveSyncAeadKey(String token) throws Exception {
+    private synchronized byte[] deriveSyncAeadKey(String token) throws Exception {
+        String clean = token != null ? token.trim() : "";
+        if (!clean.isEmpty() && clean.equals(cachedDerivedToken) && cachedDerivedAeadKey != null) {
+            return cachedDerivedAeadKey;
+        }
         Mac mac = Mac.getInstance("HmacSHA256");
         mac.init(new SecretKeySpec(HKDF_SALT_V2, "HmacSHA256"));
-        byte[] prk = mac.doFinal(token.trim().getBytes(StandardCharsets.UTF_8));
+        byte[] prk = mac.doFinal(clean.getBytes(StandardCharsets.UTF_8));
         mac.init(new SecretKeySpec(prk, "HmacSHA256"));
-        return mac.doFinal(HKDF_INFO_AEAD_V2);
+        byte[] derived = mac.doFinal(HKDF_INFO_AEAD_V2);
+        cachedDerivedToken = clean;
+        cachedDerivedAeadKey = derived;
+        return derived;
+    }
+
+    static String translateNetworkException(Exception e) {
+        if (e == null) {
+            return "未知网络错误";
+        }
+        if (e instanceof MalformedURLException) {
+            return "同步服务地址格式无效，请检查 http:// 或 https:// 地址";
+        }
+        if (e instanceof UnknownHostException) {
+            return "无法解析服务器域名，请检查网络或同步地址是否正确";
+        }
+        if (e instanceof SocketTimeoutException) {
+            return "连接同步服务器超时，请检查网络状况或服务是否在线";
+        }
+        if (e instanceof ConnectException) {
+            return "连接被拒绝，请确认同步服务已启动且端口正确";
+        }
+        if (e instanceof SSLException) {
+            return "HTTPS 安全连接校验失败，请检查证书或协议配置";
+        }
+        if (e instanceof IllegalArgumentException) {
+            String msg = e.getMessage();
+            if (msg != null && !msg.isEmpty()) {
+                return msg;
+            }
+            return "请求参数或加密数据包格式无效";
+        }
+        if (e instanceof IOException) {
+            String msg = e.getMessage();
+            return "网络通信中断" + (msg != null && !msg.isEmpty() ? "：" + msg : "，请检查网络连接");
+        }
+        return e.getMessage() != null ? e.getMessage() : e.toString();
     }
 
     private String sealSyncEnvelope(String plainJson, String token) throws Exception {
@@ -705,9 +820,12 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
 
     @JavascriptInterface
     public String httpRequest(String method, String urlStr, String bearerToken, String bodyJson) {
+        if (urlStr == null || urlStr.trim().isEmpty()) {
+            return "400\n请先填写同步服务地址";
+        }
         HttpURLConnection conn = null;
         try {
-            URL currentUrl = new URL(urlStr);
+            URL currentUrl = new URL(urlStr.trim());
             String initialProtocol = currentUrl.getProtocol() != null
                     ? currentUrl.getProtocol().toLowerCase(Locale.US)
                     : "";
@@ -717,7 +835,7 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
 
             String cleanToken = bearerToken != null ? bearerToken.trim() : "";
             boolean useWireCipher = cleanToken.length() >= 12
-                    && (urlStr == null || !urlStr.endsWith("/health"));
+                    && !urlStr.endsWith("/health");
             String wireBody = (useWireCipher && "POST".equalsIgnoreCase(method) && bodyJson != null && !bodyJson.isEmpty())
                     ? sealSyncEnvelope(bodyJson, cleanToken)
                     : bodyJson;
@@ -729,7 +847,7 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
                 conn.setInstanceFollowRedirects(false);
                 conn.setRequestMethod(method);
                 conn.setConnectTimeout(8000);
-                conn.setReadTimeout(12000);
+                conn.setReadTimeout(15000);
                 conn.setUseCaches(false);
                 conn.setRequestProperty("Accept", "application/json");
                 conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
@@ -774,9 +892,15 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
                 StringBuilder sb = new StringBuilder();
                 if (is != null) {
                     try (BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
-                        String line;
-                        while ((line = reader.readLine()) != null) {
-                            sb.append(line).append('\n');
+                        char[] buf = new char[8192];
+                        int n;
+                        int totalChars = 0;
+                        while ((n = reader.read(buf)) > 0) {
+                            totalChars += n;
+                            if (totalChars > 16 * 1024 * 1024) {
+                                throw new IllegalArgumentException("响应数据体积超出安全上限");
+                            }
+                            sb.append(buf, 0, n);
                         }
                     }
                 }
@@ -788,7 +912,7 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
             }
             return "400\n重定向次数过多";
         } catch (Exception e) {
-            return "0\n" + (e.getMessage() != null ? e.getMessage() : e.toString());
+            return "0\n" + translateNetworkException(e);
         } finally {
             if (conn != null) {
                 conn.disconnect();

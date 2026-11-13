@@ -84,6 +84,12 @@ UPDATE_CACHE_TTL_SEC = _parse_env_int("PP_SYNC_UPDATE_CACHE_TTL_SEC", 300, minim
 _NAMESPACE_LOCKS: dict[str, threading.Lock] = {}
 _GLOBAL_LOCK = threading.Lock()
 _RELEASE_CACHE_LOCK = threading.Lock()
+_MANIFEST_REFRESH_LOCK = threading.Lock()
+_ASSET_DOWNLOAD_LOCKS: dict[str, threading.Lock] = {}
+_VERIFIED_ASSET_HASHES: dict[str, tuple[int, int, str]] = {}
+_AESGCM_CACHE: dict[bytes, Any] = {}
+_TOKEN_DERIVED_CACHE: dict[bytes, tuple[str, bytes]] = {}
+_INITIALIZED_DB_PATHS: set[str] = set()
 _CACHED_RELEASE_MANIFEST: dict[str, Any] | None = None
 _CACHED_RELEASE_FETCHED_MONO: float = 0.0
 _SERVER_START_MONOTONIC = time.monotonic()
@@ -126,6 +132,19 @@ def get_namespace_lock(namespace: str) -> threading.Lock:
         return lock
 
 
+def _get_aesgcm(aead_key: bytes) -> Any:
+    cipher = _AESGCM_CACHE.get(aead_key)
+    if cipher is None:
+        with _GLOBAL_LOCK:
+            cipher = _AESGCM_CACHE.get(aead_key)
+            if cipher is None:
+                if len(_AESGCM_CACHE) >= 256:
+                    _AESGCM_CACHE.clear()
+                cipher = AESGCM(aead_key)
+                _AESGCM_CACHE[aead_key] = cipher
+    return cipher
+
+
 def derive_aead_key(token: str) -> bytes:
     """Derive a 256-bit AES-GCM key from the user's Bearer token via RFC 5869 HKDF-SHA256."""
     clean_token = token.strip().encode("utf-8")
@@ -140,23 +159,34 @@ def verify_and_derive_namespace(auth_header: str | None) -> tuple[bool, str | No
     if len(token) < 12:
         return False, None, None, "Bearer token must be at least 12 characters"
 
+    token_bytes = token.encode("utf-8")
     if ALLOWED_TOKENS:
-        matched = any(hmac.compare_digest(token.encode("utf-8"), allowed.encode("utf-8")) for allowed in ALLOWED_TOKENS)
+        matched = any(hmac.compare_digest(token_bytes, allowed.encode("utf-8")) for allowed in ALLOWED_TOKENS)
         if not matched:
             return False, None, None, "Invalid or unauthorized Bearer token"
 
+    cache_key = hashlib.sha256(token_bytes).digest()
+    with _GLOBAL_LOCK:
+        cached = _TOKEN_DERIVED_CACHE.get(cache_key)
+    if cached is not None:
+        return True, cached[0], cached[1], None
+
     digest = hashlib.sha256(f"promptpanel-v2:{token}".encode("utf-8")).hexdigest()[:32]
     aead_key = derive_aead_key(token)
+    with _GLOBAL_LOCK:
+        if len(_TOKEN_DERIVED_CACHE) >= 256:
+            _TOKEN_DERIVED_CACHE.clear()
+        _TOKEN_DERIVED_CACHE[cache_key] = (digest, aead_key)
     return True, digest, aead_key, None
 
 
 def encrypt_db_record(obj: dict[str, Any], aead_key: bytes | None, kind: str, record_id: str) -> str:
-    raw_str = json.dumps(obj, ensure_ascii=False)
+    raw_str = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
     if aead_key is None or AESGCM is None:
         return raw_str
     nonce = os.urandom(12)
     aad = f"kv:{kind}:{record_id}".encode("utf-8")
-    ct_and_tag = AESGCM(aead_key).encrypt(nonce, raw_str.encode("utf-8"), aad)
+    ct_and_tag = _get_aesgcm(aead_key).encrypt(nonce, raw_str.encode("utf-8"), aad)
     return DB_ENC_PREFIX + base64.b64encode(nonce + ct_and_tag).decode("ascii")
 
 
@@ -170,7 +200,7 @@ def decrypt_db_record(raw_payload: str, aead_key: bytes | None, kind: str, recor
             raise ValueError("Corrupted enc:v2 database record")
         nonce, ct_and_tag = combined[:12], combined[12:]
         aad = f"kv:{kind}:{record_id}".encode("utf-8")
-        plain_bytes = AESGCM(aead_key).decrypt(nonce, ct_and_tag, aad)
+        plain_bytes = _get_aesgcm(aead_key).decrypt(nonce, ct_and_tag, aad)
         return json.loads(plain_bytes.decode("utf-8")), True
     return json.loads(raw_payload), False
 
@@ -179,10 +209,10 @@ def encrypt_wire_envelope(envelope: dict[str, Any], aead_key: bytes) -> dict[str
     """Compress with Gzip and encrypt with AES-256-GCM (12B nonce + ciphertext + 16B tag)."""
     if AESGCM is None:
         return envelope
-    raw_json = json.dumps(envelope, ensure_ascii=False).encode("utf-8")
+    raw_json = json.dumps(envelope, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     compressed = gzip.compress(raw_json, compresslevel=6)
     nonce = os.urandom(12)
-    ct_and_tag = AESGCM(aead_key).encrypt(nonce, compressed, WIRE_AAD_V2)
+    ct_and_tag = _get_aesgcm(aead_key).encrypt(nonce, compressed, WIRE_AAD_V2)
     return {
         "cipher": "aes-256-gcm+gzip",
         "v": 2,
@@ -210,18 +240,24 @@ def decrypt_wire_envelope(incoming: dict[str, Any], aead_key: bytes | None) -> t
         raise ValueError("Encrypted envelope payload too short")
     nonce, ct_and_tag = combined[:12], combined[12:]
     try:
-        decrypted = AESGCM(aead_key).decrypt(nonce, ct_and_tag, WIRE_AAD_V2)
+        decrypted = _get_aesgcm(aead_key).decrypt(nonce, ct_and_tag, WIRE_AAD_V2)
     except Exception as exc:
         raise ValueError("AES-256-GCM authentication tag verification failed") from exc
 
     if cipher_name == "aes-256-gcm+gzip" or decrypted[:2] == b"\x1f\x8b":
-        with gzip.GzipFile(fileobj=io.BytesIO(decrypted)) as gz_file:
-            decompressed = gz_file.read(MAX_BODY_BYTES + 1)
+        try:
+            with gzip.GzipFile(fileobj=io.BytesIO(decrypted)) as gz_file:
+                decompressed = gz_file.read(MAX_BODY_BYTES + 1)
+        except Exception as exc:
+            raise ValueError(f"Invalid gzip stream inside encrypted envelope: {exc}") from exc
         if len(decompressed) > MAX_BODY_BYTES:
             raise ValueError(f"Decompressed encrypted payload exceeds max {MAX_BODY_BYTES} bytes")
         decrypted = decompressed
 
-    parsed = json.loads(decrypted.decode("utf-8"))
+    try:
+        parsed = json.loads(decrypted.decode("utf-8"))
+    except Exception as exc:
+        raise ValueError(f"Invalid JSON inside encrypted envelope: {exc}") from exc
     if not isinstance(parsed, dict):
         raise ValueError("Decrypted sync envelope root must be a JSON object")
     return parsed, True
@@ -229,27 +265,38 @@ def decrypt_wire_envelope(incoming: dict[str, Any], aead_key: bytes | None) -> t
 
 def init_namespace_db(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    db_key = str(db_path.resolve())
+    existed_on_disk = db_path.exists()
     conn = sqlite3.connect(str(db_path), timeout=15.0)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=15000;")
     conn.execute("PRAGMA synchronous=NORMAL;")
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS kv_records (
-            kind TEXT NOT NULL,
-            id TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            payload_json TEXT NOT NULL,
-            PRIMARY KEY (kind, id)
-        );
-        """
-    )
-    conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_kv_kind_updated
-        ON kv_records (kind, updated_at);
-        """
-    )
+    conn.execute("PRAGMA temp_store=MEMORY;")
+
+    with _GLOBAL_LOCK:
+        already_initialized = existed_on_disk and (db_key in _INITIALIZED_DB_PATHS)
+
+    if not already_initialized:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS kv_records (
+                kind TEXT NOT NULL,
+                id TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                PRIMARY KEY (kind, id)
+            );
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_kv_kind_updated
+            ON kv_records (kind, updated_at);
+            """
+        )
+        with _GLOBAL_LOCK:
+            _INITIALIZED_DB_PATHS.add(db_key)
     return conn
 
 
@@ -302,10 +349,12 @@ def count_namespace_stats(db_path: Path) -> tuple[int, int, int]:
         return 0, 0, 0
     conn = init_namespace_db(db_path)
     try:
-        p_count = conn.execute("SELECT COUNT(*) FROM kv_records WHERE kind = 'project'").fetchone()[0]
-        e_count = conn.execute("SELECT COUNT(*) FROM kv_records WHERE kind = 'entry'").fetchone()[0]
-        v_count = conn.execute("SELECT COUNT(*) FROM kv_records WHERE kind = 'version'").fetchone()[0]
-        return int(p_count), int(e_count), int(v_count)
+        counts: dict[str, int] = {"project": 0, "entry": 0, "version": 0}
+        for row in conn.execute("SELECT kind, COUNT(*) AS cnt FROM kv_records GROUP BY kind"):
+            k = str(row["kind"])
+            if k in counts:
+                counts[k] = int(row["cnt"])
+        return counts["project"], counts["entry"], counts["version"]
     finally:
         conn.close()
 
@@ -387,6 +436,44 @@ def _compute_file_sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def _is_cached_asset_valid(target_path: Path, expected_sha: str) -> bool:
+    try:
+        st = target_path.stat()
+    except OSError:
+        return False
+    if st.st_size <= 0:
+        return False
+    if not expected_sha:
+        return True
+    key = str(target_path)
+    with _RELEASE_CACHE_LOCK:
+        cached_meta = _VERIFIED_ASSET_HASHES.get(key)
+    if cached_meta is not None and cached_meta[0] == st.st_mtime_ns and cached_meta[1] == st.st_size:
+        return cached_meta[2] == expected_sha
+    try:
+        actual_sha = _compute_file_sha256(target_path).lower()
+    except OSError:
+        return False
+    with _RELEASE_CACHE_LOCK:
+        if len(_VERIFIED_ASSET_HASHES) >= 64:
+            _VERIFIED_ASSET_HASHES.clear()
+        _VERIFIED_ASSET_HASHES[key] = (st.st_mtime_ns, st.st_size, actual_sha)
+    return actual_sha == expected_sha
+
+
+def _get_asset_download_lock(name: str) -> threading.Lock:
+    with _RELEASE_CACHE_LOCK:
+        lock = _ASSET_DOWNLOAD_LOCKS.get(name)
+        if lock is None:
+            if len(_ASSET_DOWNLOAD_LOCKS) >= 64:
+                unlocked = [k for k, v in _ASSET_DOWNLOAD_LOCKS.items() if not v.locked()]
+                for k in unlocked:
+                    _ASSET_DOWNLOAD_LOCKS.pop(k, None)
+            lock = threading.Lock()
+            _ASSET_DOWNLOAD_LOCKS[name] = lock
+        return lock
+
+
 def _parse_sha256sums_text(text: str) -> dict[str, str]:
     mapping: dict[str, str] = {}
     for line in (text or "").splitlines():
@@ -420,114 +507,130 @@ def resolve_latest_release_manifest(force_refresh: bool = False) -> dict[str, An
         ):
             return dict(_CACHED_RELEASE_MANIFEST)
 
-    local_manifest_path = DATA_DIR / "releases" / "manifest.json"
-    api_url = f"https://api.github.com/repos/{GITHUB_RELEASE_REPO}/releases/latest"
-    try:
-        raw_bytes = _fetch_url_bytes(api_url, timeout=10.0, accept="application/vnd.github+json")
-        rel = json.loads(raw_bytes.decode("utf-8"))
-        tag_name = str(rel.get("tag_name") or "").strip()
-        short_ver = tag_name.lstrip("vV")
-        build_num = 0
-        sha_map: dict[str, str] = {}
-        assets = rel.get("assets") or []
+    with _MANIFEST_REFRESH_LOCK:
+        now_mono = time.monotonic()
+        with _RELEASE_CACHE_LOCK:
+            if (
+                not force_refresh
+                and _CACHED_RELEASE_MANIFEST is not None
+                and (now_mono - _CACHED_RELEASE_FETCHED_MONO) < UPDATE_CACHE_TTL_SEC
+            ):
+                return dict(_CACHED_RELEASE_MANIFEST)
 
-        for asset in assets:
-            name = str(asset.get("name") or "")
-            dl_url = str(asset.get("browser_download_url") or "")
-            m = _ASSET_VERSION_RE.search(name)
-            if m:
-                short_ver = m.group(1)
-                build_num = int(m.group(2))
-            if name == "SHA256SUMS.txt" and dl_url:
+        local_manifest_path = DATA_DIR / "releases" / "manifest.json"
+        api_url = f"https://api.github.com/repos/{GITHUB_RELEASE_REPO}/releases/latest"
+        try:
+            raw_bytes = _fetch_url_bytes(api_url, timeout=10.0, accept="application/vnd.github+json")
+            rel = json.loads(raw_bytes.decode("utf-8"))
+            tag_name = str(rel.get("tag_name") or "").strip()
+            short_ver = tag_name.lstrip("vV")
+            build_num = 0
+            sha_map: dict[str, str] = {}
+            assets = rel.get("assets") or []
+
+            for asset in assets:
+                name = str(asset.get("name") or "")
+                dl_url = str(asset.get("browser_download_url") or "")
+                m = _ASSET_VERSION_RE.search(name)
+                if m:
+                    short_ver = m.group(1)
+                    build_num = int(m.group(2))
+                if name == "SHA256SUMS.txt" and dl_url:
+                    try:
+                        sums_text = _fetch_url_bytes(dl_url, timeout=10.0).decode("utf-8", errors="replace")
+                        sha_map = _parse_sha256sums_text(sums_text)
+                    except Exception:
+                        pass
+
+            macos_zip_info: dict[str, Any] | None = None
+            macos_dmg_info: dict[str, Any] | None = None
+            android_apk_info: dict[str, Any] | None = None
+
+            for asset in assets:
+                name = str(asset.get("name") or "")
+                dl_url = str(asset.get("browser_download_url") or "")
+                size_bytes = _safe_int(asset.get("size"), 0)
+                if not name or not dl_url:
+                    continue
+                digest = str(asset.get("digest") or "")
+                if digest.startswith("sha256:") and len(digest) == 71:
+                    asset_sha = digest[7:].lower()
+                else:
+                    asset_sha = sha_map.get(name, "")
+
+                if name.endswith("-macos.zip"):
+                    macos_zip_info = {
+                        "name": name,
+                        "size": size_bytes,
+                        "sha256": asset_sha,
+                        "githubUrl": dl_url,
+                        "mirrorPath": "/v1/update/download/macos.zip",
+                    }
+                elif name.endswith("-macos.dmg"):
+                    macos_dmg_info = {
+                        "name": name,
+                        "size": size_bytes,
+                        "sha256": asset_sha,
+                        "githubUrl": dl_url,
+                        "mirrorPath": "/v1/update/download/macos.dmg",
+                    }
+                elif name.endswith("-android.apk"):
+                    android_apk_info = {
+                        "name": name,
+                        "size": size_bytes,
+                        "sha256": asset_sha,
+                        "githubUrl": dl_url,
+                        "mirrorPath": "/v1/update/download/android.apk",
+                    }
+
+            manifest = {
+                "repository": GITHUB_RELEASE_REPO,
+                "tag": tag_name,
+                "version": short_ver,
+                "build": build_num,
+                "publishedAt": str(rel.get("published_at") or ""),
+                "releaseUrl": str(rel.get("html_url") or f"https://github.com/{GITHUB_RELEASE_REPO}/releases/latest"),
+                "notes": str(rel.get("body") or "")[:4000],
+                "macosZip": macos_zip_info,
+                "macosDmg": macos_dmg_info,
+                "androidApk": android_apk_info,
+                "checkedAt": utc_now_iso(),
+            }
+
+            tmp_mf: Path | None = None
+            try:
+                rel_dir = DATA_DIR / "releases"
+                rel_dir.mkdir(parents=True, exist_ok=True)
+                tmp_mf = rel_dir / f".manifest.{uuid.uuid4().hex[:8]}.json.tmp"
+                tmp_mf.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+                tmp_mf.replace(local_manifest_path)
+            except OSError:
+                if tmp_mf is not None:
+                    try:
+                        if tmp_mf.exists():
+                            tmp_mf.unlink()
+                    except OSError:
+                        pass
+
+            with _RELEASE_CACHE_LOCK:
+                _CACHED_RELEASE_MANIFEST = manifest
+                _CACHED_RELEASE_FETCHED_MONO = time.monotonic()
+            return dict(manifest)
+        except Exception as exc:
+            with _RELEASE_CACHE_LOCK:
+                if _CACHED_RELEASE_MANIFEST is not None:
+                    return dict(_CACHED_RELEASE_MANIFEST)
+            if local_manifest_path.exists():
                 try:
-                    sums_text = _fetch_url_bytes(dl_url, timeout=10.0).decode("utf-8", errors="replace")
-                    sha_map = _parse_sha256sums_text(sums_text)
+                    loaded = json.loads(local_manifest_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict) and loaded.get("version"):
+                        with _RELEASE_CACHE_LOCK:
+                            _CACHED_RELEASE_MANIFEST = loaded
+                            _CACHED_RELEASE_FETCHED_MONO = time.monotonic()
+                        return dict(loaded)
                 except Exception:
                     pass
-
-        macos_zip_info: dict[str, Any] | None = None
-        macos_dmg_info: dict[str, Any] | None = None
-        android_apk_info: dict[str, Any] | None = None
-
-        for asset in assets:
-            name = str(asset.get("name") or "")
-            dl_url = str(asset.get("browser_download_url") or "")
-            size_bytes = _safe_int(asset.get("size"), 0)
-            if not name or not dl_url:
-                continue
-            digest = str(asset.get("digest") or "")
-            if digest.startswith("sha256:") and len(digest) == 71:
-                asset_sha = digest[7:].lower()
-            else:
-                asset_sha = sha_map.get(name, "")
-
-            if name.endswith("-macos.zip"):
-                macos_zip_info = {
-                    "name": name,
-                    "size": size_bytes,
-                    "sha256": asset_sha,
-                    "githubUrl": dl_url,
-                    "mirrorPath": "/v1/update/download/macos.zip",
-                }
-            elif name.endswith("-macos.dmg"):
-                macos_dmg_info = {
-                    "name": name,
-                    "size": size_bytes,
-                    "sha256": asset_sha,
-                    "githubUrl": dl_url,
-                    "mirrorPath": "/v1/update/download/macos.dmg",
-                }
-            elif name.endswith("-android.apk"):
-                android_apk_info = {
-                    "name": name,
-                    "size": size_bytes,
-                    "sha256": asset_sha,
-                    "githubUrl": dl_url,
-                    "mirrorPath": "/v1/update/download/android.apk",
-                }
-
-        manifest = {
-            "repository": GITHUB_RELEASE_REPO,
-            "tag": tag_name,
-            "version": short_ver,
-            "build": build_num,
-            "publishedAt": str(rel.get("published_at") or ""),
-            "releaseUrl": str(rel.get("html_url") or f"https://github.com/{GITHUB_RELEASE_REPO}/releases/latest"),
-            "notes": str(rel.get("body") or "")[:4000],
-            "macosZip": macos_zip_info,
-            "macosDmg": macos_dmg_info,
-            "androidApk": android_apk_info,
-            "checkedAt": utc_now_iso(),
-        }
-
-        try:
-            rel_dir = DATA_DIR / "releases"
-            rel_dir.mkdir(parents=True, exist_ok=True)
-            tmp_mf = rel_dir / ".manifest.json.tmp"
-            tmp_mf.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-            tmp_mf.replace(local_manifest_path)
-        except OSError:
-            pass
-
-        with _RELEASE_CACHE_LOCK:
-            _CACHED_RELEASE_MANIFEST = manifest
-            _CACHED_RELEASE_FETCHED_MONO = time.monotonic()
-        return dict(manifest)
-    except Exception as exc:
-        with _RELEASE_CACHE_LOCK:
-            if _CACHED_RELEASE_MANIFEST is not None:
-                return dict(_CACHED_RELEASE_MANIFEST)
-        if local_manifest_path.exists():
-            try:
-                loaded = json.loads(local_manifest_path.read_text(encoding="utf-8"))
-                if isinstance(loaded, dict) and loaded.get("version"):
-                    with _RELEASE_CACHE_LOCK:
-                        _CACHED_RELEASE_MANIFEST = loaded
-                        _CACHED_RELEASE_FETCHED_MONO = time.monotonic()
-                    return dict(loaded)
-            except Exception:
-                pass
-        raise RuntimeError(f"Failed to query latest release manifest: {exc}") from exc
+            raise RuntimeError(f"Failed to query latest release manifest: {exc}") from exc
 
 
 def ensure_cached_release_asset(asset_info: dict[str, Any]) -> Path:
@@ -541,14 +644,14 @@ def ensure_cached_release_asset(asset_info: dict[str, Any]) -> Path:
     rel_dir.mkdir(parents=True, exist_ok=True)
     target_path = rel_dir / name
 
-    if target_path.exists():
-        if not expected_sha or _compute_file_sha256(target_path) == expected_sha:
-            return target_path
+    if _is_cached_asset_valid(target_path, expected_sha):
+        return target_path
 
-    with _RELEASE_CACHE_LOCK:
+    asset_lock = _get_asset_download_lock(name)
+    with asset_lock:
+        if _is_cached_asset_valid(target_path, expected_sha):
+            return target_path
         if target_path.exists():
-            if not expected_sha or _compute_file_sha256(target_path) == expected_sha:
-                return target_path
             try:
                 target_path.unlink()
             except OSError:
@@ -572,6 +675,12 @@ def ensure_cached_release_asset(asset_info: dict[str, Any]) -> Path:
             if expected_sha and actual_sha != expected_sha:
                 raise ValueError(f"SHA-256 mismatch for {name}: expected {expected_sha}, got {actual_sha}")
             tmp_path.replace(target_path)
+            try:
+                st = target_path.stat()
+                with _RELEASE_CACHE_LOCK:
+                    _VERIFIED_ASSET_HASHES[str(target_path)] = (st.st_mtime_ns, st.st_size, actual_sha)
+            except OSError:
+                pass
         except Exception:
             try:
                 if tmp_path.exists():
@@ -763,15 +872,39 @@ def merge_envelope_into_db(
     remote_device = str(_get_field(incoming, "deviceId", "device_id") or "remote-client")
     allow_mass_delete = bool(_get_field(incoming, "allowMassDelete", "allow_mass_delete", False))
 
+    # Single-pass load of existing records to avoid repeated SQLite scans & AES-GCM decryptions
+    srv_projects: dict[str, tuple[str, dict[str, Any]]] = {}
+    srv_entries: dict[str, tuple[str, dict[str, Any]]] = {}
+    existing_versions_by_entry: dict[str, list[dict[str, Any]]] = {}
+    existing_version_ids: set[str] = set()
+    existing_default_id: str | None = None
+
+    for row in conn.execute("SELECT kind, id, updated_at, payload_json FROM kv_records"):
+        kind = str(row["kind"])
+        rec_id = str(row["id"])
+        upd_str = str(row["updated_at"])
+        obj, _ = decrypt_db_record(row["payload_json"], aead_key, kind, rec_id)
+        if not isinstance(obj, dict):
+            continue
+        if kind == "project":
+            norm_p = _normalize_project_payload(obj)
+            srv_projects[rec_id] = (upd_str, norm_p)
+            if existing_default_id is None and bool(norm_p.get("isDefault", False)):
+                existing_default_id = rec_id
+        elif kind == "entry":
+            norm_e = _normalize_entry_payload(obj)
+            srv_entries[rec_id] = (upd_str, norm_e)
+        elif kind == "version":
+            eid = str(_get_field(obj, "entryId", "entry_id") or "")
+            existing_versions_by_entry.setdefault(eid, []).append(obj)
+            existing_version_ids.add(rec_id)
+
     # Pre-flight inspection for mass-tombstone circuit breaker & pre-drop guard backup
-    srv_active_entries: dict[str, tuple[str, dict[str, Any]]] = {}
-    for e_row in conn.execute("SELECT id, updated_at, payload_json FROM kv_records WHERE kind = 'entry'"):
-        eid_str = str(e_row["id"])
-        e_obj, _ = decrypt_db_record(e_row["payload_json"], aead_key, "entry", eid_str)
-        if isinstance(e_obj, dict):
-            e_obj = _normalize_entry_payload(e_obj)
-        if e_obj.get("deletedAt") is None:
-            srv_active_entries[eid_str] = (str(e_row["updated_at"]), e_obj)
+    srv_active_entries: dict[str, tuple[str, dict[str, Any]]] = {
+        eid_str: (upd_str, e_obj)
+        for eid_str, (upd_str, e_obj) in srv_entries.items()
+        if e_obj.get("deletedAt") is None
+    }
 
     srv_active_count = len(srv_active_entries)
     incoming_deleting_count = 0
@@ -802,13 +935,6 @@ def merge_envelope_into_db(
 
     with conn:
         remapped_project_ids: dict[str, str] = {}
-        existing_default_id: str | None = None
-        for p_row in conn.execute("SELECT id, payload_json FROM kv_records WHERE kind = 'project'"):
-            p_id_str = str(p_row["id"])
-            p_obj, _ = decrypt_db_record(p_row["payload_json"], aead_key, "project", p_id_str)
-            if bool(_get_field(p_obj, "isDefault", "is_default", False)):
-                existing_default_id = p_id_str
-                break
 
         # 1. Merge Projects
         for proj in incoming.get("projects") or []:
@@ -818,11 +944,8 @@ def merge_envelope_into_db(
             pid = str(proj["id"])
             is_default_proj = bool(proj.get("isDefault", False))
             inc_updated = str(proj.get("updatedAt") or "")
-            row = conn.execute(
-                "SELECT updated_at, payload_json FROM kv_records WHERE kind = 'project' AND id = ?",
-                (pid,),
-            ).fetchone()
-            if row is None:
+            existing_proj_pair = srv_projects.get(pid)
+            if existing_proj_pair is None:
                 if is_default_proj and existing_default_id and existing_default_id != pid:
                     remapped_project_ids[pid] = existing_default_id
                     continue
@@ -832,10 +955,11 @@ def merge_envelope_into_db(
                     "INSERT INTO kv_records (kind, id, updated_at, payload_json) VALUES ('project', ?, ?, ?)",
                     (pid, inc_updated, encrypt_db_record(proj, aead_key, "project", pid)),
                 )
+                srv_projects[pid] = (inc_updated, proj)
                 if _get_field(proj, "deletedAt", "deleted_at") is None:
                     stats["projectsCreated"] += 1
-            elif inc_updated > str(row["updated_at"]):
-                srv_proj, _ = decrypt_db_record(row["payload_json"], aead_key, "project", pid)
+            elif inc_updated > existing_proj_pair[0]:
+                srv_proj = existing_proj_pair[1]
                 srv_deleted = _get_field(srv_proj, "deletedAt", "deleted_at")
                 inc_deleted = _get_field(proj, "deletedAt", "deleted_at")
                 if srv_deleted is None and inc_deleted is not None and should_block_mass_delete:
@@ -851,21 +975,15 @@ def merge_envelope_into_db(
                         "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'project' AND id = ?",
                         (healed_upd, encrypt_db_record(healed_proj, aead_key, "project", pid), pid),
                     )
+                    srv_projects[pid] = (healed_upd, healed_proj)
                     stats["protectedProjects"] += 1
                     continue
                 conn.execute(
                     "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'project' AND id = ?",
                     (inc_updated, encrypt_db_record(proj, aead_key, "project", pid), pid),
                 )
+                srv_projects[pid] = (inc_updated, proj)
                 stats["projectsUpdated"] += 1
-
-        # Load existing versions index for conflict preservation
-        existing_versions_by_entry: dict[str, list[dict[str, Any]]] = {}
-        for v_row in conn.execute("SELECT id, payload_json FROM kv_records WHERE kind = 'version'"):
-            v_id_str = str(v_row["id"])
-            v_obj, _ = decrypt_db_record(v_row["payload_json"], aead_key, "version", v_id_str)
-            eid = str(_get_field(v_obj, "entryId", "entry_id") or "")
-            existing_versions_by_entry.setdefault(eid, []).append(v_obj)
 
         def insert_version_obj(v_obj: dict[str, Any]) -> None:
             vid = str(v_obj.get("id") or uuid.uuid4())
@@ -888,6 +1006,7 @@ def merge_envelope_into_db(
                 (vid, v_created, encrypt_db_record(v_obj, aead_key, "version", vid)),
             )
             existing_versions_by_entry.setdefault(eid_val, []).append(v_obj)
+            existing_version_ids.add(vid)
 
         # 2. Merge Entries with automatic Conflict-to-Version-History preservation
         for entry in incoming.get("entries") or []:
@@ -902,16 +1021,14 @@ def merge_envelope_into_db(
             eid = str(entry["id"])
             inc_updated = str(entry.get("updatedAt") or "")
             inc_created = str(entry.get("createdAt") or inc_updated or utc_now_iso())
-            row = conn.execute(
-                "SELECT updated_at, payload_json FROM kv_records WHERE kind = 'entry' AND id = ?",
-                (eid,),
-            ).fetchone()
+            existing_entry_pair = srv_entries.get(eid)
 
-            if row is None:
+            if existing_entry_pair is None:
                 conn.execute(
                     "INSERT INTO kv_records (kind, id, updated_at, payload_json) VALUES ('entry', ?, ?, ?)",
                     (eid, inc_updated, encrypt_db_record(entry, aead_key, "entry", eid)),
                 )
+                srv_entries[eid] = (inc_updated, entry)
                 stats["entriesCreated"] += 1
                 if not existing_versions_by_entry.get(eid):
                     insert_version_obj(
@@ -926,8 +1043,7 @@ def merge_envelope_into_db(
                         }
                     )
             else:
-                server_entry, _ = decrypt_db_record(row["payload_json"], aead_key, "entry", eid)
-                srv_updated = str(row["updated_at"])
+                srv_updated, server_entry = existing_entry_pair
                 has_diff = (
                     server_entry.get("content") != entry.get("content")
                     or server_entry.get("title") != entry.get("title")
@@ -991,6 +1107,7 @@ def merge_envelope_into_db(
                             "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'entry' AND id = ?",
                             (healed_upd, encrypt_db_record(healed_entry, aead_key, "entry", eid), eid),
                         )
+                        srv_entries[eid] = (healed_upd, healed_entry)
                         stats["protectedEntries"] += 1
                         continue
 
@@ -1008,6 +1125,7 @@ def merge_envelope_into_db(
                         "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'entry' AND id = ?",
                         (inc_updated, encrypt_db_record(entry, aead_key, "entry", eid), eid),
                     )
+                    srv_entries[eid] = (inc_updated, entry)
                     stats["entriesUpdated"] += 1
                 else:
                     if inc_updated < srv_updated and has_diff:
@@ -1043,41 +1161,39 @@ def merge_envelope_into_db(
                         merged_used is not None and str(merged_used) != str(srv_used or "")
                     )
                     if usage_changed:
-                        if "use_count" in server_entry or "useCount" not in server_entry:
-                            server_entry["use_count"] = merged_use_count
-                        if "useCount" in server_entry:
-                            server_entry["useCount"] = merged_use_count
+                        updated_srv_entry = dict(server_entry)
+                        if "use_count" in updated_srv_entry or "useCount" not in updated_srv_entry:
+                            updated_srv_entry["use_count"] = merged_use_count
+                        if "useCount" in updated_srv_entry:
+                            updated_srv_entry["useCount"] = merged_use_count
                         if merged_used is not None:
-                            if "last_used_at" in server_entry or "lastUsedAt" not in server_entry:
-                                server_entry["last_used_at"] = merged_used
-                            if "lastUsedAt" in server_entry:
-                                server_entry["lastUsedAt"] = merged_used
+                            if "last_used_at" in updated_srv_entry or "lastUsedAt" not in updated_srv_entry:
+                                updated_srv_entry["last_used_at"] = merged_used
+                            if "lastUsedAt" in updated_srv_entry:
+                                updated_srv_entry["lastUsedAt"] = merged_used
                         conn.execute(
                             "UPDATE kv_records SET payload_json = ? WHERE kind = 'entry' AND id = ?",
-                            (encrypt_db_record(server_entry, aead_key, "entry", eid), eid),
+                            (encrypt_db_record(updated_srv_entry, aead_key, "entry", eid), eid),
                         )
+                        srv_entries[eid] = (srv_updated, updated_srv_entry)
 
         # 3. Revive any soft-deleted project that still contains active entries
         active_project_ids_needed: set[str] = set()
-        for e_row in conn.execute("SELECT id, payload_json FROM kv_records WHERE kind = 'entry'"):
-            e_obj, _ = decrypt_db_record(e_row["payload_json"], aead_key, "entry", str(e_row["id"]))
+        for _, e_obj in srv_entries.values():
             if _get_field(e_obj, "deletedAt", "deleted_at") is None:
                 pid_val = str(_get_field(e_obj, "projectId", "project_id") or "")
                 if pid_val:
                     active_project_ids_needed.add(pid_val)
 
         for needed_pid in active_project_ids_needed:
-            p_row = conn.execute(
-                "SELECT updated_at, payload_json FROM kv_records WHERE kind = 'project' AND id = ?",
-                (needed_pid,),
-            ).fetchone()
-            if p_row is not None:
-                p_obj, _ = decrypt_db_record(p_row["payload_json"], aead_key, "project", needed_pid)
+            proj_pair = srv_projects.get(needed_pid)
+            if proj_pair is not None:
+                p_upd, p_obj = proj_pair
                 if _get_field(p_obj, "deletedAt", "deleted_at") is not None:
                     revived = dict(p_obj)
                     revived.pop("deletedAt", None)
                     revived.pop("deleted_at", None)
-                    revived_upd = _bump_iso_timestamp(str(p_row["updated_at"]))
+                    revived_upd = _bump_iso_timestamp(p_upd)
                     if "updated_at" in revived or "updatedAt" not in revived:
                         revived["updated_at"] = revived_upd
                     if "updatedAt" in revived:
@@ -1086,18 +1202,22 @@ def merge_envelope_into_db(
                         "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'project' AND id = ?",
                         (revived_upd, encrypt_db_record(revived, aead_key, "project", needed_pid), needed_pid),
                     )
+                    srv_projects[needed_pid] = (revived_upd, revived)
                     stats["protectedProjects"] += 1
 
         # 4. Merge Explicit Incoming Versions
         for ver in incoming.get("versions") or []:
             if not isinstance(ver, dict) or not ver.get("id"):
                 continue
+            vid_str = str(ver["id"])
+            if vid_str in existing_version_ids:
+                continue
             eid = str(_get_field(ver, "entryId", "entry_id") or "")
             if not eid:
                 continue
             vnum = _safe_int(_get_field(ver, "versionNumber", "version_number", 1), default=1)
             vers = existing_versions_by_entry.get(eid, [])
-            if any(v.get("id") == ver["id"] for v in vers):
+            if any(v.get("id") == vid_str for v in vers):
                 continue
             has_num_collision = any(_safe_int(_get_field(v, "versionNumber", "version_number", 0)) == vnum for v in vers)
             if not has_num_collision:
@@ -1130,22 +1250,25 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
         sys.stderr.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def _send_json(self, status: int, payload: dict[str, Any], extra_headers: dict[str, str] | None = None) -> None:
-        raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         accept_encoding = self.headers.get("Accept-Encoding", "")
         use_gzip = "gzip" in accept_encoding and len(raw) > 1024
-        body = gzip.compress(raw) if use_gzip else raw
+        body = gzip.compress(raw, compresslevel=6) if use_gzip else raw
 
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("X-PromptPanel-Schema", str(SCHEMA_VERSION))
-        if use_gzip:
-            self.send_header("Content-Encoding", "gzip")
-        if extra_headers:
-            for k, v in extra_headers.items():
-                self.send_header(k, v)
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-PromptPanel-Schema", str(SCHEMA_VERSION))
+            if use_gzip:
+                self.send_header("Content-Encoding", "gzip")
+            if extra_headers:
+                for k, v in extra_headers.items():
+                    self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def do_GET(self) -> None:
         _record_metric("requestsTotal")
@@ -1307,7 +1430,18 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             )
             return
 
-        raw_body = self.rfile.read(content_length)
+        try:
+            raw_body = self.rfile.read(content_length)
+        except OSError as exc:
+            _record_metric("syncErrorsTotal")
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": f"Failed to read request body: {exc}"})
+            return
+
+        if len(raw_body) != content_length:
+            _record_metric("syncErrorsTotal")
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Truncated request body"})
+            return
+
         if self.headers.get("Content-Encoding", "").lower() == "gzip":
             try:
                 with gzip.GzipFile(fileobj=io.BytesIO(raw_body)) as gz_file:
@@ -1358,13 +1492,20 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                     namespace=namespace,
                 )
                 merged_envelope = load_envelope_from_db(conn, aead_key=aead_key)
-            except ValueError as exc:
+            except (ValueError, TypeError) as exc:
                 _record_metric("syncErrorsTotal")
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
+            except Exception as exc:
+                _record_metric("syncErrorsTotal")
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": f"Sync merge failed: {exc}"})
+                return
             finally:
                 conn.close()
-            rotate_namespace_backup(db_path, namespace)
+            try:
+                rotate_namespace_backup(db_path, namespace)
+            except Exception:
+                pass
 
         _record_metric("conflictsPreservedTotal", stats.get("conflictsPreserved", 0))
         _record_metric(

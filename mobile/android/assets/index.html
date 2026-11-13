@@ -602,6 +602,8 @@
     overflow-y: auto;
     overflow-x: hidden;
     background: var(--surface);
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
   }
 
   .entry-swipe-wrap {
@@ -609,6 +611,8 @@
     overflow: hidden;
     background: var(--surface);
     touch-action: pan-y;
+    content-visibility: auto;
+    contain-intrinsic-size: 0 62px;
   }
 
   .swipe-bg {
@@ -647,8 +651,11 @@
     padding: 8px 12px;
     background: var(--surface);
     cursor: pointer;
-    transition: background-color 120ms var(--ease), transform 160ms var(--ease);
-    will-change: transform;
+    transition: background-color 140ms var(--ease), transform 160ms var(--ease);
+  }
+
+  .entry-row.just-created-row {
+    background: var(--accent-dim);
   }
 
   .quick-jot-wrap {
@@ -980,7 +987,7 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
-    min-height: 200px;
+    min-height: 210px;
     padding: 24px;
     color: var(--text-sub);
     font-size: 12px;
@@ -991,6 +998,20 @@
     width: 18px;
     height: 18px;
     color: var(--text-muted);
+  }
+
+  .empty-state-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    max-width: 240px;
+    line-height: 1.45;
+  }
+
+  .empty-state-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
   }
 
   /* Bottom Navigation — mirrors Sidebar 4-Section Architecture */
@@ -2093,7 +2114,7 @@
       </div>
       <div class="search-box" style="height:28px;">
         <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input id="refSearchInput" class="search-input" type="search" placeholder="搜索参考词条标题或正文…" oninput="renderReferenceWindow()" />
+        <input id="refSearchInput" class="search-input" type="search" placeholder="搜索参考词条标题或正文…" oninput="onRefSearchInput()" />
       </div>
     </div>
     <div class="clip-strip">
@@ -2586,6 +2607,30 @@ function normalizeStore() {
 }
 
 let lastDeletedEntryId = null;
+let lastCreatedEntryId = null;
+let hasPendingStoreFlush = false;
+let lastRenderContextKey = '';
+let lastListScrollTimeMs = 0;
+
+function triggerHaptic(ms = 10) {
+  try {
+    if (navigator.vibrate) navigator.vibrate(ms);
+  } catch (e) {}
+}
+
+function flushPendingStoreSave() {
+  if (!hasPendingStoreFlush) return;
+  hasPendingStoreFlush = false;
+  clearTimeout(window.__storeFlushTimer);
+  const raw = JSON.stringify(store);
+  try {
+    if (window.AndroidBridge && AndroidBridge.saveStore) {
+      AndroidBridge.saveStore(raw);
+    } else {
+      localStorage.setItem('promptpanel_mobile_store_v2', raw);
+    }
+  } catch (e) {}
+}
 
 function loadPreferencesAndStore() {
   try {
@@ -2624,20 +2669,18 @@ function loadPreferencesAndStore() {
   } catch (e) {}
   store = defaultSeedStore();
   normalizeStore();
-  persistStore();
+  persistStore(false, true);
 }
 
-function persistStore(triggerAuto = false) {
-  normalizeStore();
+function persistStore(triggerAuto = false, flushImmediate = false) {
   store.exportedAt = new Date().toISOString();
-  const raw = JSON.stringify(store);
-  try {
-    if (window.AndroidBridge && AndroidBridge.saveStore) {
-      AndroidBridge.saveStore(raw);
-    } else {
-      localStorage.setItem('promptpanel_mobile_store_v2', raw);
-    }
-  } catch (e) {}
+  hasPendingStoreFlush = true;
+  clearTimeout(window.__storeFlushTimer);
+  if (flushImmediate) {
+    flushPendingStoreSave();
+  } else {
+    window.__storeFlushTimer = setTimeout(flushPendingStoreSave, 45);
+  }
 
   if (triggerAuto && isAutoSyncEnabled()) {
     clearTimeout(window.__autoSyncTimer);
@@ -2804,12 +2847,29 @@ function onSearchInput() {
   const val = document.getElementById('searchInput').value || '';
   document.getElementById('clearSearchBtn').style.display = val.length > 0 ? 'inline-flex' : 'none';
   document.getElementById('searchTagHint').style.display = val.length > 0 ? 'none' : 'inline-flex';
-  render();
+  clearTimeout(window.__searchDebounceTimer);
+  if (!val) {
+    render();
+    return;
+  }
+  window.__searchDebounceTimer = setTimeout(() => {
+    render();
+  }, 80);
 }
 
 function clearSearch() {
+  clearTimeout(window.__searchDebounceTimer);
   document.getElementById('searchInput').value = '';
-  onSearchInput();
+  document.getElementById('clearSearchBtn').style.display = 'none';
+  document.getElementById('searchTagHint').style.display = 'inline-flex';
+  render();
+}
+
+function onRefSearchInput() {
+  clearTimeout(window.__refSearchDebounceTimer);
+  window.__refSearchDebounceTimer = setTimeout(() => {
+    renderReferenceWindow();
+  }, 80);
 }
 
 function switchTab(idx) {
@@ -2828,7 +2888,7 @@ function extractQuickTagsAndContent(rawText) {
   const tags = [];
   const words = [];
   for (const token of String(rawText || '').trim().split(/\s+/)) {
-    if (token.startsWith('#') && token.length > 1) {
+    if ((token.startsWith('#') || token.startsWith('＃')) && token.length > 1) {
       const cleanTag = token.slice(1).replace(/[,，、;；]+$/g, '').slice(0, 10);
       if (cleanTag) {
         if (!tags.includes(cleanTag)) tags.push(cleanTag);
@@ -2849,6 +2909,7 @@ function submitMobileQuickJot(type) {
     if (inputEl) inputEl.focus();
     return;
   }
+  const wasFocused = document.activeElement === inputEl;
   const parsed = extractQuickTagsAndContent(raw);
   const now = new Date().toISOString();
   const targetProjId = (currentTab === 2 || currentTab === 3) && selectedGroupId
@@ -2882,10 +2943,23 @@ function submitMobileQuickJot(type) {
     changeNote: '快速速记',
     createdAt: now
   });
-  if (inputEl) inputEl.value = '';
+  if (inputEl) {
+    inputEl.value = '';
+    if (wasFocused) inputEl.focus();
+  }
   if (entryKindFilter && entryKindFilter !== type) entryKindFilter = null;
+  lastCreatedEntryId = newId;
+  triggerHaptic(10);
   persistStore(true);
   render();
+  const listEl = document.getElementById('entryList');
+  if (listEl) listEl.scrollTop = 0;
+  clearTimeout(window.__justCreatedTimer);
+  window.__justCreatedTimer = setTimeout(() => {
+    lastCreatedEntryId = null;
+    const rowEl = document.querySelector(`.entry-swipe-wrap[data-entry-id="${newId}"] .entry-row`);
+    if (rowEl) rowEl.classList.remove('just-created-row');
+  }, 1100);
   showToast((type === 'todo' ? '已添加待办：' : '已记便签：') + title);
 }
 
@@ -2936,27 +3010,117 @@ function renderScopeHeaderSelect() {
   ).join('');
 }
 
+const COPY_ICON_DEFAULT_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+const COPY_ICON_COPIED_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+
+function buildEntryRowHtml(item, idx, totalLen, projectNameMap) {
+  const typeKey = TYPE_META[item.type] ? item.type : 'prompt';
+  const typeInfo = TYPE_META[typeKey];
+  const projId = item.projectId || item.project_id;
+  const isInboxRow = currentTab === 1 || projId === BUILTIN_INBOX_ID || typeKey === 'todo' || typeKey === 'note';
+  const done = !!(item.isCompleted || item.is_completed);
+  const pinned = !!(item.isPinned || item.is_pinned);
+  const useCount = item.useCount || 0;
+  const level = resolveEntryLevel(useCount);
+
+  const previewLine = String(item.content || '').replace(/\s+/g, ' ').trim();
+  const lastUsedStr = formatRelativeTime(item.lastUsedAt || item.last_used_at);
+  const secondMeta = currentTab === 0
+    ? (projectNameMap.get(projId) || '通用项目')
+    : formatShortDay(item.createdAt || item.created_at);
+
+  const tags = item.tags || [];
+  const visibleTags = tags.slice(0, 2);
+  const overflowTags = tags.length - visibleTags.length;
+  const tagsHtml = visibleTags.map(t => `<span class="tag-chip">#${escapeHtml(t)}</span>`).join('') +
+    (overflowTags > 0 ? `<span class="tag-overflow">+${overflowTags}</span>` : '');
+
+  const leadingHtml = isInboxRow
+    ? `<button class="todo-check-btn ${done ? 'done' : ''}" onclick="event.stopPropagation(); toggleTodoDone('${item.id}')" aria-label="切换完成状态">
+        ${done
+          ? '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>'
+          : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="9"/></svg>'}
+      </button>`
+    : `<div class="entry-leading" style="color:${typeInfo.color}">${typeInfo.svg}</div>`;
+
+  const isCopied = lastCopiedEntryId === item.id;
+  const isJustCreated = lastCreatedEntryId === item.id;
+  const copyIcon = isCopied ? COPY_ICON_COPIED_SVG : COPY_ICON_DEFAULT_SVG;
+
+  return `
+    <div class="entry-swipe-wrap" data-entry-id="${item.id}" ontouchstart="onRowTouchStart(event, this)" ontouchmove="onRowTouchMove(event, this)" ontouchend="onRowTouchEnd(event, this)" ontouchcancel="onRowTouchCancel(this)">
+      <div class="swipe-bg"><span class="swipe-hint-text">左滑删除</span></div>
+      <div class="entry-row ${pinned ? 'pinned-row' : ''} ${isJustCreated ? 'just-created-row' : ''}" onclick="if(!window.__suppressNextRowTap)openEditorSheet('${item.id}')">
+        ${leadingHtml}
+        <div class="entry-main">
+          <div class="entry-header">
+            <div class="entry-title ${done ? 'done' : ''}">${escapeHtml(item.title)}</div>
+            ${pinned ? `<svg class="pin-glyph" viewBox="0 0 24 24" fill="currentColor"><path d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>` : ''}
+            ${useCount > 0 ? `<span class="level-badge" style="color:${level.color};background:${level.bg};">${useCount}次</span>` : ''}
+            <span class="type-badge">${typeInfo.name}</span>
+          </div>
+          <div class="entry-preview ${done ? 'done' : ''}">${escapeHtml(previewLine)}</div>
+          <div class="entry-meta">
+            <span>${escapeHtml(lastUsedStr)}</span>
+            <span class="meta-sep">·</span>
+            <span class="${currentTab === 0 ? 'meta-proj' : 'meta-mono'}">${escapeHtml(secondMeta)}</span>
+            <span class="meta-spacer"></span>
+            ${tags.length > 0 ? `<div class="tag-chips">${tagsHtml}</div>` : ''}
+          </div>
+        </div>
+        <button class="row-copy-btn ${isCopied ? 'copied' : ''}" onclick="event.stopPropagation(); copyEntry('${item.id}')" aria-label="复制内容">
+          ${copyIcon}
+        </button>
+      </div>
+    </div>
+    ${idx < totalLen - 1 ? '<div class="row-divider"></div>' : ''}
+  `;
+}
+
 function render() {
+  if (window.__incrementalRenderRaf) {
+    cancelAnimationFrame(window.__incrementalRenderRaf);
+    window.__incrementalRenderRaf = 0;
+  }
   renderScopeHeaderSelect();
 
   const activeProjects = activeProjectsList();
   const allEntries = activeEntriesList();
 
-  // Bottom nav 4-section counts
-  const inboxEntriesAll = allEntries.filter(e =>
-    (e.projectId || e.project_id) === BUILTIN_INBOX_ID || e.type === 'todo' || e.type === 'note'
-  );
-  const categoryIds = new Set(
-    activeProjects.filter(p => (p.groupKindRaw || p.group_kind || (p.isDefault ? 'category' : 'project')) === 'category').map(p => p.id)
-  );
-  const projectIds = new Set(
-    activeProjects.filter(p => (p.groupKindRaw || p.group_kind || (p.isDefault ? 'category' : 'project')) === 'project' && (showArchived || !(p.isArchived || p.is_archived))).map(p => p.id)
-  );
+  // Build O(1) lookup maps for project names and per-project entry counts
+  const projectNameMap = new Map();
+  const projectEntryCounts = new Map();
+  const categoryIds = new Set();
+  const projectIds = new Set();
+
+  for (const p of activeProjects) {
+    projectNameMap.set(p.id, p.name || '通用项目');
+    const kind = p.groupKindRaw || p.group_kind || (p.isDefault ? 'category' : 'project');
+    const archived = p.isArchived || p.is_archived || false;
+    if (kind === 'category') {
+      categoryIds.add(p.id);
+    } else if (kind === 'project' && (showArchived || !archived)) {
+      projectIds.add(p.id);
+    }
+  }
+
+  const inboxEntriesAll = [];
+  let catEntriesCount = 0;
+  let projEntriesCount = 0;
+  for (const e of allEntries) {
+    const pid = e.projectId || e.project_id;
+    projectEntryCounts.set(pid, (projectEntryCounts.get(pid) || 0) + 1);
+    if (pid === BUILTIN_INBOX_ID || e.type === 'todo' || e.type === 'note') {
+      inboxEntriesAll.push(e);
+    }
+    if (categoryIds.has(pid)) catEntriesCount++;
+    if (projectIds.has(pid)) projEntriesCount++;
+  }
 
   document.getElementById('navCount0').textContent = allEntries.length;
   document.getElementById('navCount1').textContent = inboxEntriesAll.length;
-  document.getElementById('navCount2').textContent = allEntries.filter(e => categoryIds.has(e.projectId || e.project_id)).length;
-  document.getElementById('navCount3').textContent = allEntries.filter(e => projectIds.has(e.projectId || e.project_id)).length;
+  document.getElementById('navCount2').textContent = catEntriesCount;
+  document.getElementById('navCount3').textContent = projEntriesCount;
 
   const groupStrip = document.getElementById('groupStrip');
   let scopedEntries = allEntries.slice();
@@ -2982,7 +3146,7 @@ function render() {
     let gHtml = '';
     for (const g of groups) {
       const archived = g.isArchived || g.is_archived || false;
-      const gCount = allEntries.filter(e => (e.projectId || e.project_id) === g.id).length;
+      const gCount = projectEntryCounts.get(g.id) || 0;
       const isCurrentBind = g.id === currentScopeProjectId;
       const activeCls = g.id === selectedGroupId ? 'chip active' : 'chip';
       gHtml += `
@@ -3015,7 +3179,7 @@ function render() {
   const queryRaw = (document.getElementById('searchInput').value || '').trim();
   let searchTag = null;
   let searchText = queryRaw.toLowerCase();
-  if (queryRaw.startsWith('#')) {
+  if (queryRaw.startsWith('#') || queryRaw.startsWith('＃')) {
     const parts = queryRaw.split(/\s+/);
     searchTag = parts[0].slice(1).toLowerCase();
     searchText = parts.slice(1).join(' ').toLowerCase();
@@ -3133,81 +3297,86 @@ function render() {
   document.getElementById('entryCountLabel').textContent = items.length + ' 条';
 
   const listEl = document.getElementById('entryList');
+  const renderContextKey = `${currentTab}:${selectedGroupId || ''}:${entryKindFilter || ''}:${entryTagFilter || ''}:${queryRaw}:${sortMode}`;
+  const preserveScroll = renderContextKey === lastRenderContextKey;
+  const savedScrollTop = preserveScroll ? listEl.scrollTop : 0;
+  lastRenderContextKey = renderContextKey;
+
   if (items.length === 0) {
-    listEl.innerHTML = `
-      <div class="empty-state">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
-        <span>${queryRaw ? '无匹配内容' : '当前分组暂无内容'}</span>
-      </div>
-    `;
+    const hasFilterOrSearch = Boolean(queryRaw || entryKindFilter || entryTagFilter);
+    if (hasFilterOrSearch) {
+      listEl.innerHTML = `
+        <div class="empty-state">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <span>未找到匹配的词条</span>
+          <span class="empty-state-sub">可尝试更换关键词，或清除当前的标签与类型筛选条件</span>
+          <div class="empty-state-actions">
+            <button class="mini-pill-btn primary" onclick="clearSearch(); clearEntryFilters();">清除搜索与筛选</button>
+          </div>
+        </div>
+      `;
+    } else if (currentTab === 1) {
+      listEl.innerHTML = `
+        <div class="empty-state">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg>
+          <span>暂无待办或随手记</span>
+          <span class="empty-state-sub">在上方输入框直接输入文字（支持 #标签）即可一键记入</span>
+          <div class="empty-state-actions">
+            <button class="mini-pill-btn primary" onclick="document.getElementById('mobileQuickJotInput').focus()">立即速记</button>
+            <button class="mini-pill-btn" onclick="openClipboardMenuSheet()">从剪贴板导入</button>
+          </div>
+        </div>
+      `;
+    } else {
+      listEl.innerHTML = `
+        <div class="empty-state">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+          <span>当前分组暂无内容</span>
+          <span class="empty-state-sub">点击下方按钮新建词条，或从剪贴板与参考窗快速导入</span>
+          <div class="empty-state-actions">
+            <button class="mini-pill-btn primary" onclick="openEditorSheet(null)">+ 新建词条</button>
+            <button class="mini-pill-btn" onclick="openClipboardMenuSheet()">剪贴板新建</button>
+          </div>
+        </div>
+      `;
+    }
     return;
   }
 
+  const totalLen = items.length;
+  const minSyncCount = preserveScroll && savedScrollTop > 0
+    ? Math.min(totalLen, Math.max(80, Math.ceil(savedScrollTop / 50) + 35))
+    : Math.min(totalLen, 80);
+
   let html = '';
-  items.forEach((item, idx) => {
-    const typeKey = TYPE_META[item.type] ? item.type : 'prompt';
-    const typeInfo = TYPE_META[typeKey];
-    const isInboxRow = currentTab === 1 || (item.projectId || item.project_id) === BUILTIN_INBOX_ID || typeKey === 'todo' || typeKey === 'note';
-    const done = !!(item.isCompleted || item.is_completed);
-    const pinned = !!(item.isPinned || item.is_pinned);
-    const useCount = item.useCount || 0;
-    const level = resolveEntryLevel(useCount);
-
-    const previewLine = String(item.content || '').replace(/\s+/g, ' ').trim();
-    const lastUsedStr = formatRelativeTime(item.lastUsedAt || item.last_used_at);
-    const secondMeta = currentTab === 0
-      ? projectNameById(item.projectId || item.project_id)
-      : formatShortDay(item.createdAt || item.created_at);
-
-    const tags = item.tags || [];
-    const visibleTags = tags.slice(0, 2);
-    const overflowTags = tags.length - visibleTags.length;
-    const tagsHtml = visibleTags.map(t => `<span class="tag-chip">#${escapeHtml(t)}</span>`).join('') +
-      (overflowTags > 0 ? `<span class="tag-overflow">+${overflowTags}</span>` : '');
-
-    const leadingHtml = isInboxRow
-      ? `<button class="todo-check-btn ${done ? 'done' : ''}" onclick="event.stopPropagation(); toggleTodoDone('${item.id}')" aria-label="切换完成状态">
-          ${done
-            ? '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>'
-            : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="9"/></svg>'}
-        </button>`
-      : `<div class="entry-leading" style="color:${typeInfo.color}">${typeInfo.svg}</div>`;
-
-    const isCopied = lastCopiedEntryId === item.id;
-    const copyIcon = isCopied
-      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
-      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
-
-    html += `
-      <div class="entry-swipe-wrap" data-entry-id="${item.id}" ontouchstart="onRowTouchStart(event, this)" ontouchmove="onRowTouchMove(event, this)" ontouchend="onRowTouchEnd(event, this)" ontouchcancel="onRowTouchCancel(this)">
-        <div class="swipe-bg"><span class="swipe-hint-text">左滑删除</span></div>
-        <div class="entry-row ${pinned ? 'pinned-row' : ''}" onclick="if(!window.__suppressNextRowTap)openEditorSheet('${item.id}')">
-          ${leadingHtml}
-          <div class="entry-main">
-            <div class="entry-header">
-              <div class="entry-title ${done ? 'done' : ''}">${escapeHtml(item.title)}</div>
-              ${pinned ? `<svg class="pin-glyph" viewBox="0 0 24 24" fill="currentColor"><path d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>` : ''}
-              ${useCount > 0 ? `<span class="level-badge" style="color:${level.color};background:${level.bg};">${useCount}次</span>` : ''}
-              <span class="type-badge">${typeInfo.name}</span>
-            </div>
-            <div class="entry-preview ${done ? 'done' : ''}">${escapeHtml(previewLine)}</div>
-            <div class="entry-meta">
-              <span>${escapeHtml(lastUsedStr)}</span>
-              <span class="meta-sep">·</span>
-              <span class="${currentTab === 0 ? 'meta-proj' : 'meta-mono'}">${escapeHtml(secondMeta)}</span>
-              <span class="meta-spacer"></span>
-              ${tags.length > 0 ? `<div class="tag-chips">${tagsHtml}</div>` : ''}
-            </div>
-          </div>
-          <button class="row-copy-btn ${isCopied ? 'copied' : ''}" onclick="event.stopPropagation(); copyEntry('${item.id}')" aria-label="复制内容">
-            ${copyIcon}
-          </button>
-        </div>
-      </div>
-      ${idx < items.length - 1 ? '<div class="row-divider"></div>' : ''}
-    `;
-  });
+  for (let i = 0; i < minSyncCount; i++) {
+    html += buildEntryRowHtml(items[i], i, totalLen, projectNameMap);
+  }
   listEl.innerHTML = html;
+  if (preserveScroll && savedScrollTop > 0) {
+    listEl.scrollTop = savedScrollTop;
+  } else if (!preserveScroll) {
+    listEl.scrollTop = 0;
+  }
+
+  if (minSyncCount < totalLen) {
+    let cursor = minSyncCount;
+    const stepBatch = () => {
+      const end = Math.min(totalLen, cursor + 100);
+      let chunkHtml = '';
+      for (let i = cursor; i < end; i++) {
+        chunkHtml += buildEntryRowHtml(items[i], i, totalLen, projectNameMap);
+      }
+      listEl.insertAdjacentHTML('beforeend', chunkHtml);
+      cursor = end;
+      if (cursor < totalLen) {
+        window.__incrementalRenderRaf = requestAnimationFrame(stepBatch);
+      } else {
+        window.__incrementalRenderRaf = 0;
+      }
+    };
+    window.__incrementalRenderRaf = requestAnimationFrame(stepBatch);
+  }
 }
 
 let swipeState = null;
@@ -3215,6 +3384,7 @@ let swipeState = null;
 function onRowTouchStart(ev, wrapEl) {
   if (!ev.touches || ev.touches.length !== 1) return;
   const t = ev.touches[0];
+  const scrollingRecently = (Date.now() - lastListScrollTimeMs) < 110;
   swipeState = {
     wrap: wrapEl,
     row: wrapEl.querySelector('.entry-row'),
@@ -3224,31 +3394,67 @@ function onRowTouchStart(ev, wrapEl) {
     startX: t.clientX,
     startY: t.clientY,
     dx: 0,
-    locked: null
+    crossedThreshold: false,
+    locked: scrollingRecently ? 'y' : null
   };
-  if (swipeState.row) swipeState.row.style.transition = 'none';
+  if (swipeState.row && !scrollingRecently) {
+    swipeState.row.style.transition = 'none';
+  }
 }
 
 function onRowTouchMove(ev, wrapEl) {
   if (!swipeState || swipeState.wrap !== wrapEl || !ev.touches || ev.touches.length !== 1) return;
+  if (swipeState.locked === 'y') return;
   const t = ev.touches[0];
   const dx = t.clientX - swipeState.startX;
   const dy = t.clientY - swipeState.startY;
+  const absX = Math.abs(dx);
+  const absY = Math.abs(dy);
+
   if (!swipeState.locked) {
-    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-    swipeState.locked = Math.abs(dx) > Math.abs(dy) * 1.25 ? 'x' : 'y';
+    // Prioritize vertical scrolling whenever vertical movement is noticeable
+    if (absY >= 9 && absY >= absX * 0.78) {
+      swipeState.locked = 'y';
+      if (swipeState.row) swipeState.row.style.transition = '';
+      return;
+    }
+    // Lock horizontal only when horizontal movement is deliberate and angle is shallow (< ~28 deg)
+    if (absX >= 14 && absX > absY * 1.85) {
+      swipeState.locked = 'x';
+    } else {
+      return;
+    }
   }
+
   if (swipeState.locked !== 'x') return;
   if (ev.cancelable) ev.preventDefault();
-  swipeState.dx = Math.max(-116, Math.min(104, dx));
+
+  // Apply 12px deadzone after lock and smooth resistance past 72px
+  const signedDeadzone = dx > 0 ? Math.max(0, dx - 12) : Math.min(0, dx + 12);
+  let dampedDx = signedDeadzone;
+  if (Math.abs(signedDeadzone) > 72) {
+    const extra = Math.abs(signedDeadzone) - 72;
+    const sign = signedDeadzone > 0 ? 1 : -1;
+    dampedDx = sign * (72 + extra * 0.35);
+  }
+  swipeState.dx = Math.max(-112, Math.min(100, Math.round(dampedDx)));
+
+  const nowPastThreshold = Math.abs(swipeState.dx) >= 68;
+  if (nowPastThreshold && !swipeState.crossedThreshold) {
+    swipeState.crossedThreshold = true;
+    triggerHaptic(8);
+  } else if (!nowPastThreshold && swipeState.crossedThreshold) {
+    swipeState.crossedThreshold = false;
+  }
+
   if (swipeState.row) {
     swipeState.row.style.transform = `translateX(${swipeState.dx}px)`;
   }
   if (swipeState.bg && swipeState.hint) {
-    if (swipeState.dx < -16) {
+    if (swipeState.dx < -14) {
       swipeState.bg.className = 'swipe-bg swiping-left';
       swipeState.hint.textContent = swipeState.dx <= -68 ? '松手删除词条' : '继续左滑删除';
-    } else if (swipeState.dx > 16) {
+    } else if (swipeState.dx > 14) {
       swipeState.bg.className = 'swipe-bg swiping-right';
       swipeState.hint.textContent = swipeState.dx >= 68 ? '松手切换完成' : '右滑切换完成';
     } else {
@@ -3272,7 +3478,7 @@ function onRowTouchEnd(ev, wrapEl) {
   const st = swipeState;
   swipeState = null;
   if (st.row) st.row.style.transition = '';
-  if (st.locked === 'x' && Math.abs(st.dx) > 10) {
+  if (st.locked === 'x' && Math.abs(st.dx) > 8) {
     window.__suppressNextRowTap = true;
     setTimeout(() => { window.__suppressNextRowTap = false; }, 260);
   }
@@ -3297,6 +3503,7 @@ function softDeleteEntryWithUndo(entryId) {
   item.deletedAt = now;
   item.updatedAt = now;
   lastDeletedEntryId = item.id;
+  triggerHaptic(12);
   persistStore(true);
   render();
   showBanner('已删除：' + item.title, true);
@@ -3320,6 +3527,7 @@ function toggleTodoDone(entryId) {
   if (!item) return;
   item.isCompleted = !item.isCompleted;
   item.updatedAt = new Date().toISOString();
+  triggerHaptic(10);
   persistStore(true);
   render();
   showToast(item.isCompleted ? '已标记完成' : '已恢复未完成');
@@ -3348,15 +3556,26 @@ function copyEntry(entryId) {
   item.lastUsedAt = now;
   item.updatedAt = now;
   lastCopiedEntryId = entryId;
+  triggerHaptic(10);
   persistStore(true);
 
   writeSystemClipboard(item.title, item.content);
   showToast('已复制：' + item.title);
+  const modalCopyBtn = document.getElementById('modalCopyBtn');
+  if (modalCopyBtn && editingEntryId === entryId) {
+    modalCopyBtn.textContent = '已复制 ✓';
+  }
   render();
   clearTimeout(window.__copyFeedbackTimer);
   window.__copyFeedbackTimer = setTimeout(() => {
     lastCopiedEntryId = null;
-    render();
+    document.querySelectorAll('.row-copy-btn.copied').forEach(btn => {
+      btn.classList.remove('copied');
+      btn.innerHTML = COPY_ICON_DEFAULT_SVG;
+    });
+    if (modalCopyBtn) {
+      modalCopyBtn.textContent = '复制';
+    }
   }, 1200);
 }
 
@@ -4226,16 +4445,41 @@ function onTapTopbarSync() {
   triggerCloudSync(false);
 }
 
+function normalizeEndpointInput(rawEp) {
+  let clean = String(rawEp || '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .trim()
+    .replace(/[,，。;；]+$/, '');
+  if (!clean) return '';
+  if (!/^https?:\/\//i.test(clean)) {
+    if (/^(localhost|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?(\/.*)?$/i.test(clean)) {
+      clean = 'http://' + clean;
+    } else if (/^[a-z0-9.-]+\.[a-z]{2,}(:\d+)?(\/.*)?$/i.test(clean)) {
+      clean = 'https://' + clean;
+    }
+  }
+  return clean;
+}
+
 function parseSyncConfigText(rawText) {
-  const trimmed = String(rawText || '').trim();
+  let trimmed = String(rawText || '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .trim();
   if (!trimmed) return null;
 
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+  // Strip surrounding markdown code fences if present
+  trimmed = trimmed.replace(/^```(?:json|text|yaml)?\s*/i, '').replace(/\s*```$/i, '').trim();
+
+  // 1. Try direct JSON or embedded JSON object extraction
+  const firstBrace = trimmed.indexOf('{');
+  const lastBrace = trimmed.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    const jsonCandidate = trimmed.slice(firstBrace, lastBrace + 1);
     try {
-      const obj = JSON.parse(trimmed);
+      const obj = JSON.parse(jsonCandidate);
       if (obj && typeof obj === 'object' && !Array.isArray(obj.projects) && !Array.isArray(obj.entries)) {
-        const ep = String(obj.endpoint || obj.syncEndpoint || obj.cloudSyncEndpoint || obj.url || '').trim();
-        const tk = String(obj.apiKey || obj.token || obj.bearerToken || obj.cloudSyncApiKey || '').trim();
+        const ep = normalizeEndpointInput(obj.endpoint || obj.syncEndpoint || obj.cloudSyncEndpoint || obj.url || obj.server || '');
+        const tk = String(obj.apiKey || obj.token || obj.bearerToken || obj.cloudSyncApiKey || obj.key || '').trim();
         const autoVal = obj.autoSync !== undefined ? !!obj.autoSync : (obj.cloudSyncEnabled !== undefined ? !!obj.cloudSyncEnabled : true);
         if (ep || tk) {
           return { endpoint: ep, apiKey: tk, autoSync: autoVal };
@@ -4244,10 +4488,12 @@ function parseSyncConfigText(rawText) {
     } catch (e) {}
   }
 
-  if (/^promptpanel:\/\/sync/i.test(trimmed)) {
+  // 2. Match promptpanel://sync URI anywhere in text
+  const uriMatch = trimmed.match(/promptpanel:\/\/sync[^\s"'<>]*/i);
+  if (uriMatch) {
     try {
-      const u = new URL(trimmed);
-      const ep = (u.searchParams.get('endpoint') || u.searchParams.get('url') || '').trim();
+      const u = new URL(uriMatch[0]);
+      const ep = normalizeEndpointInput(u.searchParams.get('endpoint') || u.searchParams.get('url') || '');
       const tk = (u.searchParams.get('apiKey') || u.searchParams.get('token') || '').trim();
       const autoParam = u.searchParams.get('autoSync');
       const autoVal = autoParam === null ? true : (autoParam !== '0' && autoParam !== 'false');
@@ -4257,8 +4503,19 @@ function parseSyncConfigText(rawText) {
     } catch (e) {}
   }
 
-  if (/^https?:\/\/\S+$/i.test(trimmed)) {
-    return { endpoint: trimmed, apiKey: '', autoSync: null };
+  // 3. Match multi-line or chat message containing URL + optional Bearer/Token
+  const urlMatch = trimmed.match(/https?:\/\/[^\s"'<>，。；,;]+/i);
+  const tokenMatch = trimmed.match(/(?:Bearer\s+|(?:token|apiKey|api_key|令牌|密钥)\s*[:=：]\s*)([A-Za-z0-9._~+/-]{12,128})/i);
+  if (urlMatch) {
+    const ep = normalizeEndpointInput(urlMatch[0]);
+    const tk = tokenMatch ? tokenMatch[1].trim() : '';
+    return { endpoint: ep, apiKey: tk, autoSync: tk ? true : null };
+  }
+
+  // 4. Bare LAN IP:port or domain:port
+  const normalizedBare = normalizeEndpointInput(trimmed);
+  if (/^https?:\/\/\S+$/i.test(normalizedBare) && !trimmed.includes(' ') && !trimmed.includes('\n')) {
+    return { endpoint: normalizedBare, apiKey: '', autoSync: null };
   }
 
   return null;
@@ -4316,9 +4573,9 @@ function handleSyncInputPaste(event) {
   if (!clipData) return;
   const pasted = (clipData.getData('text') || '').trim();
   if (!pasted) return;
-  if (pasted.startsWith('{') || /^promptpanel:\/\/sync/i.test(pasted)) {
+  if (pasted.includes('{') || /promptpanel:\/\/sync/i.test(pasted) || /Bearer\s+/i.test(pasted) || pasted.includes('\n')) {
     const cfg = parseSyncConfigText(pasted);
-    if (cfg) {
+    if (cfg && (cfg.endpoint || cfg.apiKey)) {
       event.preventDefault();
       applyParsedSyncConfig(cfg, '粘贴配置');
     }
@@ -4387,16 +4644,24 @@ function renderSettingsView() {
   hydrateSyncInputsFromStorage();
   syncSortSelectUI();
 
-  const pCount = activeProjectsList().length;
-  const eCount = activeEntriesList().length;
+  const activeProjects = activeProjectsList();
+  const activeEntries = activeEntriesList();
+  const pCount = activeProjects.length;
+  const eCount = activeEntries.length;
   const vCount = (store.versions || []).length;
   document.getElementById('storageStatsLine').textContent = `当前本地词库：${pCount} 个分组 · ${eCount} 条词条 · ${vCount} 个历史版本快照`;
 
+  const countsByProj = new Map();
+  for (const e of activeEntries) {
+    const pid = e.projectId || e.project_id;
+    countsByProj.set(pid, (countsByProj.get(pid) || 0) + 1);
+  }
+
   const groupListEl = document.getElementById('settingsGroupList');
-  groupListEl.innerHTML = activeProjectsList().map(p => {
+  groupListEl.innerHTML = activeProjects.map(p => {
     const kind = p.groupKindRaw || p.group_kind || (p.isDefault ? 'category' : 'project');
     const kindLabel = kind === 'inbox' ? '系统内置' : (kind === 'category' ? '常用类型' : '项目');
-    const cnt = activeEntriesList().filter(e => (e.projectId || e.project_id) === p.id).length;
+    const cnt = countsByProj.get(p.id) || 0;
     const arch = (p.isArchived || p.is_archived) ? ' · 已归档' : '';
     return `
       <div class="settings-row">
@@ -4414,8 +4679,10 @@ function saveSyncSettings(silent = false) {
   const epEl = document.getElementById('syncEndpoint');
   const tkEl = document.getElementById('syncToken');
   if (!epEl || !tkEl) return;
-  const ep = (epEl.value || '').trim();
-  const tk = (tkEl.value || '').trim();
+  const ep = normalizeEndpointInput(epEl.value || '');
+  if (ep && epEl.value !== ep) epEl.value = ep;
+  const tk = (tkEl.value || '').trim().replace(/^Bearer\s+/i, '');
+  if (tkEl.value !== tk) tkEl.value = tk;
   if (window.AndroidBridge && AndroidBridge.saveSettings) {
     AndroidBridge.saveSettings(ep, tk);
     localStorage.removeItem('promptpanel_cloud_api_key');
@@ -4433,7 +4700,7 @@ function saveSyncSettings(silent = false) {
 }
 
 function resolveSyncUrl(rawEndpoint) {
-  let u = rawEndpoint.trim();
+  let u = normalizeEndpointInput(rawEndpoint);
   if (!u) return '';
   try {
     const parsed = new URL(u);
@@ -4447,7 +4714,7 @@ function resolveSyncUrl(rawEndpoint) {
 }
 
 function resolveHealthUrl(rawEndpoint) {
-  let u = rawEndpoint.trim();
+  let u = normalizeEndpointInput(rawEndpoint);
   if (!u) return '';
   try {
     const parsed = new URL(u);
@@ -4471,7 +4738,43 @@ function resolveHealthUrl(rawEndpoint) {
   }
 }
 
+function formatSyncHttpError(code, body) {
+  let serverErr = '';
+  if (body) {
+    if (body.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(body);
+        if (parsed && parsed.error) serverErr = String(parsed.error);
+      } catch (e) {}
+    } else if (body.length <= 120 && !body.startsWith('<')) {
+      serverErr = body;
+    }
+  }
+  if (code === 0 || isNaN(code)) {
+    return serverErr || '无法连接同步服务器，请检查网络或服务地址是否正确';
+  }
+  if (code === 401 || code === 403) {
+    return '访问令牌鉴权未通过 (HTTP ' + code + ')，请确认不少于 12 位专属 Token';
+  }
+  if (code === 404) {
+    return '同步接口路径不存在 (HTTP 404)，请检查同步服务地址是否正确';
+  }
+  if (code === 413) {
+    return '词库数据体积超出服务端限制 (HTTP 413)';
+  }
+  if (code === 400) {
+    return '请求数据格式有误 (HTTP 400)' + (serverErr ? '：' + serverErr : '');
+  }
+  if (code >= 500) {
+    return '同步服务端繁忙或异常 (HTTP ' + code + ')，请稍后重试';
+  }
+  return 'HTTP ' + code + (serverErr ? '：' + serverErr : '');
+}
+
+let isTestingConnection = false;
+
 function testCloudConnection() {
+  if (isTestingConnection) return;
   saveSyncSettings(true);
   const { ep, tk } = getSyncCredentials();
   if (!ep) {
@@ -4479,6 +4782,7 @@ function testCloudConnection() {
     return;
   }
   const healthUrl = resolveHealthUrl(ep);
+  isTestingConnection = true;
   document.getElementById('syncBadgeText').textContent = '检测中…';
   const t0 = Date.now();
   setTimeout(() => {
@@ -4495,16 +4799,17 @@ function testCloudConnection() {
           const pCnt = info.projectCount || 0;
           const eCnt = info.entryCount || 0;
           const vCnt = info.versionCount || 0;
-          const ns = info.namespace ? `空间 ${info.namespace}` : '已连接';
+          const ns = info.namespace ? `空间 ${info.namespace}` : (tk.length >= 12 ? '已连接' : '未填或过短 Token');
           document.getElementById('syncBadgeText').textContent = '连接正常';
           document.getElementById('syncStatusText').textContent = `连接正常 · ${latency} ms · ${ns}（云端 ${pCnt} 组 / ${eCnt} 条 / ${vCnt} 版）`;
           updateTopbarSyncIndicator('ok');
           showToast('连接正常 (' + latency + ' ms)');
         } else {
-          document.getElementById('syncBadgeText').textContent = 'HTTP ' + code;
-          document.getElementById('syncStatusText').textContent = '连接失败：HTTP ' + code;
+          const friendlyErr = formatSyncHttpError(code, body);
+          document.getElementById('syncBadgeText').textContent = code > 0 ? ('HTTP ' + code) : '连接失败';
+          document.getElementById('syncStatusText').textContent = '连接失败：' + friendlyErr;
           updateTopbarSyncIndicator('err');
-          showToast('连接失败 (HTTP ' + code + ')');
+          showToast(friendlyErr);
         }
       } else {
         showToast('请在 Android 客户端内测试连接');
@@ -4513,6 +4818,8 @@ function testCloudConnection() {
       document.getElementById('syncBadgeText').textContent = '连接异常';
       updateTopbarSyncIndicator('err');
       showToast('检测异常: ' + e.message);
+    } finally {
+      isTestingConnection = false;
     }
   }, 30);
 }
@@ -4681,6 +4988,8 @@ function mergeRemoteEnvelope(remote) {
 }
 
 let isSyncInFlight = false;
+let pendingFollowUpSync = false;
+let pendingFollowUpSilent = true;
 
 function triggerCloudSync(silent = false) {
   if (mainSegment === 'settings') saveSyncSettings(true);
@@ -4692,8 +5001,21 @@ function triggerCloudSync(silent = false) {
     }
     return;
   }
-  if (isSyncInFlight) return;
+  if (!silent && tk.length < 12) {
+    switchMainSegment('settings');
+    showBanner('请填写不少于 12 位的访问令牌 (Bearer Token)');
+    return;
+  }
+  if (isSyncInFlight) {
+    pendingFollowUpSync = true;
+    if (!silent) {
+      pendingFollowUpSilent = false;
+      showToast('同步正在进行中，将在当前批次完成后立即刷新…');
+    }
+    return;
+  }
   isSyncInFlight = true;
+  flushPendingStoreSave();
 
   const syncUrl = resolveSyncUrl(ep);
   if (!silent) showToast('正在同步…');
@@ -4705,21 +5027,27 @@ function triggerCloudSync(silent = false) {
         const nl = getRes.indexOf('\n');
         const getCode = parseInt(getRes.slice(0, nl), 10);
         const getBody = getRes.slice(nl + 1).trim();
-        if (getCode === 401) {
+        if (getCode === 401 || getCode === 403) {
+          const authMsg = formatSyncHttpError(getCode, getBody);
+          document.getElementById('syncStatusText').textContent = authMsg;
+          document.getElementById('syncBadgeText').textContent = '鉴权失败';
           updateTopbarSyncIndicator('err');
-          if (!silent) showBanner('Token 鉴权未通过 (HTTP 401)，请确认不少于 12 位专属 Token');
+          if (!silent) showBanner(authMsg);
           return;
         }
         if ((getCode < 200 || getCode >= 300) && getCode !== 404) {
+          const getErrMsg = formatSyncHttpError(getCode, getBody);
+          document.getElementById('syncStatusText').textContent = '同步失败：' + getErrMsg;
+          document.getElementById('syncBadgeText').textContent = getCode > 0 ? ('HTTP ' + getCode) : '连接失败';
           updateTopbarSyncIndicator('err');
-          if (!silent) showToast('远端拉取失败 (HTTP ' + getCode + ')');
+          if (!silent) showToast(getErrMsg);
           return;
         }
         let s1 = { pNew: 0, pUpd: 0, eNew: 0, eUpd: 0, conflicts: 0, protectedCount: 0 };
         if (getCode >= 200 && getCode < 300 && getBody) {
           s1 = mergeRemoteEnvelope(JSON.parse(getBody));
         }
-        persistStore(false);
+        persistStore(false, true);
         const postRes = AndroidBridge.httpRequest('POST', syncUrl, tk, JSON.stringify(store));
         const pnl = postRes.indexOf('\n');
         const postCode = parseInt(postRes.slice(0, pnl), 10);
@@ -4733,7 +5061,7 @@ function triggerCloudSync(silent = false) {
             s1.eUpd += s2.eUpd;
             s1.conflicts += s2.conflicts;
             s1.protectedCount += (s2.protectedCount || 0);
-            persistStore(false);
+            persistStore(false, true);
           }
           const protSuffix = s1.protectedCount > 0 ? `，防丢熔断保护 ${s1.protectedCount}` : '';
           const summary = `上次同步：${new Date().toLocaleTimeString()}（项目 +${s1.pNew}/更${s1.pUpd}，词条 +${s1.eNew}/更${s1.eUpd}，冲突版本保护 ${s1.conflicts}${protSuffix}）`;
@@ -4744,23 +5072,33 @@ function triggerCloudSync(silent = false) {
           render();
           if (mainSegment === 'settings') renderSettingsView();
         } else {
+          const postErrMsg = formatSyncHttpError(postCode, postBody);
+          document.getElementById('syncStatusText').textContent = '同步失败：' + postErrMsg;
+          document.getElementById('syncBadgeText').textContent = postCode > 0 ? ('HTTP ' + postCode) : '同步失败';
           updateTopbarSyncIndicator('err');
-          if (!silent) showToast('同步失败 (HTTP ' + postCode + ')');
+          if (!silent) showToast(postErrMsg);
         }
       } else if (!silent) {
         showToast('请在 Android 客户端内执行同步');
       }
     } catch (e) {
       updateTopbarSyncIndicator('err');
-      if (!silent) showToast('同步异常: ' + e.message);
+      if (!silent) showToast('同步数据解析异常：' + e.message);
     } finally {
       isSyncInFlight = false;
+      if (pendingFollowUpSync) {
+        const nextSilent = pendingFollowUpSilent;
+        pendingFollowUpSync = false;
+        pendingFollowUpSilent = true;
+        setTimeout(() => { triggerCloudSync(nextSilent); }, 150);
+      }
     }
   }, 40);
 }
 
 /* JSON Export & Import */
 function copyExportedJson() {
+  flushPendingStoreSave();
   const json = JSON.stringify(store, null, 2);
   writeSystemClipboard('PromptPanel Backup JSON', json);
   showBanner('已将完整词库 JSON 复制到系统剪贴板');
@@ -4834,10 +5172,22 @@ window.__onAppResume = function() {
 };
 
 document.addEventListener('visibilitychange', function() {
-  if (document.visibilityState === 'visible' && isAutoSyncEnabled() && getSyncCredentials().ep) {
+  if (document.visibilityState === 'hidden') {
+    flushPendingStoreSave();
+  } else if (document.visibilityState === 'visible' && isAutoSyncEnabled() && getSyncCredentials().ep) {
     triggerCloudSync(true);
   }
 });
+
+window.addEventListener('pagehide', flushPendingStoreSave);
+window.addEventListener('beforeunload', flushPendingStoreSave);
+
+const entryListScrollEl = document.getElementById('entryList');
+if (entryListScrollEl) {
+  entryListScrollEl.addEventListener('scroll', function() {
+    lastListScrollTimeMs = Date.now();
+  }, { passive: true });
+}
 
 setInterval(function() {
   if (document.visibilityState === 'visible' && isAutoSyncEnabled() && getSyncCredentials().ep) {
