@@ -167,6 +167,14 @@ final class SettingsRepository: @unchecked Sendable {
         try setBool(Constants.SettingsKey.cloudSyncEnabled, value: enabled)
     }
 
+    func isAutoUpdateEnabled() throws -> Bool {
+        try getBool(Constants.SettingsKey.autoUpdateEnabled, default: true)
+    }
+
+    func setAutoUpdateEnabled(_ enabled: Bool) throws {
+        try setBool(Constants.SettingsKey.autoUpdateEnabled, value: enabled)
+    }
+
     func getCloudSyncEndpoint() throws -> String {
         try get(Constants.SettingsKey.cloudSyncEndpoint) ?? ""
     }

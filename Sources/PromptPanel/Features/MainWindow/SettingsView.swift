@@ -512,7 +512,7 @@ private struct GeneralSettingsSection: View {
             SettingsRow(label: "呼出快捷键") {
                 HotkeyRecorderField(name: .togglePanel)
             }
-            SettingsRow(label: "登录时启动", showsDivider: false) {
+            SettingsRow(label: "登录时启动") {
                 Toggle("", isOn: Binding(
                     get: { viewModel.launchAtLoginEnabled },
                     set: { viewModel.setLaunchAtLogin($0) }
@@ -520,6 +520,35 @@ private struct GeneralSettingsSection: View {
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.small)
+            }
+            SettingsRow(label: "自动更新") {
+                Toggle("", isOn: Binding(
+                    get: { viewModel.autoUpdateEnabled },
+                    set: { viewModel.setAutoUpdateEnabled($0) }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+            }
+            SettingsRow(label: "软件版本", showsDivider: false) {
+                HStack(spacing: Design.Space.sm) {
+                    Text(viewModel.updaterStatusMessage)
+                        .font(.ui(.caption))
+                        .foregroundStyle(
+                            viewModel.hasPendingAppUpdate
+                                ? Constants.VisualStyle.accent
+                                : Constants.VisualStyle.textSecondary
+                        )
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    SettingsPillButton(
+                        viewModel.updaterActionTitle,
+                        systemImage: "arrow.triangle.2.circlepath",
+                        tone: viewModel.hasPendingAppUpdate ? .primary : .neutral
+                    ) {
+                        viewModel.checkForUpdates()
+                    }
+                }
             }
         }
     }
@@ -969,7 +998,12 @@ private struct MaintenanceSection: View {
             }
 
             actionGroup(title: "诊断与清理", columns: 3) {
-                SettingsPillButton("检查更新", systemImage: "arrow.down.circle", fillsAvailableWidth: true) {
+                SettingsPillButton(
+                    viewModel.updaterActionTitle,
+                    systemImage: "arrow.down.circle",
+                    tone: viewModel.hasPendingAppUpdate ? .primary : .neutral,
+                    fillsAvailableWidth: true
+                ) {
                     viewModel.checkForUpdates()
                 }
                 SettingsPillButton("导出诊断", systemImage: "doc.zipper", fillsAvailableWidth: true) {

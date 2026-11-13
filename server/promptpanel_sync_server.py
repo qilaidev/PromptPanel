@@ -25,24 +25,27 @@ import hmac
 import io
 import json
 import os
+import re
 import signal
 import sqlite3
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 try:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 except ImportError as _crypto_exc:  # pragma: no cover
     AESGCM = None  # type: ignore[assignment,misc]
 
-SERVER_VERSION = "2.1.0"
+SERVER_VERSION = "2.2.0"
 SCHEMA_VERSION = 2
 MAX_NAMESPACE_LOCK_CACHE = 1024
 HKDF_SALT_V2 = b"PromptPanel-HKDF-Salt-v2"
@@ -75,9 +78,14 @@ MASS_DELETE_MIN_COUNT = 3
 MASS_DELETE_RATIO_THRESHOLD = 0.25
 raw_allowed = os.environ.get("PP_SYNC_ALLOWED_TOKENS", "").strip()
 ALLOWED_TOKENS = [t.strip() for t in raw_allowed.split(",") if t.strip()]
+GITHUB_RELEASE_REPO = os.environ.get("PP_SYNC_GITHUB_REPO", "qilaidev/PromptPanel").strip() or "qilaidev/PromptPanel"
+UPDATE_CACHE_TTL_SEC = _parse_env_int("PP_SYNC_UPDATE_CACHE_TTL_SEC", 300, minimum=10, maximum=86400)
 
 _NAMESPACE_LOCKS: dict[str, threading.Lock] = {}
 _GLOBAL_LOCK = threading.Lock()
+_RELEASE_CACHE_LOCK = threading.Lock()
+_CACHED_RELEASE_MANIFEST: dict[str, Any] | None = None
+_CACHED_RELEASE_FETCHED_MONO: float = 0.0
 _SERVER_START_MONOTONIC = time.monotonic()
 _METRICS: dict[str, int] = {
     "requestsTotal": 0,
@@ -363,6 +371,230 @@ def check_storage_writable() -> bool:
         return True
     except OSError:
         return False
+
+
+_ASSET_VERSION_RE = re.compile(r"PromptPanel-([0-9]+\.[0-9]+\.[0-9]+)\+([0-9]+)-")
+
+
+def _compute_file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        while True:
+            chunk = f.read(65536)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _parse_sha256sums_text(text: str) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for line in (text or "").splitlines():
+        parts = line.strip().split()
+        if len(parts) >= 2 and len(parts[0]) == 64:
+            fname = parts[-1].lstrip("*./")
+            mapping[fname] = parts[0].lower()
+    return mapping
+
+
+def _fetch_url_bytes(url: str, timeout: float = 12.0, accept: str = "*/*") -> bytes:
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": f"PromptPanelSync/{SERVER_VERSION}",
+            "Accept": accept,
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read(2 * 1024 * 1024)
+
+
+def resolve_latest_release_manifest(force_refresh: bool = False) -> dict[str, Any]:
+    global _CACHED_RELEASE_MANIFEST, _CACHED_RELEASE_FETCHED_MONO
+    now_mono = time.monotonic()
+    with _RELEASE_CACHE_LOCK:
+        if (
+            not force_refresh
+            and _CACHED_RELEASE_MANIFEST is not None
+            and (now_mono - _CACHED_RELEASE_FETCHED_MONO) < UPDATE_CACHE_TTL_SEC
+        ):
+            return dict(_CACHED_RELEASE_MANIFEST)
+
+    local_manifest_path = DATA_DIR / "releases" / "manifest.json"
+    api_url = f"https://api.github.com/repos/{GITHUB_RELEASE_REPO}/releases/latest"
+    try:
+        raw_bytes = _fetch_url_bytes(api_url, timeout=10.0, accept="application/vnd.github+json")
+        rel = json.loads(raw_bytes.decode("utf-8"))
+        tag_name = str(rel.get("tag_name") or "").strip()
+        short_ver = tag_name.lstrip("vV")
+        build_num = 0
+        sha_map: dict[str, str] = {}
+        assets = rel.get("assets") or []
+
+        for asset in assets:
+            name = str(asset.get("name") or "")
+            dl_url = str(asset.get("browser_download_url") or "")
+            m = _ASSET_VERSION_RE.search(name)
+            if m:
+                short_ver = m.group(1)
+                build_num = int(m.group(2))
+            if name == "SHA256SUMS.txt" and dl_url:
+                try:
+                    sums_text = _fetch_url_bytes(dl_url, timeout=10.0).decode("utf-8", errors="replace")
+                    sha_map = _parse_sha256sums_text(sums_text)
+                except Exception:
+                    pass
+
+        macos_zip_info: dict[str, Any] | None = None
+        macos_dmg_info: dict[str, Any] | None = None
+        android_apk_info: dict[str, Any] | None = None
+
+        for asset in assets:
+            name = str(asset.get("name") or "")
+            dl_url = str(asset.get("browser_download_url") or "")
+            size_bytes = _safe_int(asset.get("size"), 0)
+            if not name or not dl_url:
+                continue
+            digest = str(asset.get("digest") or "")
+            if digest.startswith("sha256:") and len(digest) == 71:
+                asset_sha = digest[7:].lower()
+            else:
+                asset_sha = sha_map.get(name, "")
+
+            if name.endswith("-macos.zip"):
+                macos_zip_info = {
+                    "name": name,
+                    "size": size_bytes,
+                    "sha256": asset_sha,
+                    "githubUrl": dl_url,
+                    "mirrorPath": "/v1/update/download/macos.zip",
+                }
+            elif name.endswith("-macos.dmg"):
+                macos_dmg_info = {
+                    "name": name,
+                    "size": size_bytes,
+                    "sha256": asset_sha,
+                    "githubUrl": dl_url,
+                    "mirrorPath": "/v1/update/download/macos.dmg",
+                }
+            elif name.endswith("-android.apk"):
+                android_apk_info = {
+                    "name": name,
+                    "size": size_bytes,
+                    "sha256": asset_sha,
+                    "githubUrl": dl_url,
+                    "mirrorPath": "/v1/update/download/android.apk",
+                }
+
+        manifest = {
+            "repository": GITHUB_RELEASE_REPO,
+            "tag": tag_name,
+            "version": short_ver,
+            "build": build_num,
+            "publishedAt": str(rel.get("published_at") or ""),
+            "releaseUrl": str(rel.get("html_url") or f"https://github.com/{GITHUB_RELEASE_REPO}/releases/latest"),
+            "notes": str(rel.get("body") or "")[:4000],
+            "macosZip": macos_zip_info,
+            "macosDmg": macos_dmg_info,
+            "androidApk": android_apk_info,
+            "checkedAt": utc_now_iso(),
+        }
+
+        try:
+            rel_dir = DATA_DIR / "releases"
+            rel_dir.mkdir(parents=True, exist_ok=True)
+            tmp_mf = rel_dir / ".manifest.json.tmp"
+            tmp_mf.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp_mf.replace(local_manifest_path)
+        except OSError:
+            pass
+
+        with _RELEASE_CACHE_LOCK:
+            _CACHED_RELEASE_MANIFEST = manifest
+            _CACHED_RELEASE_FETCHED_MONO = time.monotonic()
+        return dict(manifest)
+    except Exception as exc:
+        with _RELEASE_CACHE_LOCK:
+            if _CACHED_RELEASE_MANIFEST is not None:
+                return dict(_CACHED_RELEASE_MANIFEST)
+        if local_manifest_path.exists():
+            try:
+                loaded = json.loads(local_manifest_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict) and loaded.get("version"):
+                    with _RELEASE_CACHE_LOCK:
+                        _CACHED_RELEASE_MANIFEST = loaded
+                        _CACHED_RELEASE_FETCHED_MONO = time.monotonic()
+                    return dict(loaded)
+            except Exception:
+                pass
+        raise RuntimeError(f"Failed to query latest release manifest: {exc}") from exc
+
+
+def ensure_cached_release_asset(asset_info: dict[str, Any]) -> Path:
+    name = Path(str(asset_info.get("name") or "")).name
+    github_url = str(asset_info.get("githubUrl") or "")
+    expected_sha = str(asset_info.get("sha256") or "").lower().strip()
+    if not name or not github_url:
+        raise ValueError("Incomplete release asset metadata")
+
+    rel_dir = DATA_DIR / "releases"
+    rel_dir.mkdir(parents=True, exist_ok=True)
+    target_path = rel_dir / name
+
+    if target_path.exists():
+        if not expected_sha or _compute_file_sha256(target_path) == expected_sha:
+            return target_path
+
+    with _RELEASE_CACHE_LOCK:
+        if target_path.exists():
+            if not expected_sha or _compute_file_sha256(target_path) == expected_sha:
+                return target_path
+            try:
+                target_path.unlink()
+            except OSError:
+                pass
+
+        tmp_path = rel_dir / f".{name}.{uuid.uuid4().hex[:8]}.tmp"
+        req = urllib.request.Request(
+            github_url,
+            headers={"User-Agent": f"PromptPanelSync/{SERVER_VERSION}"},
+        )
+        hasher = hashlib.sha256()
+        try:
+            with urllib.request.urlopen(req, timeout=60.0) as resp, tmp_path.open("wb") as out_f:
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    out_f.write(chunk)
+                    hasher.update(chunk)
+            actual_sha = hasher.hexdigest().lower()
+            if expected_sha and actual_sha != expected_sha:
+                raise ValueError(f"SHA-256 mismatch for {name}: expected {expected_sha}, got {actual_sha}")
+            tmp_path.replace(target_path)
+        except Exception:
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except OSError:
+                pass
+            raise
+
+        # Prune older cached binaries of the same suffix to keep disk bounded
+        suffix_key = "-android.apk" if name.endswith("-android.apk") else (
+            "-macos.zip" if name.endswith("-macos.zip") else (
+                "-macos.dmg" if name.endswith("-macos.dmg") else ""
+            )
+        )
+        if suffix_key:
+            for old_file in rel_dir.glob(f"*{suffix_key}"):
+                if old_file.name != name:
+                    try:
+                        old_file.unlink()
+                    except OSError:
+                        pass
+
+    return target_path
 
 
 def _get_field(obj: dict[str, Any], camel_key: str, snake_key: str, default: Any = None) -> Any:
@@ -951,6 +1183,63 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                     "serverTime": utc_now_iso(),
                 },
             )
+            return
+
+        if path in ("/update", "/v1/update"):
+            qs = parse_qs(parsed.query)
+            force_flag = qs.get("force", ["0"])[0] in ("1", "true", "yes")
+            try:
+                manifest = resolve_latest_release_manifest(force_refresh=force_flag)
+                self._send_json(HTTPStatus.OK, manifest)
+            except Exception as exc:
+                self._send_json(HTTPStatus.BAD_GATEWAY, {"error": str(exc)})
+            return
+
+        if path in (
+            "/download/android",
+            "/v1/update/download/android.apk",
+            "/download/macos",
+            "/v1/update/download/macos.zip",
+            "/download/dmg",
+            "/v1/update/download/macos.dmg",
+        ):
+            try:
+                manifest = resolve_latest_release_manifest(force_refresh=False)
+                if path in ("/download/android", "/v1/update/download/android.apk"):
+                    asset_info = manifest.get("androidApk")
+                    content_type = "application/vnd.android.package-archive"
+                elif path in ("/download/dmg", "/v1/update/download/macos.dmg"):
+                    asset_info = manifest.get("macosDmg")
+                    content_type = "application/x-apple-diskimage"
+                else:
+                    asset_info = manifest.get("macosZip")
+                    content_type = "application/zip"
+
+                if not isinstance(asset_info, dict) or not asset_info.get("name"):
+                    self._send_json(HTTPStatus.NOT_FOUND, {"error": "Requested platform release asset not found"})
+                    return
+
+                cached_file = ensure_cached_release_asset(asset_info)
+                file_size = cached_file.stat().st_size
+                safe_filename = Path(str(asset_info["name"])).name
+
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(file_size))
+                self.send_header("Content-Disposition", f'attachment; filename="{safe_filename}"')
+                if asset_info.get("sha256"):
+                    self.send_header("X-PromptPanel-SHA256", str(asset_info["sha256"]))
+                self.end_headers()
+                with cached_file.open("rb") as f:
+                    while True:
+                        chunk = f.read(65536)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            except Exception as exc:
+                self._send_json(HTTPStatus.BAD_GATEWAY, {"error": f"Release asset download failed: {exc}"})
             return
 
         if path not in ("/", "/sync", "/v1/sync", "/v1/promptpanel"):

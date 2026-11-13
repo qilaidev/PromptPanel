@@ -93,6 +93,16 @@ final class StorageMaintenanceService: @unchecked Sendable {
         return backupURL
     }
 
+    /// Automatic safety snapshot created immediately before installing a self-update.
+    @discardableResult
+    func createUpdateSafetyBackup() throws -> URL {
+        try ensureStorageDirectories()
+        try checkpointWal()
+        let backupURL = try createBackup(reason: "update")
+        try pruneCollectableBackups()
+        return backupURL
+    }
+
     /// Creates a throttled pre-sync safety snapshot so high-frequency auto-syncs (every 2.5s)
     /// do not flood the disk or evict historical backups, while still guaranteeing a clean
     /// local restore point before remote mutations or anomaly circuit-breaker events.
@@ -122,6 +132,7 @@ final class StorageMaintenanceService: @unchecked Sendable {
     private func pruneCollectableBackups() throws {
         try pruneBackups(reason: "launch", keeping: Constants.automaticBackupRetentionCount)
         try pruneBackups(reason: "import", keeping: Constants.importBackupRetentionCount)
+        try pruneBackups(reason: "update", keeping: Constants.importBackupRetentionCount)
         try pruneBackups(reason: "sync", keeping: Constants.syncBackupRetentionCount)
         try pruneBackups(reason: "sync-guard", keeping: Constants.syncGuardBackupRetentionCount)
     }

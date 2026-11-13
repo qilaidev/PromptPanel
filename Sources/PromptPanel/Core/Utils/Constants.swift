@@ -263,6 +263,7 @@ enum Constants {
         static let cloudSyncEndpoint = "cloud_sync_endpoint"
         static let cloudSyncApiKey = "cloud_sync_api_key"
         static let cloudSyncEnabled = "cloud_sync_enabled"
+        static let autoUpdateEnabled = "auto_update_enabled"
     }
 
     // MARK: - Entry Types

@@ -5,11 +5,13 @@ import Cocoa
 final class TrayManager {
 
     private var statusItem: NSStatusItem?
+    private var checkUpdateItem: NSMenuItem?
     private let onToggleQuickPanel: () -> Void
     private let onQuickNoteFromClipboard: () -> Void
     private let onOpenMainWindow: () -> Void
     private let onOpenReferenceWindow: () -> Void
     private let onOpenSettings: () -> Void
+    private let onCheckForUpdates: () -> Void
     private let onQuit: () -> Void
 
     init(
@@ -18,6 +20,7 @@ final class TrayManager {
         onOpenMainWindow: @escaping () -> Void,
         onOpenReferenceWindow: @escaping () -> Void = {},
         onOpenSettings: @escaping () -> Void = {},
+        onCheckForUpdates: @escaping () -> Void = {},
         onQuit: @escaping () -> Void
     ) {
         self.onToggleQuickPanel = onToggleQuickPanel
@@ -25,6 +28,7 @@ final class TrayManager {
         self.onOpenMainWindow = onOpenMainWindow
         self.onOpenReferenceWindow = onOpenReferenceWindow
         self.onOpenSettings = onOpenSettings
+        self.onCheckForUpdates = onCheckForUpdates
         self.onQuit = onQuit
     }
 
@@ -64,6 +68,11 @@ final class TrayManager {
         settingsItem.target = self
         menu.addItem(settingsItem)
 
+        let updateItem = NSMenuItem(title: "检查更新…", action: #selector(handleCheckUpdates), keyEquivalent: "")
+        updateItem.target = self
+        menu.addItem(updateItem)
+        self.checkUpdateItem = updateItem
+
         menu.addItem(NSMenuItem.separator())
 
         let quitItem = NSMenuItem(title: "退出 PromptPanel", action: #selector(handleQuit), keyEquivalent: "q")
@@ -72,6 +81,10 @@ final class TrayManager {
 
         statusItem?.menu = menu
         PPLogger.tray.info("Tray setup complete")
+    }
+
+    func updateCheckMenuItemTitle(_ title: String) {
+        checkUpdateItem?.title = title
     }
 
     @objc private func handleTogglePanel() {
@@ -92,6 +105,10 @@ final class TrayManager {
 
     @objc private func handleOpenSettings() {
         onOpenSettings()
+    }
+
+    @objc private func handleCheckUpdates() {
+        onCheckForUpdates()
     }
 
     @objc private func handleQuit() {

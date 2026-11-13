@@ -354,6 +354,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             dbQueue: databaseManager.dbQueue,
             storageMaintenanceService: storageMaintenanceService
         )
+        updaterService.autoUpdateEnabled = (try? settingsRepository.isAutoUpdateEnabled()) ?? true
+        updaterService.syncEndpointProvider = { [weak self] in
+            (try? self?.settingsRepository?.getCloudSyncEndpoint()) ?? ""
+        }
+        updaterService.preInstallBackupHandler = { [weak self] in
+            self?.mainWindowViewModel?.flushPendingInlineChangesIfNeeded()
+            _ = try? self?.storageMaintenanceService?.createUpdateSafetyBackup()
+        }
+        updaterService.canAutoInstallSilentlyProvider = { [weak self] in
+            guard let self else { return false }
+            let panelVisible = self.appState?.isPanelVisible ?? false
+            let mainVisible = self.mainWindow?.isVisible ?? false
+            let refVisible = self.referenceWindow?.isVisible ?? false
+            return !panelVisible && !mainVisible && !refVisible
+        }
+        updaterService.onUpdateStateChanged = { [weak self] phase in
+            guard let self else { return }
+            self.mainWindowViewModel?.refreshUpdaterStatus()
+            switch phase {
+            case .updateAvailable(let ver, _):
+                self.trayManager?.updateCheckMenuItemTitle("一键更新至 v\(ver)…")
+            case .readyToInstall(let ver, _):
+                self.trayManager?.updateCheckMenuItemTitle("立即重启升至 v\(ver)…")
+                self.mainWindowViewModel?.bannerMessage = "新版本 v\(ver) 已下载校验就绪，可在设置或菜单栏一键重启更新。"
+            default:
+                self.trayManager?.updateCheckMenuItemTitle("检查更新…")
+            }
+        }
 
         let initializedProjectRepository = projectRepository!
         let defaultProject = try initializedProjectRepository.fetchDefault()
@@ -505,6 +533,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             },
             onOpenSettings: { [weak self] in
                 self?.openMainWindow(targetTab: .settings)
+            },
+            onCheckForUpdates: { [weak self] in
+                guard let self else { return }
+                let msg = self.updaterService.checkForUpdates()
+                self.mainWindowViewModel?.bannerMessage = msg
+                self.toastService?.show(message: msg, isSuccess: true)
             },
             onQuit: {
                 NSApp.terminate(nil)

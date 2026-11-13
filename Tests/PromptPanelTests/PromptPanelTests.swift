@@ -348,6 +348,28 @@ public enum CoreTestSuite {
             try settingsRepo.setAppTheme(.dark)
             try check(try settingsRepo.getAppTheme() == .dark)
 
+            // Auto-update setting defaults to true and persists toggles
+            try check(try settingsRepo.isAutoUpdateEnabled() == true)
+            try settingsRepo.setAutoUpdateEnabled(false)
+            try check(try settingsRepo.isAutoUpdateEnabled() == false)
+            try settingsRepo.setAutoUpdateEnabled(true)
+            try check(try settingsRepo.isAutoUpdateEnabled() == true)
+
+            // UpdaterService pure semver+build comparison & mirror endpoint resolution
+            try check(UpdaterService.isNewerVersion(remoteVersion: "1.7.2", remoteBuild: 13, localVersion: "1.7.1", localBuild: 12))
+            try check(UpdaterService.isNewerVersion(remoteVersion: "1.7.2", remoteBuild: 14, localVersion: "1.7.2", localBuild: 13))
+            try check(!UpdaterService.isNewerVersion(remoteVersion: "1.7.2", remoteBuild: 13, localVersion: "1.7.2", localBuild: 13))
+            try check(!UpdaterService.isNewerVersion(remoteVersion: "1.6.0", remoteBuild: 10, localVersion: "1.7.2", localBuild: 13))
+            try check(
+                UpdaterService.resolvedUpdateURL(fromSyncEndpoint: "https://sync.example.com:18787/v1/sync", forceRefresh: true)?.absoluteString
+                    == "https://sync.example.com:18787/v1/update?force=1"
+            )
+            try check(
+                UpdaterService.resolvedUpdateURL(fromSyncEndpoint: "http://192.168.1.10:18787/", forceRefresh: false)?.absoluteString
+                    == "http://192.168.1.10:18787/v1/update"
+            )
+            try check(UpdaterService.resolvedUpdateURL(fromSyncEndpoint: "/tmp/local-sync.json") == nil)
+
             let screen = NSRect(x: 0, y: 0, width: 1280, height: 800)
             let fitted = Constants.WindowPlacement.fittedSize(
                 NSSize(width: 1600, height: 900),

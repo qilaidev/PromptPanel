@@ -179,6 +179,9 @@ final class MainWindowViewModel: ObservableObject {
     @Published private(set) var executionHealthSummary: LogRepository.HealthSummary?
     @Published private(set) var updaterStatusMessage: String = "自动更新未初始化。"
     @Published private(set) var canCheckForUpdates: Bool = false
+    @Published var autoUpdateEnabled: Bool = true
+    @Published private(set) var updaterActionTitle: String = "检查更新"
+    @Published private(set) var hasPendingAppUpdate: Bool = false
     @Published private(set) var currentProjectId: String = ""
     @Published var selectedTab: Tab = .library {
         didSet {
@@ -463,6 +466,8 @@ final class MainWindowViewModel: ObservableObject {
         self.inlineSession.onFieldMutation = { [weak self] in
             self?.handleInlineDraftFieldMutation()
         }
+        self.autoUpdateEnabled = (try? settingsRepository.isAutoUpdateEnabled()) ?? true
+        refreshUpdaterStatus()
         refreshCloudSyncState()
         updateAutoCloudSyncPollTimer()
 
@@ -1449,6 +1454,21 @@ final class MainWindowViewModel: ObservableObject {
     func refreshUpdaterStatus() {
         updaterStatusMessage = updaterService.statusMessage
         canCheckForUpdates = updaterService.canCheckForUpdates
+        updaterActionTitle = updaterService.actionButtonTitle
+        hasPendingAppUpdate = updaterService.hasPendingUpdate
+    }
+
+    func setAutoUpdateEnabled(_ enabled: Bool) {
+        autoUpdateEnabled = enabled
+        do {
+            try settingsRepository.setAutoUpdateEnabled(enabled)
+            updaterService.autoUpdateEnabled = enabled
+            refreshUpdaterStatus()
+            bannerMessage = enabled ? "已开启自动检查与后台静默更新。" : "已关闭自动更新，仍可随时点击一键更新。"
+        } catch {
+            PPLogger.updater.error("Failed to persist auto update preference: \(error.localizedDescription)")
+            bannerMessage = "保存自动更新设置失败，请重试。"
+        }
     }
 
     func cleanupLogs(olderThanDays days: Int = 30) {
@@ -2932,6 +2952,15 @@ final class MainWindowViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _, _ in
                 self?.syncCurrentProjectId()
+            }
+            .store(in: &cancellables)
+
+        updaterService.$phase
+            .combineLatest(updaterService.$canCheckForUpdates)
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _, _ in
+                self?.refreshUpdaterStatus()
             }
             .store(in: &cancellables)
 
