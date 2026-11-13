@@ -1848,7 +1848,7 @@
       </div>
       <div class="health-inline">
         <span class="status-dot"></span>
-        <span id="healthInlineText">SQLite WAL · KeyStore AES-256 · v1.7.2 (13)</span>
+        <span id="healthInlineText">SQLite WAL · KeyStore AES-256 · v1.7.3 (14)</span>
       </div>
     </div>
 
@@ -1886,7 +1886,7 @@
       <div class="settings-card">
         <div class="settings-card-header">
           <span class="settings-card-title">版本与一键更新</span>
-          <span id="updateVersionBadge" class="kbd-badge">v1.7.2 (13)</span>
+          <span id="updateVersionBadge" class="kbd-badge">v1.7.3 (14)</span>
         </div>
         <div class="settings-row" style="padding:4px 0 10px;">
           <div>
@@ -1899,7 +1899,7 @@
           <button id="checkUpdatePrimaryBtn" class="btn-primary" style="flex:1;" onclick="onTapCheckOrInstallUpdate()">检查并一键更新</button>
           <button class="btn-secondary" onclick="copyDirectAndroidDownloadLink()">复制安装包直链</button>
         </div>
-        <div id="appUpdateStatusText" style="margin-top:8px;font-family:var(--font-mono);font-size:11px;color:var(--text-sub);line-height:1.45;">当前版本 v1.7.2 (13) · 已启用后台自动预下载</div>
+        <div id="appUpdateStatusText" style="margin-top:8px;font-family:var(--font-mono);font-size:11px;color:var(--text-sub);line-height:1.45;">当前版本 v1.7.3 (14) · 已启用后台自动预下载</div>
       </div>
 
       <div class="settings-card">
@@ -4028,7 +4028,7 @@ function hydrateSyncInputsFromStorage() {
   updateTopbarSyncIndicator();
 }
 
-let appUpdatePhase = { state: 'idle', version: '1.7.2', build: 13, message: '' };
+let appUpdatePhase = { state: 'idle', version: '1.7.3', build: 14, message: '' };
 let lastAutoUpdateCheckMs = 0;
 
 function getInstalledAppVersionLabel() {
@@ -4040,7 +4040,7 @@ function getInstalledAppVersionLabel() {
     }
     if (raw) return 'v' + raw;
   }
-  return 'v1.7.2 (13)';
+  return 'v1.7.3 (14)';
 }
 
 function isAutoUpdateEnabled() {

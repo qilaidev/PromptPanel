@@ -6,6 +6,14 @@ The format is based on Keep a Changelog, and this project uses Conventional Comm
 
 ## [Unreleased]
 
+## [1.7.3] - 2026-11-13
+
+macOS 空白设置窗口根治与原生菜单栏接管补丁版本（`1.7.3+14`）。彻底消除桌面端偶发或重开应用时弹出的空白「“项目快贴”设置」窗口。
+
+### Fixed
+
+- **彻底移除 SwiftUI 空壳 `Settings { EmptyView() }` 场景，根治空白「“项目快贴”设置」窗口弹出问题（`PromptPanelApp` / `AppDelegate` / `PanelService` / `QuickPanelViewModel`）。** 原应用入口通过 SwiftUI `App` 注册了占位的 `Settings { EmptyView() }` 场景，导致在快捷面板激活态按 `⌘,`、通过系统重开/唤醒实例（`open -a`）或触发 macOS 窗口状态恢复（`NSWindow Frame com_apple_SwiftUI_Settings_window` / `Saved Application State`）时，系统自动弹出 `900×450` 的空白「“项目快贴”设置」窗口。现已切换为纯原生 `NSApplication.shared` + `AppDelegate` 生命周期：启动时自动清理历史残留的空白窗口 Frame 与 `Saved Application State`，所有窗口与面板统一标记 `isRestorable = false` 并禁用系统窗口状态恢复；同时由 `AppDelegate.setupMainMenu()` 原生接管顶部菜单栏（完整保留文本框 `⌘Z / ⇧⌘Z / ⌘X / ⌘C / ⌘V / ⌘A` 响应链与窗口 `⌘W / ⌘M` 快捷键），将全局及快捷面板内的 `⌘,` 与应用重开请求统一路由至真实主界面的「设置」或「内容库」视图。
+
 ## [1.7.2] - 2026-11-13
 
 跨端一键更新与后台自动更新版本（`1.7.2+13`）。打通 macOS 桌面端、Android 移动端与自托管同步服务端的双源（同步节点镜像优先 + GitHub Releases 兜底）SHA-256 校验更新闭环，告别手动翻找安装包与覆盖拖拽。
