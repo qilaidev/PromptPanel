@@ -99,42 +99,113 @@ struct Entry: Identifiable, Codable, Equatable {
         let camelContainer = try decoder.container(keyedBy: CamelCodingKeys.self)
         let decodedContent = try container.decode(String.self, forKey: .content)
         self.id = try container.decode(String.self, forKey: .id)
-        if let pid = try? container.decodeIfPresent(String.self, forKey: .projectId) {
-            self.projectId = pid
-        } else {
-            self.projectId = try camelContainer.decode(String.self, forKey: .projectId)
+
+        let snakeUpdatedAt = try? container.decodeIfPresent(Date.self, forKey: .updatedAt)
+        let camelUpdatedAt = try? camelContainer.decodeIfPresent(Date.self, forKey: .updatedAt)
+        let preferCamel: Bool = {
+            if let s = snakeUpdatedAt, let c = camelUpdatedAt {
+                return c > s
+            }
+            return camelUpdatedAt != nil && snakeUpdatedAt == nil
+        }()
+
+        func resolveRequiredString(_ snakeKey: CodingKeys, _ camelKey: CamelCodingKeys) throws -> String {
+            if preferCamel {
+                if let val = try? camelContainer.decodeIfPresent(String.self, forKey: camelKey) {
+                    return val
+                }
+                return try container.decode(String.self, forKey: snakeKey)
+            } else {
+                if let val = try? container.decodeIfPresent(String.self, forKey: snakeKey) {
+                    return val
+                }
+                return try camelContainer.decode(String.self, forKey: camelKey)
+            }
         }
+
+        func resolveBool(_ snakeKey: CodingKeys, _ camelKey: CamelCodingKeys, default fallback: Bool = false) -> Bool {
+            if preferCamel {
+                return (try? camelContainer.decodeIfPresent(Bool.self, forKey: camelKey))
+                    ?? (try? container.decodeIfPresent(Bool.self, forKey: snakeKey))
+                    ?? fallback
+            } else {
+                return (try? container.decodeIfPresent(Bool.self, forKey: snakeKey))
+                    ?? (try? camelContainer.decodeIfPresent(Bool.self, forKey: camelKey))
+                    ?? fallback
+            }
+        }
+
+        func resolveInt(_ snakeKey: CodingKeys, _ camelKey: CamelCodingKeys, default fallback: Int = 0) -> Int {
+            if preferCamel {
+                return (try? camelContainer.decodeIfPresent(Int.self, forKey: camelKey))
+                    ?? (try? container.decodeIfPresent(Int.self, forKey: snakeKey))
+                    ?? fallback
+            } else {
+                return (try? container.decodeIfPresent(Int.self, forKey: snakeKey))
+                    ?? (try? camelContainer.decodeIfPresent(Int.self, forKey: camelKey))
+                    ?? fallback
+            }
+        }
+
+        func resolveOptionalDate(_ snakeKey: CodingKeys, _ camelKey: CamelCodingKeys) -> Date? {
+            if preferCamel {
+                if camelContainer.contains(camelKey) {
+                    return try? camelContainer.decodeIfPresent(Date.self, forKey: camelKey)
+                }
+                return try? container.decodeIfPresent(Date.self, forKey: snakeKey)
+            } else {
+                if container.contains(snakeKey) {
+                    return try? container.decodeIfPresent(Date.self, forKey: snakeKey)
+                }
+                return try? camelContainer.decodeIfPresent(Date.self, forKey: camelKey)
+            }
+        }
+
+        func resolveOptionalString(_ snakeKey: CodingKeys, _ camelKey: CamelCodingKeys) -> String? {
+            if preferCamel {
+                if camelContainer.contains(camelKey) {
+                    return try? camelContainer.decodeIfPresent(String.self, forKey: camelKey)
+                }
+                return try? container.decodeIfPresent(String.self, forKey: snakeKey)
+            } else {
+                if container.contains(snakeKey) {
+                    return try? container.decodeIfPresent(String.self, forKey: snakeKey)
+                }
+                return try? camelContainer.decodeIfPresent(String.self, forKey: camelKey)
+            }
+        }
+
+        self.projectId = try resolveRequiredString(.projectId, .projectId)
         self.title = try container.decode(String.self, forKey: .title)
         self.content = decodedContent
         self.type = (try? container.decodeIfPresent(String.self, forKey: .type)) ?? Constants.EntryType.prompt.rawValue
-        self.isPinned = (try? container.decodeIfPresent(Bool.self, forKey: .isPinned))
-            ?? (try? camelContainer.decodeIfPresent(Bool.self, forKey: .isPinned))
-            ?? false
-        self.isCompleted = (try? container.decodeIfPresent(Bool.self, forKey: .isCompleted))
-            ?? (try? camelContainer.decodeIfPresent(Bool.self, forKey: .isCompleted))
-            ?? false
-        self.sortOrder = (try? container.decodeIfPresent(Int.self, forKey: .sortOrder))
-            ?? (try? camelContainer.decodeIfPresent(Int.self, forKey: .sortOrder))
-            ?? 0
-        self.useCount = (try? container.decodeIfPresent(Int.self, forKey: .useCount))
-            ?? (try? camelContainer.decodeIfPresent(Int.self, forKey: .useCount))
-            ?? 0
-        self.lastUsedAt = (try? container.decodeIfPresent(Date.self, forKey: .lastUsedAt))
-            ?? (try? camelContainer.decodeIfPresent(Date.self, forKey: .lastUsedAt))
+        self.isPinned = resolveBool(.isPinned, .isPinned, default: false)
+        self.isCompleted = resolveBool(.isCompleted, .isCompleted, default: false)
+        self.sortOrder = resolveInt(.sortOrder, .sortOrder, default: 0)
+        let snakeUse = (try? container.decodeIfPresent(Int.self, forKey: .useCount)) ?? 0
+        let camelUse = (try? camelContainer.decodeIfPresent(Int.self, forKey: .useCount)) ?? 0
+        self.useCount = max(snakeUse, camelUse)
+        let snakeLastUsed = try? container.decodeIfPresent(Date.self, forKey: .lastUsedAt)
+        let camelLastUsed = try? camelContainer.decodeIfPresent(Date.self, forKey: .lastUsedAt)
+        if let s = snakeLastUsed, let c = camelLastUsed {
+            self.lastUsedAt = max(s, c)
+        } else {
+            self.lastUsedAt = camelLastUsed ?? snakeLastUsed
+        }
         if let createdAt = try? container.decodeIfPresent(Date.self, forKey: .createdAt) {
             self.createdAt = createdAt
         } else {
             self.createdAt = try camelContainer.decode(Date.self, forKey: .createdAt)
         }
-        if let updatedAt = try? container.decodeIfPresent(Date.self, forKey: .updatedAt) {
-            self.updatedAt = updatedAt
+        if let s = snakeUpdatedAt, let c = camelUpdatedAt {
+            self.updatedAt = max(s, c)
+        } else if let s = snakeUpdatedAt {
+            self.updatedAt = s
         } else {
             self.updatedAt = try camelContainer.decode(Date.self, forKey: .updatedAt)
         }
-        self.deletedAt = (try? container.decodeIfPresent(Date.self, forKey: .deletedAt))
-            ?? (try? camelContainer.decodeIfPresent(Date.self, forKey: .deletedAt))
-        self.sourceEntryId = (try? container.decodeIfPresent(String.self, forKey: .sourceEntryId))
-            ?? (try? camelContainer.decodeIfPresent(String.self, forKey: .sourceEntryId))
+        self.deletedAt = resolveOptionalDate(.deletedAt, .deletedAt)
+        self.sourceEntryId = resolveOptionalString(.sourceEntryId, .sourceEntryId)
         self.tags = Entry.normalizeTags((try? container.decode([String].self, forKey: .tags)) ?? [])
         self.previewLine = Entry.makePreviewLine(from: decodedContent)
     }

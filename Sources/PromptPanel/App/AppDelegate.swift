@@ -321,6 +321,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard permissionService != nil else { return }
         refreshPermissionState()
         mainWindowViewModel?.refreshPermissionState()
+        mainWindowViewModel?.triggerOpportunisticCloudSyncIfNeeded(minIntervalSeconds: 15)
     }
 
     private func initializeDependencies() throws {
@@ -470,6 +471,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         panelService.onWillShow = { [weak self] in
             self?.quickPanelViewModel.prepareForPresentation()
+            self?.mainWindowViewModel?.triggerOpportunisticCloudSyncIfNeeded(minIntervalSeconds: 15)
         }
         panelService.onDidStabilizeActivation = { [weak self] in
             self?.quickPanelViewModel.retryFocusAfterActivationStabilized()

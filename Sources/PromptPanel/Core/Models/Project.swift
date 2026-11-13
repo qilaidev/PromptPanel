@@ -130,33 +130,86 @@ struct Project: Identifiable, Codable, Equatable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let camelContainer = try decoder.container(keyedBy: CamelCodingKeys.self)
-        let isDefault = (try? container.decodeIfPresent(Bool.self, forKey: .isDefault))
-            ?? (try? camelContainer.decodeIfPresent(Bool.self, forKey: .isDefault))
-            ?? false
-        let rawKind = (try? container.decodeIfPresent(String.self, forKey: .groupKind))
-            ?? (try? camelContainer.decodeIfPresent(String.self, forKey: .groupKindRaw))
-            ?? (try? camelContainer.decodeIfPresent(String.self, forKey: .groupKind))
+
+        let snakeUpdatedAt = try? container.decodeIfPresent(Date.self, forKey: .updatedAt)
+        let camelUpdatedAt = try? camelContainer.decodeIfPresent(Date.self, forKey: .updatedAt)
+        let preferCamel: Bool = {
+            if let s = snakeUpdatedAt, let c = camelUpdatedAt {
+                return c > s
+            }
+            return camelUpdatedAt != nil && snakeUpdatedAt == nil
+        }()
+
+        let isDefault: Bool = {
+            if preferCamel {
+                return (try? camelContainer.decodeIfPresent(Bool.self, forKey: .isDefault))
+                    ?? (try? container.decodeIfPresent(Bool.self, forKey: .isDefault))
+                    ?? false
+            }
+            return (try? container.decodeIfPresent(Bool.self, forKey: .isDefault))
+                ?? (try? camelContainer.decodeIfPresent(Bool.self, forKey: .isDefault))
+                ?? false
+        }()
+
+        let rawKind: String? = {
+            if preferCamel {
+                return (try? camelContainer.decodeIfPresent(String.self, forKey: .groupKindRaw))
+                    ?? (try? camelContainer.decodeIfPresent(String.self, forKey: .groupKind))
+                    ?? (try? container.decodeIfPresent(String.self, forKey: .groupKind))
+            }
+            return (try? container.decodeIfPresent(String.self, forKey: .groupKind))
+                ?? (try? camelContainer.decodeIfPresent(String.self, forKey: .groupKindRaw))
+                ?? (try? camelContainer.decodeIfPresent(String.self, forKey: .groupKind))
+        }()
+
         self.id = try container.decode(String.self, forKey: .id)
         self.name = try container.decode(String.self, forKey: .name)
         self.isDefault = isDefault
         self.groupKind = GroupKind.resolve(rawKind, isDefault: isDefault)
-        self.isArchived = (try? container.decodeIfPresent(Bool.self, forKey: .isArchived))
-            ?? (try? camelContainer.decodeIfPresent(Bool.self, forKey: .isArchived))
-            ?? false
-        self.iconName = (try? container.decodeIfPresent(String.self, forKey: .iconName))
-            ?? (try? camelContainer.decodeIfPresent(String.self, forKey: .iconName))
+        if preferCamel {
+            self.isArchived = (try? camelContainer.decodeIfPresent(Bool.self, forKey: .isArchived))
+                ?? (try? container.decodeIfPresent(Bool.self, forKey: .isArchived))
+                ?? false
+            if camelContainer.contains(.iconName) {
+                self.iconName = try? camelContainer.decodeIfPresent(String.self, forKey: .iconName)
+            } else {
+                self.iconName = try? container.decodeIfPresent(String.self, forKey: .iconName)
+            }
+        } else {
+            self.isArchived = (try? container.decodeIfPresent(Bool.self, forKey: .isArchived))
+                ?? (try? camelContainer.decodeIfPresent(Bool.self, forKey: .isArchived))
+                ?? false
+            if container.contains(.iconName) {
+                self.iconName = try? container.decodeIfPresent(String.self, forKey: .iconName)
+            } else {
+                self.iconName = try? camelContainer.decodeIfPresent(String.self, forKey: .iconName)
+            }
+        }
         if let createdAt = try? container.decodeIfPresent(Date.self, forKey: .createdAt) {
             self.createdAt = createdAt
         } else {
             self.createdAt = try camelContainer.decode(Date.self, forKey: .createdAt)
         }
-        if let updatedAt = try? container.decodeIfPresent(Date.self, forKey: .updatedAt) {
-            self.updatedAt = updatedAt
+        if let s = snakeUpdatedAt, let c = camelUpdatedAt {
+            self.updatedAt = max(s, c)
+        } else if let s = snakeUpdatedAt {
+            self.updatedAt = s
         } else {
             self.updatedAt = try camelContainer.decode(Date.self, forKey: .updatedAt)
         }
-        self.deletedAt = (try? container.decodeIfPresent(Date.self, forKey: .deletedAt))
-            ?? (try? camelContainer.decodeIfPresent(Date.self, forKey: .deletedAt))
+        if preferCamel {
+            if camelContainer.contains(.deletedAt) {
+                self.deletedAt = try? camelContainer.decodeIfPresent(Date.self, forKey: .deletedAt)
+            } else {
+                self.deletedAt = try? container.decodeIfPresent(Date.self, forKey: .deletedAt)
+            }
+        } else {
+            if container.contains(.deletedAt) {
+                self.deletedAt = try? container.decodeIfPresent(Date.self, forKey: .deletedAt)
+            } else {
+                self.deletedAt = try? camelContainer.decodeIfPresent(Date.self, forKey: .deletedAt)
+            }
+        }
     }
 }
 

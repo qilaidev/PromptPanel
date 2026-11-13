@@ -1,3 +1,5 @@
+import AppKit
+import CoreImage.CIFilterBuiltins
 import KeyboardShortcuts
 import SwiftUI
 
@@ -1222,10 +1224,7 @@ private struct CloudSyncSection: View {
             SettingsRow(label: "自动同步") {
                 Toggle("", isOn: Binding(
                     get: { viewModel.cloudSyncEnabled },
-                    set: {
-                        viewModel.cloudSyncEnabled = $0
-                        viewModel.saveCloudSyncSettings()
-                    }
+                    set: { viewModel.setCloudSyncEnabled($0) }
                 ))
                 .labelsHidden()
                 .toggleStyle(.switch)
@@ -1266,6 +1265,9 @@ private struct CloudSyncSection: View {
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
                     )
+                    .onSubmit {
+                        viewModel.saveCloudSyncSettings()
+                    }
 
                 HStack(alignment: .center) {
                     Text("访问令牌 (Token)")
@@ -1300,6 +1302,9 @@ private struct CloudSyncSection: View {
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
                     )
+                    .onSubmit {
+                        viewModel.saveCloudSyncSettings()
+                    }
 
                 LazyVGrid(
                     columns: [
@@ -1315,18 +1320,23 @@ private struct CloudSyncSection: View {
                     SettingsPillButton("测试连接", systemImage: "bolt.horizontal.circle", fillsAvailableWidth: true) {
                         viewModel.testCloudSyncConnection()
                     }
+                    SettingsPillButton("扫码配对手机", systemImage: "qrcode", fillsAvailableWidth: true) {
+                        viewModel.openMobilePairingQRSheet()
+                    }
                     SettingsPillButton("复制手机配置", systemImage: "iphone.and.arrow.forward", fillsAvailableWidth: true) {
                         viewModel.copyMobileSyncBundleToClipboard()
-                    }
-                    SettingsPillButton("复制部署命令", systemImage: "terminal", fillsAvailableWidth: true) {
-                        viewModel.copyOpenSourceDeployCommand()
                     }
                 }
                 .padding(.top, 2)
                 .disabled(isBusy)
 
-                SettingsPillButton("恢复误删并回推云端", systemImage: "arrow.uturn.backward.circle", fillsAvailableWidth: true) {
-                    viewModel.recoverDeletedAndPushToCloud()
+                HStack(spacing: Design.Space.xs) {
+                    SettingsPillButton("复制部署命令", systemImage: "terminal", fillsAvailableWidth: true) {
+                        viewModel.copyOpenSourceDeployCommand()
+                    }
+                    SettingsPillButton("恢复误删并回推", systemImage: "arrow.uturn.backward.circle", fillsAvailableWidth: true) {
+                        viewModel.recoverDeletedAndPushToCloud()
+                    }
                 }
                 .disabled(isBusy)
 
@@ -1349,6 +1359,9 @@ private struct CloudSyncSection: View {
                 }
             }
             .padding(.top, Design.Space.sm)
+        }
+        .sheet(isPresented: $viewModel.isShowingMobilePairingQR) {
+            MobilePairingQRSheet(viewModel: viewModel)
         }
     }
 
@@ -1384,5 +1397,127 @@ private struct CloudSyncSection: View {
             RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .fill(dim)
         )
+    }
+}
+
+private struct MobilePairingQRSheet: View {
+    @ObservedObject var viewModel: MainWindowViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    private var payloadJSON: String {
+        viewModel.makeMobileSyncBundleJSON(pretty: false) ?? ""
+    }
+
+    private var qrImage: NSImage? {
+        guard !payloadJSON.isEmpty else { return nil }
+        let context = CIContext()
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(payloadJSON.utf8)
+        filter.correctionLevel = "M"
+        guard let outputImage = filter.outputImage else { return nil }
+        let scaled = outputImage.transformed(by: CGAffineTransform(scaleX: 8, y: 8))
+        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return nil }
+        return NSImage(cgImage: cgImage, size: NSSize(width: scaled.extent.width, height: scaled.extent.height))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                HStack(spacing: 6) {
+                    Image(systemName: "qrcode.viewfinder")
+                        .font(.icon(.small, weight: .semibold))
+                        .foregroundStyle(Constants.VisualStyle.accent)
+                    Text("手机扫码配对云端同步")
+                        .font(.ui(.title, weight: .semibold))
+                        .foregroundStyle(Constants.VisualStyle.text)
+                }
+                Spacer()
+                Button("关闭") {
+                    dismiss()
+                }
+                .buttonStyle(.plain)
+                .font(.ui(.caption, weight: .medium))
+                .foregroundStyle(Constants.VisualStyle.textSecondary)
+            }
+
+            if let warning = viewModel.mobileSyncEndpointWarning {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.icon(.small))
+                        .foregroundStyle(Constants.VisualStyle.warn)
+                    Text(warning)
+                        .font(.ui(.caption))
+                        .foregroundStyle(Constants.VisualStyle.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Constants.VisualStyle.warnDim)
+                )
+            }
+
+            HStack(spacing: 16) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.white)
+                        .frame(width: 196, height: 196)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
+                        )
+
+                    if let qrImage {
+                        Image(nsImage: qrImage)
+                            .interpolation(.none)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 172, height: 172)
+                    } else {
+                        Text("未配置同步地址")
+                            .font(.ui(.caption))
+                            .foregroundStyle(Constants.VisualStyle.textTertiary)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("手机端导入步骤：")
+                        .font(.ui(.body, weight: .semibold))
+                        .foregroundStyle(Constants.VisualStyle.text)
+
+                    Text("1. 打开手机端底栏「设置 → 云端同步」，点击「扫码读取配对图」直接拍摄此二维码；\n2. 或使用系统相机/微信扫码复制文本后，在手机端点击「粘贴剪贴板配置」一键填入并自动开启同步。")
+                        .font(.ui(.caption))
+                        .foregroundStyle(Constants.VisualStyle.textSecondary)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("当前同步地址")
+                            .font(.ui(.micro))
+                            .foregroundStyle(Constants.VisualStyle.textTertiary)
+                        Text(viewModel.cloudSyncEndpoint)
+                            .font(.ui(.caption, mono: true))
+                            .foregroundStyle(Constants.VisualStyle.text)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Constants.VisualStyle.inputFill)
+                    )
+
+                    HStack(spacing: 8) {
+                        SettingsPillButton("复制配对配置", systemImage: "doc.on.doc", tone: .primary, fillsAvailableWidth: true) {
+                            viewModel.copyMobileSyncBundleToClipboard()
+                        }
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .frame(width: 500)
+        .background(Constants.VisualStyle.surfaceRaised)
     }
 }

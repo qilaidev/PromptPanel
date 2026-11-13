@@ -967,6 +967,48 @@ public enum CoreTestSuite {
                 let macDefaultProjects = try macProjectRepo.fetchAll(includeArchived: true).filter(\.isDefault)
                 try check(macDefaultProjects.count == 1, "CloudSync must not duplicate default projects across devices")
 
+                // Step D2: Verify mixed snake_case + camelCase JSON (Android mutating camelCase on a Mac-originated snake_case record) picks newer camelCase
+                let macDefaultId = macDefaultProjects[0].id
+                let mixedPhoneEditJSON = """
+                {
+                  "schemaVersion": 2,
+                  "deviceId": "android-mixed-case-client",
+                  "exportedAt": "2030-01-01T12:00:00.000Z",
+                  "projects": [],
+                  "entries": [
+                    {
+                      "id": "\(sharedEntryId)",
+                      "project_id": "\(macDefaultId)",
+                      "projectId": "\(macDefaultId)",
+                      "title": "手机上最新改动的标题",
+                      "content": "手机上修改了便签，携带旧 updated_at 与新 updatedAt 时必须正常同步到电脑",
+                      "type": "note",
+                      "is_pinned": false,
+                      "isPinned": true,
+                      "is_completed": false,
+                      "isCompleted": true,
+                      "sort_order": 0,
+                      "use_count": 9,
+                      "useCount": 12,
+                      "created_at": "2024-03-09T16:00:00.000Z",
+                      "updated_at": "2024-03-09T16:00:00.000Z",
+                      "updatedAt": "2030-01-01T12:00:00.000Z",
+                      "tags": ["mobile", "synced"]
+                    }
+                  ],
+                  "versions": []
+                }
+                """.data(using: .utf8)!
+                let decodedMixedEnvelope = try CloudSyncService.makeDecoder().decode(CloudSyncEnvelope.self, from: mixedPhoneEditJSON)
+                let mixedMergeSummary = try macSyncService.mergeRemoteEnvelope(decodedMixedEnvelope)
+                try check(mixedMergeSummary.entriesUpdated == 1, "Newer camelCase updatedAt must win over stale snake_case updated_at")
+                let syncedFromMixedPhone = try unwrap(macEntryRepo.fetchById(sharedEntryId))
+                try check(syncedFromMixedPhone.title == "手机上最新改动的标题")
+                try check(syncedFromMixedPhone.content == "手机上修改了便签，携带旧 updated_at 与新 updatedAt 时必须正常同步到电脑")
+                try check(syncedFromMixedPhone.isCompleted == true)
+                try check(syncedFromMixedPhone.isPinned == true)
+                try check(syncedFromMixedPhone.useCount == 12)
+
                 // Step E: Verify soft-delete tombstones prevent resurrection across CloudSync
                 try macEntryRepo.delete(id: sharedEntryId)
                 try check(try macEntryRepo.fetchById(sharedEntryId) == nil)
@@ -1665,6 +1707,23 @@ public enum CoreTestSuite {
                 entryRepo.fetchByProject(inboxProject.id).first(where: { $0.title == "第一行自动生成标题测试内容" })
             )
             try check(autoTitledEntry.type == Constants.EntryType.note.rawValue)
+
+            // 2b. Creating entry while filtered to `.todo` in Inbox defaults to `.todo`, and mobile QR pairing bundle validates cleanly
+            viewModel.entryKindFilter = Constants.EntryType.todo.rawValue
+            viewModel.startCreateEntry()
+            try check(viewModel.entryDraft?.type == Constants.EntryType.todo.rawValue, "Creating entry while filtered to .todo must default to .todo")
+            viewModel.entryDraft = nil
+            viewModel.entryKindFilter = nil
+
+            viewModel.cloudSyncEndpoint = "http://127.0.0.1:8787/v1/sync"
+            try check(viewModel.mobileSyncEndpointWarning != nil, "Loopback endpoint must warn when pairing mobile")
+            viewModel.cloudSyncEndpoint = "https://sync.example.com/v1/sync"
+            viewModel.cloudSyncApiKey = "pp_live_pairing_secret_2026"
+            let bundleJSON = try unwrap(viewModel.makeMobileSyncBundleJSON())
+            try check(viewModel.mobileSyncEndpointWarning == nil)
+            try check(bundleJSON.contains("\"endpoint\":\"https://sync.example.com/v1/sync\"") || bundleJSON.contains("\"endpoint\":\"https:\\/\\/sync.example.com\\/v1\\/sync\""))
+            try check(bundleJSON.contains("pp_live_pairing_secret_2026"))
+            try check(bundleJSON.contains("\"autoSync\":true"))
 
             // 3. Completed entries sink below unfinished entries in MainWindowViewModel + hideCompletedEntries + clearCompletedEntriesInVisibleScope
             viewModel.togglePin(createdTodo) // Pin the todo, then mark it completed -> must STILL sink below unfinished entries!

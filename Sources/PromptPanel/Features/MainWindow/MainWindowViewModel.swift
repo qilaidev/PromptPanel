@@ -204,6 +204,7 @@ final class MainWindowViewModel: ObservableObject {
     }
     @Published var quickCaptureText: String = ""
     @Published var quickCapturePreferInbox: Bool = false
+    @Published var quickCaptureAsTodo: Bool = false
     @Published var hideCompletedEntries: Bool = false {
         didSet {
             guard oldValue != hideCompletedEntries else { return }
@@ -355,12 +356,27 @@ final class MainWindowViewModel: ObservableObject {
     @Published var panelContentSize: NSSize = Constants.panelContentSize
     @Published var appTheme: AppTheme = .system
     @Published var cloudSyncEnabled: Bool = false
-    @Published var cloudSyncEndpoint: String = ""
-    @Published var cloudSyncApiKey: String = ""
+    @Published var cloudSyncEndpoint: String = "" {
+        didSet {
+            guard !isHydratingCloudSyncState, oldValue != cloudSyncEndpoint else { return }
+            scheduleCloudSyncSettingsAutoPersist()
+        }
+    }
+    @Published var cloudSyncApiKey: String = "" {
+        didSet {
+            guard !isHydratingCloudSyncState, oldValue != cloudSyncApiKey else { return }
+            scheduleCloudSyncSettingsAutoPersist()
+        }
+    }
+    @Published var isShowingMobilePairingQR: Bool = false
     @Published private(set) var cloudSyncLastStatus: String = "尚未执行云端同步"
     @Published private(set) var cloudSyncConnectionStatus: String = "未检测"
     @Published private(set) var cloudSyncConnectionHealthy: Bool? = nil
     private var pendingAutoCloudSyncWorkItem: DispatchWorkItem?
+    private var pendingCloudSyncSettingsPersistWorkItem: DispatchWorkItem?
+    private var autoCloudSyncPollTimer: DispatchSourceTimer?
+    private var lastOpportunisticCloudSyncAt: Date = .distantPast
+    private var isHydratingCloudSyncState = false
     private var isApplyingCloudSyncChanges = false
     private var isCloudSyncInFlight = false
     private let appState: AppState
@@ -448,13 +464,22 @@ final class MainWindowViewModel: ObservableObject {
             self?.handleInlineDraftFieldMutation()
         }
         refreshCloudSyncState()
+        updateAutoCloudSyncPollTimer()
 
         observeChanges()
+        if cloudSyncEnabled {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                self?.triggerOpportunisticCloudSyncIfNeeded(force: true)
+            }
+        }
     }
 
     deinit {
         pendingEntriesRefreshWorkItem?.cancel()
         pendingInlineAutoSaveWorkItem?.cancel()
+        pendingAutoCloudSyncWorkItem?.cancel()
+        pendingCloudSyncSettingsPersistWorkItem?.cancel()
+        autoCloudSyncPollTimer?.cancel()
         bannerDismissWorkItem?.cancel()
     }
 
@@ -1257,6 +1282,7 @@ final class MainWindowViewModel: ObservableObject {
         refreshLogs()
         refreshOperationalStatus()
         refreshUpdaterStatus()
+        triggerOpportunisticCloudSyncIfNeeded(minIntervalSeconds: 18)
         if let launchRecoveryReport, !hasCompletedInitialLoad {
             bannerMessage = launchRecoveryReport.userFacingMessage
         }
@@ -1620,6 +1646,8 @@ final class MainWindowViewModel: ObservableObject {
     // MARK: - Cloud Sync Actions
 
     func refreshCloudSyncState() {
+        isHydratingCloudSyncState = true
+        defer { isHydratingCloudSyncState = false }
         cloudSyncEnabled = (try? settingsRepository.isCloudSyncEnabled()) ?? false
         cloudSyncEndpoint = (try? settingsRepository.getCloudSyncEndpoint()) ?? ""
         cloudSyncApiKey = (try? settingsRepository.getCloudSyncApiKey()) ?? ""
@@ -1632,16 +1660,89 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
-    func saveCloudSyncSettings() {
+    private func scheduleCloudSyncSettingsAutoPersist() {
+        pendingCloudSyncSettingsPersistWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.saveCloudSyncSettings(showBanner: false)
+            if self.cloudSyncEnabled {
+                self.triggerOpportunisticCloudSyncIfNeeded(force: true)
+            }
+        }
+        pendingCloudSyncSettingsPersistWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: workItem)
+    }
+
+    func setCloudSyncEnabled(_ isEnabled: Bool) {
+        cloudSyncEnabled = isEnabled
+        saveCloudSyncSettings(showBanner: true)
+        updateAutoCloudSyncPollTimer()
+        if isEnabled {
+            triggerOpportunisticCloudSyncIfNeeded(force: true)
+        }
+    }
+
+    func saveCloudSyncSettings(showBanner: Bool = true) {
+        pendingCloudSyncSettingsPersistWorkItem?.cancel()
+        pendingCloudSyncSettingsPersistWorkItem = nil
         do {
             try settingsRepository.setCloudSyncEnabled(cloudSyncEnabled)
             try settingsRepository.setCloudSyncEndpoint(cloudSyncEndpoint)
             try settingsRepository.setCloudSyncApiKey(cloudSyncApiKey)
-            bannerMessage = "云端同步配置已保存。"
+            updateAutoCloudSyncPollTimer()
+            if showBanner {
+                bannerMessage = "云端同步配置已保存。"
+            }
         } catch {
             PPLogger.app.error("Failed to save cloud sync settings: \(error.localizedDescription)")
-            bannerMessage = "保存云端同步配置失败，请重试。"
+            if showBanner {
+                bannerMessage = "保存云端同步配置失败，请重试。"
+            }
         }
+    }
+
+    var mobileSyncEndpointWarning: String? {
+        let trimmed = cloudSyncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let lower = trimmed.lowercased()
+        if !(lower.hasPrefix("http://") || lower.hasPrefix("https://")) {
+            return "当前同步地址是 Mac 本地文件路径，手机无法直接访问。请部署或填入 http(s):// 同步服务地址后再配对手机。"
+        }
+        if lower.contains("://127.0.0.1") || lower.contains("://localhost") || lower.contains("://0.0.0.0") {
+            return "当前地址指向本机回环 (localhost / 127.0.0.1)，手机扫码后无法直连；请改填局域网 IP（如 http://192.168.x.x:18787/v1/sync）或公网域名。"
+        }
+        return nil
+    }
+
+    func makeMobileSyncBundleJSON(pretty: Bool = false) -> String? {
+        let trimmedEndpoint = cloudSyncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedEndpoint.isEmpty else {
+            return nil
+        }
+        let payload: [String: Any] = [
+            "endpoint": trimmedEndpoint,
+            "apiKey": cloudSyncApiKey.trimmingCharacters(in: .whitespacesAndNewlines),
+            "autoSync": true
+        ]
+        var options: JSONSerialization.WritingOptions = [.sortedKeys]
+        if pretty {
+            options.insert(.prettyPrinted)
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: options),
+              let text = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return text
+    }
+
+    func openMobilePairingQRSheet() {
+        let trimmedEndpoint = cloudSyncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedEndpoint.isEmpty else {
+            bannerMessage = "请先填写同步地址后再打开手机扫码配对。"
+            return
+        }
+        saveCloudSyncSettings(showBanner: false)
+        isShowingMobilePairingQR = true
     }
 
     func generateNewCloudSyncToken() {
@@ -1651,28 +1752,21 @@ final class MainWindowViewModel: ObservableObject {
             .prefix(28)
         let token = "pp_live_\(randomPart)"
         cloudSyncApiKey = token
-        saveCloudSyncSettings()
+        saveCloudSyncSettings(showBanner: false)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(token, forType: .string)
         bannerMessage = "已生成 Token 并复制到剪贴板。"
     }
 
     func copyMobileSyncBundleToClipboard() {
-        let trimmedEndpoint = cloudSyncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedEndpoint.isEmpty else {
+        saveCloudSyncSettings(showBanner: false)
+        guard let text = makeMobileSyncBundleJSON(pretty: true) else {
             bannerMessage = "请先填写同步地址后再复制手机端配置。"
             return
         }
-        let payload: [String: String] = [
-            "endpoint": trimmedEndpoint,
-            "apiKey": cloudSyncApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        ]
-        if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]),
-           let text = String(data: data, encoding: .utf8) {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
-            bannerMessage = "已复制手机端同步配置。"
-        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        bannerMessage = "已复制手机配对配置，可在手机端「设置 → 粘贴剪贴板配置」一键生效。"
     }
 
     func copyOpenSourceDeployCommand() {
@@ -1808,6 +1902,73 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
+    private func updateAutoCloudSyncPollTimer() {
+        let trimmedEndpoint = cloudSyncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard cloudSyncEnabled, !trimmedEndpoint.isEmpty, cloudSyncService != nil else {
+            autoCloudSyncPollTimer?.cancel()
+            autoCloudSyncPollTimer = nil
+            return
+        }
+        guard autoCloudSyncPollTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 45, repeating: 45, leeway: .seconds(5))
+        timer.setEventHandler { [weak self] in
+            self?.triggerOpportunisticCloudSyncIfNeeded(minIntervalSeconds: 30)
+        }
+        timer.resume()
+        autoCloudSyncPollTimer = timer
+    }
+
+    func triggerOpportunisticCloudSyncIfNeeded(force: Bool = false, minIntervalSeconds: TimeInterval = 18) {
+        guard cloudSyncEnabled,
+              !isApplyingCloudSyncChanges,
+              !isCloudSyncInFlight,
+              activeMaintenanceTask == nil,
+              let cloudSyncService else {
+            return
+        }
+        let endpoint = cloudSyncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !endpoint.isEmpty else { return }
+        let now = Date()
+        if !force, now.timeIntervalSince(lastOpportunisticCloudSyncAt) < minIntervalSeconds {
+            return
+        }
+        lastOpportunisticCloudSyncAt = now
+        performSilentCloudSync(cloudSyncService: cloudSyncService, endpoint: endpoint, apiKey: cloudSyncApiKey)
+    }
+
+    private func performSilentCloudSync(cloudSyncService: CloudSyncService, endpoint: String, apiKey: String) {
+        guard activeMaintenanceTask == nil, !isCloudSyncInFlight else { return }
+        isCloudSyncInFlight = true
+        lastOpportunisticCloudSyncAt = Date()
+        maintenanceQueue.async { [weak self] in
+            let result = Result { try cloudSyncService.syncNow(endpoint: endpoint, apiKey: apiKey) }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.isCloudSyncInFlight = false
+                switch result {
+                case .success(let summary):
+                    self.cloudSyncConnectionHealthy = true
+                    self.refreshCloudSyncState()
+                    if summary.entriesCreated > 0 || summary.entriesUpdated > 0 || summary.projectsCreated > 0 || summary.projectsUpdated > 0 || summary.totalProtectedCount > 0 {
+                        self.isApplyingCloudSyncChanges = true
+                        defer { self.isApplyingCloudSyncChanges = false }
+                        self.notifyProjectsChanged()
+                        NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+                        self.refreshSelectedEntryVersions()
+                    }
+                    if summary.totalProtectedCount > 0 {
+                        self.refreshOperationalStatus()
+                        self.bannerMessage = "防丢保护已触发：已拦截云端异常删除 \(summary.protectedEntriesCount) 条词条/\(summary.protectedProjectsCount) 个分组，并从本地自动恢复云端数据。"
+                    }
+                case .failure(let error):
+                    PPLogger.app.error("Auto cloud sync failed: \(error.localizedDescription)")
+                    self.cloudSyncConnectionHealthy = false
+                }
+            }
+        }
+    }
+
     private func scheduleAutoCloudSyncIfNeeded() {
         guard cloudSyncEnabled,
               !isApplyingCloudSyncChanges,
@@ -1820,37 +1981,11 @@ final class MainWindowViewModel: ObservableObject {
 
         pendingAutoCloudSyncWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
-            guard let self, self.activeMaintenanceTask == nil, !self.isCloudSyncInFlight else { return }
-            self.isCloudSyncInFlight = true
-            self.maintenanceQueue.async { [weak self] in
-                let result = Result { try cloudSyncService.syncNow(endpoint: endpoint, apiKey: apiKey) }
-                DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
-                    self.isCloudSyncInFlight = false
-                    switch result {
-                    case .success(let summary):
-                        self.cloudSyncConnectionHealthy = true
-                        self.refreshCloudSyncState()
-                        if summary.entriesCreated > 0 || summary.entriesUpdated > 0 || summary.projectsCreated > 0 || summary.projectsUpdated > 0 || summary.totalProtectedCount > 0 {
-                            self.isApplyingCloudSyncChanges = true
-                            self.loadProjects()
-                            self.scheduleEntriesRefresh(delayMs: 0)
-                            self.refreshProjectEntryCounts()
-                            self.isApplyingCloudSyncChanges = false
-                        }
-                        if summary.totalProtectedCount > 0 {
-                            self.refreshOperationalStatus()
-                            self.bannerMessage = "防丢保护已触发：已拦截云端异常删除 \(summary.protectedEntriesCount) 条词条/\(summary.protectedProjectsCount) 个分组，并从本地自动恢复云端数据。"
-                        }
-                    case .failure(let error):
-                        PPLogger.app.error("Auto cloud sync failed: \(error.localizedDescription)")
-                        self.cloudSyncConnectionHealthy = false
-                    }
-                }
-            }
+            guard let self else { return }
+            self.performSilentCloudSync(cloudSyncService: cloudSyncService, endpoint: endpoint, apiKey: apiKey)
         }
         pendingAutoCloudSyncWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: workItem)
     }
 
     func cancelPendingBackgroundTasks() {
@@ -1860,6 +1995,10 @@ final class MainWindowViewModel: ObservableObject {
         pendingInlineAutoSaveWorkItem = nil
         pendingAutoCloudSyncWorkItem?.cancel()
         pendingAutoCloudSyncWorkItem = nil
+        pendingCloudSyncSettingsPersistWorkItem?.cancel()
+        pendingCloudSyncSettingsPersistWorkItem = nil
+        autoCloudSyncPollTimer?.cancel()
+        autoCloudSyncPollTimer = nil
     }
 
     // MARK: - Off-main maintenance plumbing
@@ -2177,11 +2316,11 @@ final class MainWindowViewModel: ObservableObject {
             if let preferredType {
                 return preferredType
             }
-            if isInboxTarget {
-                return .note
-            }
             if let activeKind = entryKindFilter, let parsed = Constants.EntryType(rawValue: activeKind) {
                 return parsed
+            }
+            if isInboxTarget {
+                return .note
             }
             return .prompt
         }()

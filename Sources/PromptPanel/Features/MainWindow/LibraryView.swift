@@ -285,23 +285,43 @@ struct LibraryView: View {
 
         return VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
-                Image(systemName: "bolt.fill")
-                    .font(.icon(.micro, weight: .semibold))
-                    .foregroundStyle(Constants.VisualStyle.accent)
+                Button {
+                    viewModel.quickCaptureAsTodo.toggle()
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: viewModel.quickCaptureAsTodo ? "checklist" : "bolt.fill")
+                            .font(.icon(.micro, weight: .semibold))
+                        Text(viewModel.quickCaptureAsTodo ? "待办" : "便签")
+                            .font(.ui(.micro, weight: .semibold))
+                    }
+                    .foregroundStyle(viewModel.quickCaptureAsTodo ? Constants.VisualStyle.warn : Constants.VisualStyle.accent)
+                    .padding(.horizontal, 5)
+                    .frame(height: 18)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(viewModel.quickCaptureAsTodo ? Constants.VisualStyle.warnDim : Constants.VisualStyle.accentDim)
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("点击切换回车默认保存类型（便签 / 待办）")
 
                 ZStack(alignment: .leading) {
                     if viewModel.quickCaptureText.isEmpty {
-                        Text("随手记便签，回车即存（支持 #标签，⇧↩ 存待办）…")
-                            .font(.ui(.caption))
-                            .foregroundStyle(Constants.VisualStyle.textTertiary)
-                            .lineLimit(1)
-                            .allowsHitTesting(false)
+                        Text(
+                            viewModel.quickCaptureAsTodo
+                                ? "输入待办事项，回车即存（支持 #标签）…"
+                                : "随手记便签，回车即存（点左侧切待办，或 ⇧↩）…"
+                        )
+                        .font(.ui(.caption))
+                        .foregroundStyle(Constants.VisualStyle.textTertiary)
+                        .lineLimit(1)
+                        .allowsHitTesting(false)
                     }
 
                     QuickJotInputField(
                         text: $viewModel.quickCaptureText,
                         onSubmitNote: {
-                            _ = viewModel.submitQuickCapture(type: .note)
+                            _ = viewModel.submitQuickCapture(type: viewModel.quickCaptureAsTodo ? .todo : .note)
                         },
                         onSubmitTodo: {
                             _ = viewModel.submitQuickCapture(type: .todo)
@@ -342,6 +362,26 @@ struct LibraryView: View {
                 Spacer(minLength: 4)
 
                 if isJotEmpty {
+                    Button {
+                        _ = viewModel.quickJotFromClipboard(type: .todo)
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "checklist")
+                                .font(.icon(.micro, weight: .medium))
+                            Text("剪贴板待办")
+                                .font(.ui(.micro, weight: .medium))
+                        }
+                        .foregroundStyle(Constants.VisualStyle.warn)
+                        .padding(.horizontal, 6)
+                        .frame(height: 19)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(Constants.VisualStyle.warnDim)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help("将系统剪贴板文本一键存为待办事项")
+
                     Button {
                         _ = viewModel.quickJotFromClipboard(type: .note)
                     } label: {
@@ -604,6 +644,12 @@ struct LibraryView: View {
                                     viewModel.startCreateEntry()
                                 } label: {
                                     Label("新建词条 (⌘N)", systemImage: "square.and.pencil")
+                                }
+
+                                Button {
+                                    viewModel.startCreateEntry(preferredType: .todo)
+                                } label: {
+                                    Label("新建待办事项", systemImage: "checklist")
                                 }
 
                                 let targetId = viewModel.selectedProjectId == MainWindowViewModel.allProjectsSelection

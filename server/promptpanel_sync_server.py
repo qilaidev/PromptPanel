@@ -262,6 +262,10 @@ def load_envelope_from_db(
         ):
             rec_id = str(row["id"])
             obj, was_encrypted = decrypt_db_record(row["payload_json"], aead_key, kind, rec_id)
+            if kind == "project" and isinstance(obj, dict):
+                obj = _normalize_project_payload(obj)
+            elif kind == "entry" and isinstance(obj, dict):
+                obj = _normalize_entry_payload(obj)
             target_list.append(obj)
             if not was_encrypted and aead_key is not None and AESGCM is not None:
                 legacy_rows_to_upgrade.append((kind, rec_id, obj))
@@ -395,6 +399,112 @@ def _bump_iso_timestamp(reference_iso: str) -> str:
     return bumped.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
+def _prefer_camel_side(record: dict[str, Any]) -> bool:
+    camel_u = str(record.get("updatedAt") or "")
+    snake_u = str(record.get("updated_at") or "")
+    if camel_u and snake_u:
+        return camel_u >= snake_u
+    return bool(camel_u)
+
+
+def _pick_pair(
+    record: dict[str, Any],
+    camel_key: str,
+    snake_key: str,
+    prefer_camel: bool,
+    default: Any = None,
+    allow_none: bool = False,
+) -> Any:
+    first_key, second_key = (camel_key, snake_key) if prefer_camel else (snake_key, camel_key)
+    if first_key in record:
+        val = record.get(first_key)
+        if allow_none or val is not None or second_key not in record:
+            return val
+    if second_key in record:
+        return record.get(second_key)
+    return default
+
+
+def _normalize_project_payload(raw_proj: dict[str, Any]) -> dict[str, Any]:
+    proj = dict(raw_proj)
+    prefer_camel = _prefer_camel_side(proj)
+    camel_u = str(proj.get("updatedAt") or "")
+    snake_u = str(proj.get("updated_at") or "")
+    resolved_updated = max(camel_u, snake_u) if (camel_u and snake_u) else (camel_u or snake_u or utc_now_iso())
+    resolved_created = str(_pick_pair(proj, "createdAt", "created_at", prefer_camel) or resolved_updated)
+    is_def = bool(_pick_pair(proj, "isDefault", "is_default", prefer_camel, False))
+    if prefer_camel:
+        kind_raw = proj.get("groupKindRaw") or proj.get("groupKind") or proj.get("group_kind") or ("category" if is_def else "project")
+    else:
+        kind_raw = proj.get("group_kind") or proj.get("groupKindRaw") or proj.get("groupKind") or ("category" if is_def else "project")
+    is_arch = bool(_pick_pair(proj, "isArchived", "is_archived", prefer_camel, False))
+    icon_val = _pick_pair(proj, "iconName", "icon_name", prefer_camel, allow_none=True)
+    deleted_val = _pick_pair(proj, "deletedAt", "deleted_at", prefer_camel, allow_none=True)
+    sort_val = _safe_int(_pick_pair(proj, "sortOrder", "sort_order", prefer_camel, 0))
+
+    proj["isDefault"] = is_def
+    proj["is_default"] = is_def
+    proj["groupKindRaw"] = kind_raw
+    proj["group_kind"] = kind_raw
+    proj["isArchived"] = is_arch
+    proj["is_archived"] = is_arch
+    proj["iconName"] = icon_val
+    proj["icon_name"] = icon_val
+    proj["sortOrder"] = sort_val
+    proj["sort_order"] = sort_val
+    proj["createdAt"] = resolved_created
+    proj["created_at"] = resolved_created
+    proj["updatedAt"] = resolved_updated
+    proj["updated_at"] = resolved_updated
+    proj["deletedAt"] = deleted_val
+    proj["deleted_at"] = deleted_val
+    return proj
+
+
+def _normalize_entry_payload(raw_entry: dict[str, Any]) -> dict[str, Any]:
+    entry = dict(raw_entry)
+    prefer_camel = _prefer_camel_side(entry)
+    camel_u = str(entry.get("updatedAt") or "")
+    snake_u = str(entry.get("updated_at") or "")
+    resolved_updated = max(camel_u, snake_u) if (camel_u and snake_u) else (camel_u or snake_u or utc_now_iso())
+    resolved_created = str(_pick_pair(entry, "createdAt", "created_at", prefer_camel) or resolved_updated)
+    proj_id = str(_pick_pair(entry, "projectId", "project_id", prefer_camel, "") or "")
+    is_pin = bool(_pick_pair(entry, "isPinned", "is_pinned", prefer_camel, False))
+    is_comp = bool(_pick_pair(entry, "isCompleted", "is_completed", prefer_camel, False))
+    sort_val = _safe_int(_pick_pair(entry, "sortOrder", "sort_order", prefer_camel, 0))
+    use_c = max(
+        _safe_int(entry.get("useCount"), 0),
+        _safe_int(entry.get("use_count"), 0),
+    )
+    lu_c = entry.get("lastUsedAt")
+    lu_s = entry.get("last_used_at")
+    last_used = max(str(lu_c), str(lu_s)) if (lu_c and lu_s) else (lu_c or lu_s)
+    deleted_val = _pick_pair(entry, "deletedAt", "deleted_at", prefer_camel, allow_none=True)
+    src_val = _pick_pair(entry, "sourceEntryId", "source_entry_id", prefer_camel, allow_none=True)
+
+    entry["projectId"] = proj_id
+    entry["project_id"] = proj_id
+    entry["isPinned"] = is_pin
+    entry["is_pinned"] = is_pin
+    entry["isCompleted"] = is_comp
+    entry["is_completed"] = is_comp
+    entry["sortOrder"] = sort_val
+    entry["sort_order"] = sort_val
+    entry["useCount"] = use_c
+    entry["use_count"] = use_c
+    entry["lastUsedAt"] = last_used
+    entry["last_used_at"] = last_used
+    entry["createdAt"] = resolved_created
+    entry["created_at"] = resolved_created
+    entry["updatedAt"] = resolved_updated
+    entry["updated_at"] = resolved_updated
+    entry["deletedAt"] = deleted_val
+    entry["deleted_at"] = deleted_val
+    entry["sourceEntryId"] = src_val
+    entry["source_entry_id"] = src_val
+    return entry
+
+
 def merge_envelope_into_db(
     conn: sqlite3.Connection,
     incoming: dict[str, Any],
@@ -426,7 +536,9 @@ def merge_envelope_into_db(
     for e_row in conn.execute("SELECT id, updated_at, payload_json FROM kv_records WHERE kind = 'entry'"):
         eid_str = str(e_row["id"])
         e_obj, _ = decrypt_db_record(e_row["payload_json"], aead_key, "entry", eid_str)
-        if _get_field(e_obj, "deletedAt", "deleted_at") is None:
+        if isinstance(e_obj, dict):
+            e_obj = _normalize_entry_payload(e_obj)
+        if e_obj.get("deletedAt") is None:
             srv_active_entries[eid_str] = (str(e_row["updated_at"]), e_obj)
 
     srv_active_count = len(srv_active_entries)
@@ -434,11 +546,12 @@ def merge_envelope_into_db(
     for inc_entry in incoming.get("entries") or []:
         if not isinstance(inc_entry, dict) or not inc_entry.get("id"):
             continue
-        eid_str = str(inc_entry["id"])
+        norm_inc = _normalize_entry_payload(inc_entry)
+        eid_str = str(norm_inc["id"])
         if eid_str in srv_active_entries:
             srv_upd, _ = srv_active_entries[eid_str]
-            inc_upd = str(_get_field(inc_entry, "updatedAt", "updated_at") or "")
-            if _get_field(inc_entry, "deletedAt", "deleted_at") is not None and inc_upd > srv_upd:
+            inc_upd = str(norm_inc.get("updatedAt") or "")
+            if norm_inc.get("deletedAt") is not None and inc_upd > srv_upd:
                 incoming_deleting_count += 1
 
     should_block_mass_delete = False
@@ -469,9 +582,10 @@ def merge_envelope_into_db(
         for proj in incoming.get("projects") or []:
             if not isinstance(proj, dict) or not proj.get("id"):
                 continue
+            proj = _normalize_project_payload(proj)
             pid = str(proj["id"])
-            is_default_proj = bool(_get_field(proj, "isDefault", "is_default", False))
-            inc_updated = str(_get_field(proj, "updatedAt", "updated_at") or "")
+            is_default_proj = bool(proj.get("isDefault", False))
+            inc_updated = str(proj.get("updatedAt") or "")
             row = conn.execute(
                 "SELECT updated_at, payload_json FROM kv_records WHERE kind = 'project' AND id = ?",
                 (pid,),
@@ -547,17 +661,15 @@ def merge_envelope_into_db(
         for entry in incoming.get("entries") or []:
             if not isinstance(entry, dict) or not entry.get("id"):
                 continue
-            entry = dict(entry)
-            raw_pid = str(_get_field(entry, "projectId", "project_id") or "")
+            entry = _normalize_entry_payload(entry)
+            raw_pid = str(entry.get("projectId") or "")
             if raw_pid in remapped_project_ids:
                 mapped_pid = remapped_project_ids[raw_pid]
-                if "project_id" in entry or "projectId" not in entry:
-                    entry["project_id"] = mapped_pid
-                if "projectId" in entry:
-                    entry["projectId"] = mapped_pid
+                entry["project_id"] = mapped_pid
+                entry["projectId"] = mapped_pid
             eid = str(entry["id"])
-            inc_updated = str(_get_field(entry, "updatedAt", "updated_at") or "")
-            inc_created = str(_get_field(entry, "createdAt", "created_at") or inc_updated or utc_now_iso())
+            inc_updated = str(entry.get("updatedAt") or "")
+            inc_created = str(entry.get("createdAt") or inc_updated or utc_now_iso())
             row = conn.execute(
                 "SELECT updated_at, payload_json FROM kv_records WHERE kind = 'entry' AND id = ?",
                 (eid,),
