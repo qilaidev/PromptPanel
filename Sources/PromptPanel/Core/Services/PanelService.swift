@@ -392,7 +392,7 @@ final class PanelService {
         }
         let currentFrontmostBundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         if currentFrontmostBundleId == Bundle.main.bundleIdentifier {
-            _ = targetApplication.activate(options: [.activateAllWindows])
+            _ = targetApplication.activate(options: [])
         } else {
             PPLogger.panel.info(
                 "Skipped target app reactivation because frontmost app already changed to \(currentFrontmostBundleId ?? "unknown")"

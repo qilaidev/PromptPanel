@@ -13,6 +13,7 @@ enum Migrations {
         registerV5DropUnusedEntryTagsIndex(migrator: &migrator)
         registerV6RetireEntrySortOrder(migrator: &migrator)
         registerV7WorkspaceVersionsAndSync(migrator: &migrator)
+        registerV8FTSTrigramAndNarrowUpdateTrigger(migrator: &migrator)
     }
 
     // MARK: - V1: Initial Schema
@@ -249,6 +250,53 @@ enum Migrations {
                 t.column("value", .text)
                 t.column("updated_at", .datetime).notNull()
             }
+        }
+    }
+
+    // MARK: - V8: Trigram FTS5 Index (Title + Content + Tags) & Narrow Update Trigger
+
+    private static func registerV8FTSTrigramAndNarrowUpdateTrigger(migrator: inout DatabaseMigrator) {
+        migrator.registerMigration("v8_fts_trigram_and_narrow_update_trigger") { db in
+            PPLogger.database.info("Running migration: v8_fts_trigram_and_narrow_update_trigger")
+
+            try db.execute(sql: "DROP TRIGGER IF EXISTS entries_ai")
+            try db.execute(sql: "DROP TRIGGER IF EXISTS entries_ad")
+            try db.execute(sql: "DROP TRIGGER IF EXISTS entries_au")
+            try db.execute(sql: "DROP TABLE IF EXISTS entries_fts")
+
+            try db.execute(sql: """
+                CREATE VIRTUAL TABLE entries_fts USING fts5(
+                    title,
+                    content,
+                    tags,
+                    content='entries',
+                    content_rowid='rowid',
+                    tokenize='trigram'
+                )
+                """)
+
+            try db.execute(sql: """
+                CREATE TRIGGER entries_ai AFTER INSERT ON entries BEGIN
+                    INSERT INTO entries_fts(rowid, title, content, tags)
+                    VALUES (new.rowid, new.title, new.content, new.tags);
+                END
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER entries_ad AFTER DELETE ON entries BEGIN
+                    INSERT INTO entries_fts(entries_fts, rowid, title, content, tags)
+                    VALUES ('delete', old.rowid, old.title, old.content, old.tags);
+                END
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER entries_au AFTER UPDATE OF title, content, tags ON entries BEGIN
+                    INSERT INTO entries_fts(entries_fts, rowid, title, content, tags)
+                    VALUES ('delete', old.rowid, old.title, old.content, old.tags);
+                    INSERT INTO entries_fts(rowid, title, content, tags)
+                    VALUES (new.rowid, new.title, new.content, new.tags);
+                END
+                """)
+
+            try db.execute(sql: "INSERT INTO entries_fts(entries_fts) VALUES('rebuild')")
         }
     }
 }

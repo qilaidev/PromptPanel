@@ -237,11 +237,17 @@ public enum CoreTestSuite {
             try check(entry.previewLine == "请重点检查： 1. 边界条件 2. 并发安全")
 
             try entryRepo.create(entry)
+            let updatedAtBeforeExec = try unwrap(entryRepo.fetchById(entry.id)).updatedAt
+            Thread.sleep(forTimeInterval: 0.02)
             try entryRepo.recordExecution(id: entry.id)
 
             let fetched = try unwrap(entryRepo.fetchById(entry.id))
             try check(fetched.useCount == 1)
             try check(fetched.lastUsedAt != nil)
+            try check(
+                abs(fetched.updatedAt.timeIntervalSince(updatedAtBeforeExec)) < 0.001,
+                "recordExecution must not mutate updatedAt"
+            )
             try check(fetched.previewLine == "请重点检查： 1. 边界条件 2. 并发安全")
 
             entry.content = "更新后的单行内容\n第二行"
@@ -327,6 +333,54 @@ public enum CoreTestSuite {
             let caseInsensitiveTagResults = try entryRepo.searchAll(query: "", tag: "OPS")
             try check(caseInsensitiveTagResults.map(\.id) == [globalPinned.id])
 
+            // Trigram FTS5 mid-word English & 3+ char CJK + mixed trigram & short CJK token search
+            let midWordEnglishResults = try entryRepo.searchAll(query: "readines")
+            try check(midWordEnglishResults.map(\.id) == [globalPinned.id])
+
+            let trigramCjkResults = try entryRepo.searchAll(query: "发安全")
+            try check(trigramCjkResults.map(\.id) == [projectRecent.id])
+
+            let mixedTrigramAndShortResults = try entryRepo.searchAll(query: "Deploy 安全")
+            try check(mixedTrigramAndShortResults.map(\.id) == [projectRecent.id])
+
+            // Pre-LIMIT SQL #tag filter: 105 higher-ranked entries with another tag must not starve a matching #target-sql entry beyond row 100
+            for idx in 0..<105 {
+                let filler = Entry(
+                    id: "filler-limit-\(idx)",
+                    projectId: defaultProject.id,
+                    title: "Deploy Filler \(idx)",
+                    content: "Bulk deploy filler row \(idx)",
+                    isPinned: true,
+                    useCount: 500 + idx,
+                    lastUsedAt: now,
+                    tags: ["bulk"]
+                )
+                try entryRepo.create(filler)
+            }
+            let deepTaggedEntry = Entry(
+                id: "deep-tagged-sql",
+                projectId: activeProject.id,
+                title: "Deploy SQL Migration",
+                content: "Run schema check",
+                isPinned: false,
+                useCount: 0,
+                tags: ["target-sql", "ci/cd"]
+            )
+            try entryRepo.create(deepTaggedEntry)
+
+            let deepTagFiltered = try entryRepo.searchAll(query: "Deploy", tag: "TARGET-SQL")
+            try check(
+                deepTagFiltered.map(\.id) == [deepTaggedEntry.id],
+                "SQL pre-limit #tag filter must find matching entry even when >100 higher-ranked entries match the text query"
+            )
+            let slashTagSearch = try entryRepo.searchAll(query: "ci/cd")
+            try check(slashTagSearch.map(\.id) == [deepTaggedEntry.id])
+
+            let migrationsApplied = try manager.dbQueue.read { db in
+                try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations")
+            }
+            try check(migrationsApplied.contains("v8_fts_trigram_and_narrow_update_trigger"))
+
             let parsed = QuickPanelViewModel.extractTagFilter(from: "#deploy   hotfix  ")
             try check(parsed.cleanedQuery == "hotfix")
             try check(parsed.tag == "deploy")
@@ -348,14 +402,14 @@ public enum CoreTestSuite {
             try settingsRepo.setAppTheme(.dark)
             try check(try settingsRepo.getAppTheme() == .dark)
 
-            // Auto-update setting defaults to true and persists toggles
-            try check(try settingsRepo.isAutoUpdateEnabled() == true)
-            try settingsRepo.setAutoUpdateEnabled(false)
+            // Auto-update setting defaults to false (opt-in) and persists toggles
             try check(try settingsRepo.isAutoUpdateEnabled() == false)
             try settingsRepo.setAutoUpdateEnabled(true)
             try check(try settingsRepo.isAutoUpdateEnabled() == true)
+            try settingsRepo.setAutoUpdateEnabled(false)
+            try check(try settingsRepo.isAutoUpdateEnabled() == false)
 
-            // UpdaterService pure semver+build comparison & mirror endpoint resolution
+            // UpdaterService pure semver+build comparison, HTTPS + loopback URL policy & signature gate
             try check(UpdaterService.isNewerVersion(remoteVersion: "1.7.2", remoteBuild: 13, localVersion: "1.7.1", localBuild: 12))
             try check(UpdaterService.isNewerVersion(remoteVersion: "1.7.2", remoteBuild: 14, localVersion: "1.7.2", localBuild: 13))
             try check(!UpdaterService.isNewerVersion(remoteVersion: "1.7.2", remoteBuild: 13, localVersion: "1.7.2", localBuild: 13))
@@ -365,10 +419,33 @@ public enum CoreTestSuite {
                     == "https://sync.example.com:18787/v1/update?force=1"
             )
             try check(
-                UpdaterService.resolvedUpdateURL(fromSyncEndpoint: "http://192.168.1.10:18787/", forceRefresh: false)?.absoluteString
-                    == "http://192.168.1.10:18787/v1/update"
+                UpdaterService.resolvedUpdateURL(fromSyncEndpoint: "http://127.0.0.1:18787/", forceRefresh: false)?.absoluteString
+                    == "http://127.0.0.1:18787/v1/update"
+            )
+            try check(
+                UpdaterService.resolvedUpdateURL(fromSyncEndpoint: "http://localhost:18787/v1/sync", forceRefresh: false)?.absoluteString
+                    == "http://localhost:18787/v1/update"
+            )
+            try check(
+                UpdaterService.resolvedUpdateURL(fromSyncEndpoint: "http://192.168.1.10:18787/", forceRefresh: false) == nil,
+                "Non-loopback cleartext HTTP update URL must be rejected"
             )
             try check(UpdaterService.resolvedUpdateURL(fromSyncEndpoint: "/tmp/local-sync.json") == nil)
+
+            let adHocConfig = UpdaterService.ConfigurationState(
+                feedURL: nil,
+                publicKey: nil,
+                expectedTeamIdentifier: nil
+            )
+            try check(adHocConfig.isConfigured == false)
+            try check(adHocConfig.canInstallBuiltInUpdates == false, "Ad-hoc builds without Developer ID TeamIdentifier must never replace app bundle in-place")
+            let developerIDConfig = UpdaterService.ConfigurationState(
+                feedURL: URL(string: "https://example.com/appcast.xml"),
+                publicKey: "ed25519-pub-key",
+                expectedTeamIdentifier: "TEAM123456"
+            )
+            try check(developerIDConfig.isConfigured == true)
+            try check(developerIDConfig.canInstallBuiltInUpdates == true)
 
             let screen = NSRect(x: 0, y: 0, width: 1280, height: 800)
             let fitted = Constants.WindowPlacement.fittedSize(
@@ -876,6 +953,12 @@ public enum CoreTestSuite {
     }
 
     static func verifyReferenceWindowAndCloudSyncConflictPreservation() throws {
+        try runAsyncOnMainRunLoop {
+            try await verifyReferenceWindowAndCloudSyncConflictPreservationAsync()
+        }
+    }
+
+    static func verifyReferenceWindowAndCloudSyncConflictPreservationAsync() async throws {
         // 1. Verify Cmd+Shift+N resolves to .openReferenceWindow
         let cmdShiftN = MainWindowViewModel.mainWindowKeyCommand(
             modifierFlags: [.command, .shift],
@@ -884,8 +967,8 @@ public enum CoreTestSuite {
         try check(cmdShiftN == .openReferenceWindow)
 
         // 2. Verify CloudSyncService bidirectional sync & Conflict-to-Version-History preservation
-        try withTempDatabase { macManager, macDBURL in
-            try withTempDatabase { mobileSimManager, _ in
+        try await withTempDatabaseAsync { macManager, macDBURL in
+            try await withTempDatabaseAsync { mobileSimManager, _ in
                 let macProjectRepo = ProjectRepository(dbQueue: macManager.dbQueue)
                 let macEntryRepo = EntryRepository(dbQueue: macManager.dbQueue)
                 let macSyncService = CloudSyncService(dbQueue: macManager.dbQueue)
@@ -916,37 +999,79 @@ public enum CoreTestSuite {
                     .appendingPathComponent("PromptPanel-SharedSync.json")
 
                 // Step A: Mac syncs to shared file
-                let initialMacSync = try macSyncService.syncNow(
+                let initialMacSync = try await macSyncService.syncNow(
                     endpoint: sharedSyncFileURL.path,
                     apiKey: ""
                 )
                 try check(FileManager.default.fileExists(atPath: sharedSyncFileURL.path))
                 try check(initialMacSync.conflictsPreservedInVersions == 0)
 
-                // Step B: Mobile pulls from shared file, then edits the same entry with a newer timestamp,
-                // while Mac ALSO edits the same entry locally before syncing!
-                _ = try mobileSyncService.syncNow(endpoint: sharedSyncFileURL.path, apiKey: "")
+                // Step A2: Regression test — pasting/executing an entry on Mac (later wall-clock time) must NOT bump updatedAt
+                // and must NEVER overwrite a newer remote edit from Mobile during LWW merge, while still merging useCount & lastUsedAt!
+                _ = try await mobileSyncService.syncNow(endpoint: sharedSyncFileURL.path, apiKey: "")
+                var mobileFirstEdit = try unwrap(mobileEntryRepo.fetchById(sharedEntryId))
+                mobileFirstEdit.content = "手机端先行编辑的新正文（不得被 Mac 随后的粘贴动作覆盖）"
+                mobileFirstEdit.updatedAt = baseDate.addingTimeInterval(60)
+                let mobileFirstEditSnapshot = mobileFirstEdit
+                try await mobileSimManager.dbQueue.write { db in
+                    try mobileFirstEditSnapshot.update(db)
+                }
+                _ = try await mobileSyncService.syncNow(endpoint: sharedSyncFileURL.path, apiKey: "")
+
+                // Mac executes/pastes the stale entry NOW (wall-clock >> baseDate + 60s)
+                try macEntryRepo.recordExecution(id: sharedEntryId)
+                try macEntryRepo.recordExecution(id: sharedEntryId)
+                let macAfterPaste = try unwrap(macEntryRepo.fetchById(sharedEntryId))
+                try check(macAfterPaste.useCount == 5)
+                try check(abs(macAfterPaste.updatedAt.timeIntervalSince(baseDate)) < 0.001)
+
+                _ = try await macSyncService.syncNow(endpoint: sharedSyncFileURL.path, apiKey: "")
+                let macAfterPasteSync = try unwrap(macEntryRepo.fetchById(sharedEntryId))
+                try check(
+                    macAfterPasteSync.content == "手机端先行编辑的新正文（不得被 Mac 随后的粘贴动作覆盖）",
+                    "Local paste/execution must never overwrite newer remote content edit"
+                )
+                try check(macAfterPasteSync.useCount == 5, "Higher local useCount must survive remote content win")
+
+                // Equal updatedAt usage merge: Mobile executes the same version without editing content
+                _ = try await mobileSyncService.syncNow(endpoint: sharedSyncFileURL.path, apiKey: "")
+                try mobileEntryRepo.recordExecution(id: sharedEntryId)
+                try mobileEntryRepo.recordExecution(id: sharedEntryId)
+                try check(try unwrap(mobileEntryRepo.fetchById(sharedEntryId)).useCount == 7)
+                _ = try await mobileSyncService.syncNow(endpoint: sharedSyncFileURL.path, apiKey: "")
+                _ = try await macSyncService.syncNow(endpoint: sharedSyncFileURL.path, apiKey: "")
+                try check(
+                    try unwrap(macEntryRepo.fetchById(sharedEntryId)).useCount == 7,
+                    "useCount must merge monotonically even when remoteEntry.updatedAt == localEntry.updatedAt"
+                )
+
+                // Step B: Mobile edits the same entry with a newer timestamp (+300s),
+                // while Mac ALSO edits the same entry locally (+100s) before syncing!
                 var mobileEdited = try unwrap(mobileEntryRepo.fetchById(sharedEntryId))
                 mobileEdited.content = "手机端修改后的新内容：增加 CloudSync 冲突自动留存测试"
-                mobileEdited.useCount = 5
+                mobileEdited.useCount = 8
                 mobileEdited.updatedAt = baseDate.addingTimeInterval(300)
-                try mobileEntryRepo.update(mobileEdited, changeNote: "手机端修改")
+                let mobileEditedSnapshot = mobileEdited
+                try await mobileSimManager.dbQueue.write { db in
+                    try mobileEditedSnapshot.update(db)
+                }
 
                 // Mobile pushes its newer edit to shared file
-                _ = try mobileSyncService.syncNow(endpoint: sharedSyncFileURL.path, apiKey: "")
+                _ = try await mobileSyncService.syncNow(endpoint: sharedSyncFileURL.path, apiKey: "")
 
                 // Meanwhile on Mac, the user had made an offline local edit at +100s (older than mobile's +300s)
                 var macOfflineEdited = try unwrap(macEntryRepo.fetchById(sharedEntryId))
                 macOfflineEdited.content = "Mac 离线期间修改的本地内容（不应丢失）"
                 macOfflineEdited.updatedAt = baseDate.addingTimeInterval(100)
-                try macManager.dbQueue.write { db in
+                let macOfflineEditedSnapshot = macOfflineEdited
+                try await macManager.dbQueue.write { db in
                     // Simulate un-snapshotted or local divergent state before sync
-                    try macOfflineEdited.update(db)
+                    try macOfflineEditedSnapshot.update(db)
                 }
 
                 // Step C: Mac syncs with shared file -> Mobile's +300s wins as current Entry,
                 // AND Mac's +100s content is automatically preserved in entry_versions!
-                let conflictSyncSummary = try macSyncService.syncNow(
+                let conflictSyncSummary = try await macSyncService.syncNow(
                     endpoint: sharedSyncFileURL.path,
                     apiKey: ""
                 )
@@ -955,7 +1080,7 @@ public enum CoreTestSuite {
 
                 let finalMacEntry = try unwrap(macEntryRepo.fetchById(sharedEntryId))
                 try check(finalMacEntry.content == "手机端修改后的新内容：增加 CloudSync 冲突自动留存测试")
-                try check(finalMacEntry.useCount == 5)
+                try check(finalMacEntry.useCount == 8)
 
                 let allMacVersions = try macEntryRepo.fetchVersions(forEntryId: sharedEntryId)
                 try check(allMacVersions.contains(where: { $0.content == "Mac 离线期间修改的本地内容（不应丢失）" }))
@@ -1052,18 +1177,34 @@ public enum CoreTestSuite {
                 // Step E: Verify soft-delete tombstones prevent resurrection across CloudSync
                 try macEntryRepo.delete(id: sharedEntryId)
                 try check(try macEntryRepo.fetchById(sharedEntryId) == nil)
-                _ = try macSyncService.syncNow(endpoint: sharedSyncFileURL.path, apiKey: "")
+                _ = try await macSyncService.syncNow(endpoint: sharedSyncFileURL.path, apiKey: "")
                 try check(try macEntryRepo.fetchById(sharedEntryId) == nil, "Soft-deleted entry must not resurrect on sync")
-                _ = try mobileSyncService.syncNow(endpoint: sharedSyncFileURL.path, apiKey: "")
+                _ = try await mobileSyncService.syncNow(endpoint: sharedSyncFileURL.path, apiKey: "")
                 try check(try mobileEntryRepo.fetchById(sharedEntryId) == nil, "Soft-delete tombstone must propagate to peer device")
 
-                // Step F: Verify subpath health check URL resolution
+                // Step F: Verify subpath health check URL resolution & HTTPS transport enforcement
                 try check(CloudSyncService.resolvedHealthPath(from: "") == "/v1/health")
                 try check(CloudSyncService.resolvedHealthPath(from: "/v1/sync") == "/v1/health")
                 try check(CloudSyncService.resolvedHealthPath(from: "/promptpanel/v1/sync") == "/promptpanel/v1/health")
                 try check(CloudSyncService.resolvedHealthPath(from: "/api/sync") == "/api/v1/health")
 
-                // Step G: Verify AES-256-GCM+Gzip (HKDF-SHA256) envelope encryption & SettingsRepository token encryption
+                try check(CloudSyncService.isAllowedRemoteHTTPURL(URL(string: "https://sync.example.com/v1/sync")!))
+                try check(CloudSyncService.isAllowedRemoteHTTPURL(URL(string: "http://127.0.0.1:18787/v1/sync")!))
+                try check(CloudSyncService.isAllowedRemoteHTTPURL(URL(string: "http://localhost:18787/v1/sync")!))
+                try check(!CloudSyncService.isAllowedRemoteHTTPURL(URL(string: "http://192.168.1.10:18787/v1/sync")!))
+                try check(!CloudSyncService.isAllowedRemoteHTTPURL(URL(string: "http://sync.example.com/v1/sync")!))
+
+                var rejectedCleartextSync = false
+                do {
+                    _ = try await macSyncService.syncNow(endpoint: "http://192.168.1.10:18787/v1/sync", apiKey: "")
+                } catch let error as CloudSyncError {
+                    if case .invalidEndpoint = error {
+                        rejectedCleartextSync = true
+                    }
+                }
+                try check(rejectedCleartextSync, "Non-loopback cleartext HTTP sync endpoint must be rejected")
+
+                // Step G: Verify AES-256-GCM+Gzip (HKDF-SHA256) envelope encryption & Keychain/marker token isolation
                 let testToken = "pp_live_secret_token_2026_aead_verify"
                 let sealedPayload = try CloudSyncCrypto.sealEnvelopeData(mobileCamelJSON, apiKey: testToken)
                 let sealedString = String(data: sealedPayload, encoding: .utf8) ?? ""
@@ -1082,17 +1223,36 @@ public enum CoreTestSuite {
 
                 let macSettingsRepo = SettingsRepository(dbQueue: macManager.dbQueue)
                 try macSettingsRepo.setCloudSyncApiKey(testToken)
-                let rawStoredKey = try macManager.dbQueue.read { db in
+                let rawStoredKey = try await macManager.dbQueue.read { db in
                     try String.fetchOne(db, sql: "SELECT value FROM app_settings WHERE key = ?", arguments: [Constants.SettingsKey.cloudSyncApiKey])
                 }
-                try check(rawStoredKey?.hasPrefix("enc:v2:") == true, "API key in app_settings must be encrypted at rest")
+                try check(
+                    rawStoredKey == SettingsRepository.keychainStoredMarker,
+                    "SQLite app_settings must only store keychain:v1 marker so database backups never leak sync tokens"
+                )
                 try check(try macSettingsRepo.getCloudSyncApiKey() == testToken)
+
+                // Legacy enc:v2: rows in app_settings must transparently decrypt, migrate to secret store, and scrub SQLite to keychain:v1
+                let legacyToken = "pp_live_legacy_migrated_token_2025"
+                let legacyEncoded = try SettingsRepository.makeLegacyEncryptedApiKeyForMigrationTest(legacyToken)
+                try macSettingsRepo.set(Constants.SettingsKey.cloudSyncApiKey, value: legacyEncoded)
+                try check(try macSettingsRepo.getCloudSyncApiKey() == legacyToken)
+                let scrubbedKey = try await macManager.dbQueue.read { db in
+                    try String.fetchOne(db, sql: "SELECT value FROM app_settings WHERE key = ?", arguments: [Constants.SettingsKey.cloudSyncApiKey])
+                }
+                try check(scrubbedKey == SettingsRepository.keychainStoredMarker, "Legacy enc:v2: ciphertext must be scrubbed after migration")
             }
         }
     }
 
     static func verifyCloudSyncDataLossProtectionAndThrottledBackups() throws {
-        try withTempDatabase { manager, dbURL in
+        try runAsyncOnMainRunLoop {
+            try await verifyCloudSyncDataLossProtectionAndThrottledBackupsAsync()
+        }
+    }
+
+    static func verifyCloudSyncDataLossProtectionAndThrottledBackupsAsync() async throws {
+        try await withTempDatabaseAsync { manager, dbURL in
             let projectRepo = ProjectRepository(dbQueue: manager.dbQueue)
             let entryRepo = EntryRepository(dbQueue: manager.dbQueue)
             let logRepo = LogRepository(dbQueue: manager.dbQueue)
@@ -1158,7 +1318,7 @@ public enum CoreTestSuite {
             }
 
             let syncFileURL = dbURL.deletingLastPathComponent().appendingPathComponent("CloudSync-GuardTest.json")
-            _ = try syncService.syncNow(endpoint: syncFileURL.path, apiKey: "")
+            _ = try await syncService.syncNow(endpoint: syncFileURL.path, apiKey: "")
 
             // 4. Simulate cloud mass-tombstone disaster: remote marks the project and all 4 entries as deleted with a newer timestamp!
             let disasterTime = baseTime.addingTimeInterval(600)
@@ -1187,7 +1347,7 @@ public enum CoreTestSuite {
             try CloudSyncService.makeEncoder().encode(poisonedEnvelope).write(to: syncFileURL, options: .atomic)
 
             // Sync against the poisoned cloud file: circuit breaker must block the mass wipe and heal the cloud file!
-            let guardSummary = try syncService.syncNow(endpoint: syncFileURL.path, apiKey: "")
+            let guardSummary = try await syncService.syncNow(endpoint: syncFileURL.path, apiKey: "")
             try check(guardSummary.protectedEntriesCount == 4, "Circuit breaker must protect all 4 active entries from mass deletion")
             try check(guardSummary.protectedProjectsCount >= 1, "Circuit breaker must protect the parent project from deletion")
 
@@ -1215,7 +1375,7 @@ public enum CoreTestSuite {
                 versions: []
             )
             try CloudSyncService.makeEncoder().encode(wipedEnvelope).write(to: syncFileURL, options: .atomic)
-            _ = try syncService.syncNow(endpoint: syncFileURL.path, apiKey: "")
+            _ = try await syncService.syncNow(endpoint: syncFileURL.path, apiKey: "")
             try check(try entryRepo.fetchByProject(teamProject.id).count == 4, "Local entries must survive an empty cloud reset")
 
             let reseededCloudData = try Data(contentsOf: syncFileURL)
@@ -1225,7 +1385,7 @@ public enum CoreTestSuite {
             // 6. Verify manual soft-delete recovery (`recoverDeletedAndSync`)
             try entryRepo.delete(id: "protected-entry-1")
             try check(try entryRepo.fetchById("protected-entry-1") == nil)
-            let recoveryResult = try syncService.recoverDeletedAndSync(endpoint: syncFileURL.path, apiKey: "")
+            let recoveryResult = try await syncService.recoverDeletedAndSync(endpoint: syncFileURL.path, apiKey: "")
             try check(recoveryResult.entriesRestored >= 1)
             try check(try entryRepo.fetchById("protected-entry-1") != nil, "Soft-deleted entry must be restored by recoverDeletedAndSync")
         }
@@ -2128,7 +2288,7 @@ public enum CoreTestSuite {
             let syncService = CloudSyncService(dbQueue: manager.dbQueue, storageMaintenanceService: maintenance)
             var caughtFriendlyHTMLSyncError = false
             do {
-                _ = try syncService.syncNow(endpoint: corruptSyncFile.path, apiKey: "")
+                _ = try await syncService.syncNow(endpoint: corruptSyncFile.path, apiKey: "")
             } catch let error as CloudSyncError {
                 caughtFriendlyHTMLSyncError = error.localizedDescription.contains("网页")
             }
@@ -2272,12 +2432,12 @@ struct PromptPanelSwiftTestingSuite {
         try CoreTestSuite.verifyWorkspaceKindsArchiveVersionsAndCloning()
     }
 
-    @Test func referenceWindowAndCloudSyncConflictPreservation() throws {
-        try CoreTestSuite.verifyReferenceWindowAndCloudSyncConflictPreservation()
+    @Test func referenceWindowAndCloudSyncConflictPreservation() async throws {
+        try await CoreTestSuite.verifyReferenceWindowAndCloudSyncConflictPreservationAsync()
     }
 
-    @Test func cloudSyncDataLossProtectionAndThrottledBackups() throws {
-        try CoreTestSuite.verifyCloudSyncDataLossProtectionAndThrottledBackups()
+    @Test func cloudSyncDataLossProtectionAndThrottledBackups() async throws {
+        try await CoreTestSuite.verifyCloudSyncDataLossProtectionAndThrottledBackupsAsync()
     }
 
     @Test func completedRankingCleanupAndArchivedExclusion() throws {

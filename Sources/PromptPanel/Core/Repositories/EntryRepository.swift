@@ -4,6 +4,21 @@ import GRDB
 /// Data access layer for entries and their historical version snapshots.
 final class EntryRepository: @unchecked Sendable {
 
+    static let hasTagDatabaseFunction = DatabaseFunction("pp_has_tag", argumentCount: 2, pure: true) { dbValues in
+        guard let rawTags = String.fromDatabaseValue(dbValues[0]),
+              !rawTags.isEmpty,
+              rawTags != "[]",
+              let rawTarget = String.fromDatabaseValue(dbValues[1]) else {
+            return false
+        }
+        let target = rawTarget.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else {
+            return true
+        }
+        let decoded = EntryTagsCodec.decode(rawTags)
+        return decoded.contains { $0.caseInsensitiveCompare(target) == .orderedSame }
+    }
+
     private let dbQueue: DatabaseQueue
 
     init(dbQueue: DatabaseQueue) {
@@ -82,57 +97,79 @@ final class EntryRepository: @unchecked Sendable {
         defaultProjectId: String,
         tag: String? = nil
     ) throws -> [Entry] {
+        let normalizedTag = Self.normalizedTag(tag)
         guard !query.trimmingCharacters(in: .whitespaces).isEmpty else {
-            let entries = try fetchMixed(currentProjectId: currentProjectId, defaultProjectId: defaultProjectId)
-            return Self.applyTagFilter(entries, tag: tag)
+            guard let normalizedTag else {
+                return try fetchMixed(currentProjectId: currentProjectId, defaultProjectId: defaultProjectId)
+            }
+            return try dbQueue.read { db in
+                let sql = """
+                    SELECT entries.*,
+                           CASE WHEN entries.project_id = ? THEN 0 ELSE 1 END AS project_priority
+                    FROM entries
+                    WHERE entries.deleted_at IS NULL
+                      AND entries.project_id IN (?, ?)
+                      AND pp_has_tag(entries.tags, ?)
+                    \(EntryRanking.sqlOrderByClause(includeProjectPriority: true))
+                    """
+                return try Entry.fetchAll(
+                    db,
+                    sql: sql,
+                    arguments: [currentProjectId, currentProjectId, defaultProjectId, normalizedTag, Date()]
+                )
+            }
         }
 
         return try search(
             query: query,
             projectIds: [currentProjectId, defaultProjectId],
             currentProjectId: currentProjectId,
-            tag: tag
+            tag: normalizedTag
         )
     }
 
     /// Full-text search across title and content across all projects.
     func searchAll(query: String, tag: String? = nil, excludeArchivedProjects: Bool = false) throws -> [Entry] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedTag = Self.normalizedTag(tag)
+        let archiveClause = excludeArchivedProjects
+            ? "\n  AND entries.project_id IN (SELECT id FROM projects WHERE deleted_at IS NULL AND is_archived = 0)"
+            : ""
+
         guard !trimmed.isEmpty else {
-            let entries = try fetchAll(excludeArchivedProjects: excludeArchivedProjects)
-            return Self.applyTagFilter(entries, tag: tag)
+            guard let normalizedTag else {
+                return try fetchAll(excludeArchivedProjects: excludeArchivedProjects)
+            }
+            return try dbQueue.read { db in
+                let sql = """
+                    SELECT entries.*
+                    FROM entries
+                    WHERE entries.deleted_at IS NULL\(archiveClause)
+                      AND pp_has_tag(entries.tags, ?)
+                    \(EntryRanking.sqlOrderByClause(includeProjectPriority: false))
+                    """
+                return try Entry.fetchAll(db, sql: sql, arguments: [normalizedTag, Date()])
+            }
         }
 
         return try dbQueue.read { db in
-            let tokens = Self.searchTokens(from: trimmed)
-            let escapedQuery = Self.makeFTS5PrefixQuery(fromTokens: tokens)
-            let substringClause = Self.makeSubstringWhereClause(tokenCount: tokens.count)
-            let archiveClause = excludeArchivedProjects
-                ? "\n  AND entries.project_id IN (SELECT id FROM projects WHERE deleted_at IS NULL AND is_archived = 0)"
-                : ""
-            let limitClause = tag == nil ? "\nLIMIT 100" : ""
+            let queryPredicate = Self.makeSearchPredicate(from: trimmed)
+            let tagClause = normalizedTag != nil ? "\n  AND pp_has_tag(entries.tags, ?)" : ""
             let sql = """
                 SELECT entries.*
                 FROM entries
-                WHERE entries.deleted_at IS NULL\(archiveClause)
-                  AND (
-                    entries.rowid IN (
-                        SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?
-                    )
-                    OR (\(substringClause))
-                )
-                \(EntryRanking.sqlOrderByClause(includeProjectPriority: false))\(limitClause)
+                WHERE entries.deleted_at IS NULL\(archiveClause)\(tagClause)
+                  AND (\(queryPredicate.sql))
+                \(EntryRanking.sqlOrderByClause(includeProjectPriority: false))
+                LIMIT 100
                 """
-            var arguments: StatementArguments = [escapedQuery]
-            for token in tokens {
-                arguments += [token, token, token]
+            var arguments = StatementArguments()
+            if let normalizedTag {
+                arguments += [normalizedTag]
             }
+            arguments += queryPredicate.arguments
             arguments += [Date()]
-            let entries = try Entry.fetchAll(db, sql: sql, arguments: arguments)
-            if let tag {
-                return Array(Self.applyTagFilter(entries, tag: tag).prefix(100))
-            }
-            return entries
+            return try Entry.fetchAll(db, sql: sql, arguments: arguments)
         }
     }
 
@@ -145,22 +182,41 @@ final class EntryRepository: @unchecked Sendable {
     ) throws -> [Entry] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let ids = projectIds.uniqued()
-
-        guard !trimmed.isEmpty else {
-            let entries = try fetchByProjects(ids)
-            return Self.applyTagFilter(entries, tag: tag)
-        }
+        let normalizedTag = Self.normalizedTag(tag)
 
         guard !ids.isEmpty else {
             return []
         }
 
+        guard !trimmed.isEmpty else {
+            guard let normalizedTag else {
+                return try fetchByProjects(ids)
+            }
+            return try dbQueue.read { db in
+                let placeholders = ids.map { _ in "?" }.joined(separator: ", ")
+                let sql = """
+                    SELECT entries.*,
+                           CASE
+                               WHEN ? IS NOT NULL AND entries.project_id = ? THEN 0
+                               ELSE 1
+                           END AS project_priority
+                    FROM entries
+                    WHERE entries.deleted_at IS NULL
+                      AND entries.project_id IN (\(placeholders))
+                      AND pp_has_tag(entries.tags, ?)
+                    \(EntryRanking.sqlOrderByClause(includeProjectPriority: currentProjectId != nil))
+                    """
+                var arguments: StatementArguments = [currentProjectId, currentProjectId]
+                arguments += StatementArguments(ids)
+                arguments += [normalizedTag, Date()]
+                return try Entry.fetchAll(db, sql: sql, arguments: arguments)
+            }
+        }
+
         return try dbQueue.read { db in
-            let tokens = Self.searchTokens(from: trimmed)
-            let escapedQuery = Self.makeFTS5PrefixQuery(fromTokens: tokens)
-            let substringClause = Self.makeSubstringWhereClause(tokenCount: tokens.count)
+            let queryPredicate = Self.makeSearchPredicate(from: trimmed)
             let placeholders = ids.map { _ in "?" }.joined(separator: ", ")
-            let limitClause = tag == nil ? "\nLIMIT 100" : ""
+            let tagClause = normalizedTag != nil ? "\n  AND pp_has_tag(entries.tags, ?)" : ""
             let sql = """
                 SELECT entries.*,
                        CASE
@@ -169,37 +225,28 @@ final class EntryRepository: @unchecked Sendable {
                        END AS project_priority
                 FROM entries
                 WHERE entries.deleted_at IS NULL
-                  AND entries.project_id IN (\(placeholders))
-                  AND (
-                      entries.rowid IN (
-                          SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?
-                      )
-                      OR (\(substringClause))
-                  )
-                \(EntryRanking.sqlOrderByClause(includeProjectPriority: currentProjectId != nil))\(limitClause)
+                  AND entries.project_id IN (\(placeholders))\(tagClause)
+                  AND (\(queryPredicate.sql))
+                \(EntryRanking.sqlOrderByClause(includeProjectPriority: currentProjectId != nil))
+                LIMIT 100
                 """
             var arguments: StatementArguments = [currentProjectId, currentProjectId]
             arguments += StatementArguments(ids)
-            arguments += [escapedQuery]
-            for token in tokens {
-                arguments += [token, token, token]
+            if let normalizedTag {
+                arguments += [normalizedTag]
             }
+            arguments += queryPredicate.arguments
             arguments += [Date()] // pp_frecency's `now`
-            let entries = try Entry.fetchAll(db, sql: sql, arguments: arguments)
-            if let tag {
-                return Array(Self.applyTagFilter(entries, tag: tag).prefix(100))
-            }
-            return entries
+            return try Entry.fetchAll(db, sql: sql, arguments: arguments)
         }
     }
 
-    private static func applyTagFilter(_ entries: [Entry], tag: String?) -> [Entry] {
-        guard let tag, !tag.isEmpty else {
-            return entries
+    private static func normalizedTag(_ tag: String?) -> String? {
+        guard let trimmed = tag?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else {
+            return nil
         }
-        return entries.filter { entry in
-            entry.tags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame }
-        }
+        return trimmed
     }
 
     private static func searchTokens(from rawQuery: String) -> [String] {
@@ -209,27 +256,46 @@ final class EntryRepository: @unchecked Sendable {
             .filter { !$0.isEmpty }
     }
 
-    private static func makeFTS5PrefixQuery(from rawQuery: String) -> String {
-        makeFTS5PrefixQuery(fromTokens: searchTokens(from: rawQuery))
-    }
-
-    private static func makeFTS5PrefixQuery(fromTokens tokens: [String]) -> String {
+    private static func makeTrigramFTS5Query(fromTokens tokens: [String]) -> String {
         tokens
             .map { token in
                 let escapedToken = token.replacingOccurrences(of: "\"", with: "\"\"")
-                return "\"\(escapedToken)\"*"
+                return "\"\(escapedToken)\""
             }
             .joined(separator: " ")
     }
 
-    private static func makeSubstringWhereClause(tokenCount: Int) -> String {
-        guard tokenCount > 0 else {
-            return "0"
+    private static func makeSearchPredicate(from rawQuery: String) -> (sql: String, arguments: StatementArguments) {
+        let tokens = searchTokens(from: rawQuery)
+        guard !tokens.isEmpty else {
+            return ("0", StatementArguments())
         }
-        return Array(
-            repeating: "(INSTR(LOWER(entries.title), LOWER(?)) > 0 OR INSTR(LOWER(entries.content), LOWER(?)) > 0 OR INSTR(LOWER(entries.tags), LOWER(?)) > 0)",
-            count: tokenCount
-        ).joined(separator: " AND ")
+
+        let trigramTokens = tokens.filter { $0.unicodeScalars.count >= 3 }
+        let shortTokens = tokens.filter { $0.unicodeScalars.count < 3 }
+
+        var clauses: [String] = []
+        var arguments = StatementArguments()
+
+        if !trigramTokens.isEmpty {
+            clauses.append(
+                "entries.rowid IN (SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?)"
+            )
+            arguments += [makeTrigramFTS5Query(fromTokens: trigramTokens)]
+        }
+
+        if !shortTokens.isEmpty {
+            let shortClauses = Array(
+                repeating: "(INSTR(LOWER(entries.title), LOWER(?)) > 0 OR INSTR(LOWER(entries.content), LOWER(?)) > 0 OR INSTR(LOWER(entries.tags), LOWER(?)) > 0)",
+                count: shortTokens.count
+            ).joined(separator: " AND ")
+            clauses.append("(\(shortClauses))")
+            for token in shortTokens {
+                arguments += [token, token, token]
+            }
+        }
+
+        return (clauses.joined(separator: " AND "), arguments)
     }
 
     /// Fetch a single entry by ID.
@@ -534,7 +600,8 @@ final class EntryRepository: @unchecked Sendable {
         PPLogger.entry.debug("Entry soft-deleted: \(id)")
     }
 
-    /// Record an execution: increment use_count and set last_used_at.
+    /// Record an execution: increment use_count and set last_used_at without bumping updated_at,
+    /// so routine usage/pasting never overwrites newer remote content edits during LWW cloud sync.
     func recordExecution(id: String) throws {
         try dbQueue.write { db in
             let now = Date()
@@ -542,11 +609,10 @@ final class EntryRepository: @unchecked Sendable {
                 sql: """
                     UPDATE entries
                     SET use_count = use_count + 1,
-                        last_used_at = ?,
-                        updated_at = ?
+                        last_used_at = ?
                     WHERE id = ? AND deleted_at IS NULL
                     """,
-                arguments: [now, now, id]
+                arguments: [now, id]
             )
             try Self.requireChangedRow(in: db, entity: "Entry \(id)")
         }

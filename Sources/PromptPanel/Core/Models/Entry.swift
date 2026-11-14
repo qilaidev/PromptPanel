@@ -311,7 +311,11 @@ extension Entry: FetchableRecord, PersistableRecord {
 /// JSON <-> `[String]` codec for the `entries.tags` column.
 /// Malformed JSON falls back to an empty list so a single bad row cannot crash the app.
 enum EntryTagsCodec {
-    private static let encoder = JSONEncoder()
+    private static let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        return encoder
+    }()
     private static let decoder = JSONDecoder()
     private static let lock = NSLock()
 
