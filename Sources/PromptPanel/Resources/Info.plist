@@ -32,7 +32,7 @@
 	<string>项目快贴需要辅助功能权限来实现自动粘贴功能。授权后，选择词条时内容将直接粘贴到您当前的输入位置。不授权也可以正常使用复制功能。</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsArbitraryLoads</key>
+		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
 	<key>NSHumanReadableCopyright</key>
@@ -42,7 +42,7 @@
 	<key>SUAutomaticallyUpdate</key>
 	<false/>
 	<key>SUEnableAutomaticChecks</key>
-	<true/>
+	<false/>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
 </dict>

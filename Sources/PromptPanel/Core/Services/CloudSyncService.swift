@@ -631,7 +631,7 @@ final class CloudSyncService: @unchecked Sendable {
                         remoteEntry.lastUsedAt = mergedLastUsedAt
                         try remoteEntry.update(db)
                         entriesUpdated += 1
-                    } else if remoteEntry.updatedAt < localEntry.updatedAt {
+                    } else {
                         let hasContentConflict = localEntry.content != remoteEntry.content
                             || localEntry.title != remoteEntry.title
                         if hasContentConflict {
@@ -869,7 +869,7 @@ final class CloudSyncService: @unchecked Sendable {
     func recoverDeletedAndSync(
         endpoint: String,
         apiKey: String
-    ) throws -> (projectsRestored: Int, entriesRestored: Int, syncSummary: CloudSyncSummary?) {
+    ) async throws -> (projectsRestored: Int, entriesRestored: Int, syncSummary: CloudSyncSummary?) {
         try acquireSyncSlot()
         defer { releaseSyncSlot() }
         let restored = try recoverLocalSoftDeletedRecords()
@@ -877,11 +877,29 @@ final class CloudSyncService: @unchecked Sendable {
         guard !trimmed.isEmpty else {
             return (restored.projectsRestored, restored.entriesRestored, nil)
         }
-        let summary = try syncNowUnlocked(endpoint: trimmed, apiKey: apiKey)
+        let summary = try await syncNowUnlocked(endpoint: trimmed, apiKey: apiKey)
         return (restored.projectsRestored, restored.entriesRestored, summary)
     }
 
     // MARK: - Sync Execution (File / Cloud Drive or HTTPS Endpoint)
+
+    static func isAllowedRemoteHTTPURL(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(),
+              let rawHost = url.host?.lowercased(),
+              !rawHost.isEmpty else {
+            return false
+        }
+        if scheme == "https" {
+            return true
+        }
+        if scheme == "http" {
+            let normalizedHost = rawHost.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+            return normalizedHost == "localhost"
+                || normalizedHost == "127.0.0.1"
+                || normalizedHost == "::1"
+        }
+        return false
+    }
 
     /// Resolves the health check path while preserving any reverse-proxy subpath prefix.
     static func resolvedHealthPath(from rawPath: String) -> String {
@@ -904,7 +922,7 @@ final class CloudSyncService: @unchecked Sendable {
         return path + "/v1/health"
     }
 
-    func testConnection(endpoint: String, apiKey: String) throws -> CloudSyncHealthReport {
+    func testConnection(endpoint: String, apiKey: String) async throws -> CloudSyncHealthReport {
         let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw CloudSyncError.endpointNotConfigured
@@ -920,6 +938,9 @@ final class CloudSyncService: @unchecked Sendable {
             guard let healthURL = components.url else {
                 throw CloudSyncError.invalidEndpoint(trimmed)
             }
+            guard Self.isAllowedRemoteHTTPURL(healthURL) else {
+                throw CloudSyncError.invalidEndpoint("为保护同步数据与 Token 安全，远程同步仅允许 https:// 地址（仅本机回环允许 http://localhost 或 http://127.0.0.1）")
+            }
 
             var request = URLRequest(url: healthURL, timeoutInterval: 10)
             request.httpMethod = "GET"
@@ -928,7 +949,7 @@ final class CloudSyncService: @unchecked Sendable {
                 request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
             }
 
-            let (data, response) = try performSynchronousRequest(request)
+            let (data, response) = try await performAsyncRequest(request)
             let latencyMs = max(Int((DispatchTime.now().uptimeNanoseconds - startedAt) / 1_000_000), 1)
             guard let httpResponse = response as? HTTPURLResponse,
                   (200..<300).contains(httpResponse.statusCode) else {
@@ -991,13 +1012,13 @@ final class CloudSyncService: @unchecked Sendable {
         }
     }
 
-    func syncNow(endpoint: String, apiKey: String) throws -> CloudSyncSummary {
+    func syncNow(endpoint: String, apiKey: String) async throws -> CloudSyncSummary {
         try acquireSyncSlot()
         defer { releaseSyncSlot() }
-        return try syncNowUnlocked(endpoint: endpoint, apiKey: apiKey)
+        return try await syncNowUnlocked(endpoint: endpoint, apiKey: apiKey)
     }
 
-    private func syncNowUnlocked(endpoint: String, apiKey: String) throws -> CloudSyncSummary {
+    private func syncNowUnlocked(endpoint: String, apiKey: String) async throws -> CloudSyncSummary {
         let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw CloudSyncError.endpointNotConfigured
@@ -1013,7 +1034,10 @@ final class CloudSyncService: @unchecked Sendable {
             guard let url = components.url else {
                 throw CloudSyncError.invalidEndpoint(trimmed)
             }
-            return try syncViaHTTP(url: url, apiKey: apiKey)
+            guard Self.isAllowedRemoteHTTPURL(url) else {
+                throw CloudSyncError.invalidEndpoint("为保护同步数据与 Token 安全，远程同步仅允许 https:// 地址（仅本机回环允许 http://localhost 或 http://127.0.0.1）")
+            }
+            return try await syncViaHTTP(url: url, apiKey: apiKey)
         } else {
             let fileURL: URL
             if trimmed.hasPrefix("file://"), let parsed = URL(string: trimmed) {
@@ -1061,7 +1085,7 @@ final class CloudSyncService: @unchecked Sendable {
         return summary
     }
 
-    private func syncViaHTTP(url: URL, apiKey: String) throws -> CloudSyncSummary {
+    private func syncViaHTTP(url: URL, apiKey: String) async throws -> CloudSyncSummary {
         let encoder = Self.makeEncoder()
         let decoder = Self.makeDecoder()
 
@@ -1074,7 +1098,7 @@ final class CloudSyncService: @unchecked Sendable {
             getRequest.setValue("aes-256-gcm+gzip", forHTTPHeaderField: "X-PromptPanel-Cipher")
         }
 
-        let (getData, getResponse) = try performSynchronousRequest(getRequest)
+        let (getData, getResponse) = try await performAsyncRequest(getRequest)
         if let httpResponse = getResponse as? HTTPURLResponse {
             if httpResponse.statusCode == 401 {
                 throw CloudSyncError.networkFailure("Token 鉴权未通过 (HTTP 401)，请确认已填写不少于 12 位的专属 Token")
@@ -1118,7 +1142,7 @@ final class CloudSyncService: @unchecked Sendable {
         let rawPostBody = try encoder.encode(mergedEnvelope)
         postRequest.httpBody = try CloudSyncCrypto.sealEnvelopeData(rawPostBody, apiKey: apiKey)
 
-        let (postData, postResponse) = try performSynchronousRequest(postRequest)
+        let (postData, postResponse) = try await performAsyncRequest(postRequest)
         if let httpResponse = postResponse as? HTTPURLResponse,
            !(200..<300).contains(httpResponse.statusCode) {
             throw CloudSyncError.networkFailure(
@@ -1140,14 +1164,15 @@ final class CloudSyncService: @unchecked Sendable {
                     protectedProjectsCount: summary.protectedProjectsCount + secondPass.protectedProjectsCount,
                     syncedAt: secondPass.syncedAt
                 )
-                try dbQueue.write { db in
-                    let protectionSuffix = summary.totalProtectedCount > 0
-                        ? "，防丢拦截保护 \(summary.protectedEntriesCount) 条/\(summary.protectedProjectsCount) 组"
+                let finalSummary = summary
+                try await dbQueue.write { db in
+                    let protectionSuffix = finalSummary.totalProtectedCount > 0
+                        ? "，防丢拦截保护 \(finalSummary.protectedEntriesCount) 条/\(finalSummary.protectedProjectsCount) 组"
                         : ""
-                    let summaryText = "上次同步：\(Self.summaryFormatter.string(from: summary.syncedAt))（项目 +\(summary.projectsCreated)/更\(summary.projectsUpdated)，词条 +\(summary.entriesCreated)/更\(summary.entriesUpdated)，冲突版本保护 \(summary.conflictsPreservedInVersions)\(protectionSuffix)）"
+                    let summaryText = "上次同步：\(Self.summaryFormatter.string(from: finalSummary.syncedAt))（项目 +\(finalSummary.projectsCreated)/更\(finalSummary.projectsUpdated)，词条 +\(finalSummary.entriesCreated)/更\(finalSummary.entriesUpdated)，冲突版本保护 \(finalSummary.conflictsPreservedInVersions)\(protectionSuffix)）"
                     try db.execute(
                         sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('last_sync_summary', ?, ?)",
-                        arguments: [summaryText, summary.syncedAt]
+                        arguments: [summaryText, finalSummary.syncedAt]
                     )
                 }
             } catch let syncErr as CloudSyncError {
@@ -1162,61 +1187,35 @@ final class CloudSyncService: @unchecked Sendable {
         return summary
     }
 
-    private func performSynchronousRequest(_ request: URLRequest, maxAttempts: Int = 2) throws -> (Data, URLResponse) {
+    private func performAsyncRequest(_ request: URLRequest, maxAttempts: Int = 2) async throws -> (Data, URLResponse) {
         let attempts = max(1, maxAttempts)
         var lastError: CloudSyncError = .networkFailure("服务器无响应，请稍后重试")
 
         for attempt in 1...attempts {
-            let semaphore = DispatchSemaphore(value: 0)
-            var responseData = Data()
-            var urlResponse: URLResponse?
-            var requestError: Error?
-
-            let task = URLSession.shared.dataTask(with: request) { data, response, error in
-                if let data { responseData = data }
-                urlResponse = response
-                requestError = error
-                semaphore.signal()
-            }
-            task.resume()
-
-            let waitTimeout = max(5.0, request.timeoutInterval) + 3.0
-            if semaphore.wait(timeout: .now() + waitTimeout) == .timedOut {
-                task.cancel()
-                lastError = .networkFailure("网络请求超时，请检查服务器或网络状态")
+            try Task.checkCancellation()
+            do {
+                let (responseData, urlResponse) = try await URLSession.shared.data(for: request)
+                if let httpResponse = urlResponse as? HTTPURLResponse,
+                   [429, 502, 503, 504].contains(httpResponse.statusCode),
+                   attempt < attempts {
+                    try await Task.sleep(nanoseconds: 250_000_000)
+                    continue
+                }
+                return (responseData, urlResponse)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                let nsError = error as NSError
+                if nsError.domain == NSURLErrorDomain && nsError.code == URLError.cancelled.rawValue {
+                    throw CancellationError()
+                }
+                lastError = .networkFailure(Self.friendlyNetworkErrorMessage(for: error))
                 if attempt < attempts {
-                    Thread.sleep(forTimeInterval: 0.25)
+                    try await Task.sleep(nanoseconds: 250_000_000)
                     continue
                 }
                 throw lastError
             }
-
-            if let requestError {
-                lastError = .networkFailure(Self.friendlyNetworkErrorMessage(for: requestError))
-                if attempt < attempts {
-                    Thread.sleep(forTimeInterval: 0.25)
-                    continue
-                }
-                throw lastError
-            }
-
-            guard let urlResponse else {
-                lastError = .networkFailure("服务器无响应，请稍后重试")
-                if attempt < attempts {
-                    Thread.sleep(forTimeInterval: 0.25)
-                    continue
-                }
-                throw lastError
-            }
-
-            if let httpResponse = urlResponse as? HTTPURLResponse,
-               [429, 502, 503, 504].contains(httpResponse.statusCode),
-               attempt < attempts {
-                Thread.sleep(forTimeInterval: 0.25)
-                continue
-            }
-
-            return (responseData, urlResponse)
         }
 
         throw lastError

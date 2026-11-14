@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import Foundation
+import Security
 import Sparkle
 
 @MainActor
@@ -40,22 +41,38 @@ final class UpdaterService: NSObject, ObservableObject {
     struct ConfigurationState {
         let feedURL: URL?
         let publicKey: String?
+        let expectedTeamIdentifier: String?
 
         var isConfigured: Bool {
             feedURL != nil && publicKey?.isEmpty == false
         }
 
+        /// In-place binary replacement without Sparkle requires a Developer ID TeamIdentifier
+        /// anchor so ad-hoc / unsigned builds can never silently overwrite `.app` or break TCC
+        /// Accessibility permissions.
+        var canInstallBuiltInUpdates: Bool {
+            guard let teamId = expectedTeamIdentifier else { return false }
+            return Self.isValidAppleTeamIdentifier(teamId)
+        }
+
         var statusMessage: String {
-            switch (feedURL, publicKey?.isEmpty == false) {
-            case (.some, true):
-                return "Sparkle 已启用"
-            default:
-                return "GitHub / 同步源自动更新已启用"
+            if isConfigured {
+                return "Sparkle 签名更新已就绪"
+            }
+            return "支持检查 GitHub Releases 更新"
+        }
+
+        static func isValidAppleTeamIdentifier(_ raw: String) -> Bool {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.count == 10 else { return false }
+            return trimmed.unicodeScalars.allSatisfy { scalar in
+                CharacterSet.alphanumerics.contains(scalar) && scalar.isASCII
             }
         }
     }
 
     nonisolated static let canonicalGitHubRepo = "qilaidev/PromptPanel"
+    nonisolated static let canonicalReleasesURL = URL(string: "https://github.com/qilaidev/PromptPanel/releases")!
 
     @Published private(set) var canCheckForUpdates: Bool = true
     @Published private(set) var phase: UpdatePhase = .idle {
@@ -63,9 +80,13 @@ final class UpdaterService: NSObject, ObservableObject {
             onUpdateStateChanged?(phase)
         }
     }
-    @Published var autoUpdateEnabled: Bool = true {
+    @Published var autoUpdateEnabled: Bool = false {
         didSet {
-            guard isStarted, !configurationState.isConfigured else { return }
+            if let updaterController {
+                updaterController.updater.automaticallyChecksForUpdates = autoUpdateEnabled
+                return
+            }
+            guard isStarted else { return }
             configurePeriodicCheckTimer()
             if autoUpdateEnabled {
                 triggerBackgroundUpdateCheckIfNeeded()
@@ -75,10 +96,9 @@ final class UpdaterService: NSObject, ObservableObject {
 
     var syncEndpointProvider: (() -> String)?
     var preInstallBackupHandler: (() -> Void)?
-    var canAutoInstallSilentlyProvider: (() -> Bool)?
     var onUpdateStateChanged: ((UpdatePhase) -> Void)?
 
-    private let configurationState: ConfigurationState
+    let configurationState: ConfigurationState
     private let feedDelegate: FeedDelegate?
     private let updaterController: SPUStandardUpdaterController?
     private var canCheckObservation: NSKeyValueObservation?
@@ -89,8 +109,12 @@ final class UpdaterService: NSObject, ObservableObject {
     private var stagedAppURL: URL?
     private var stagedRootDir: URL?
 
-    override init() {
-        self.configurationState = Self.resolveConfiguration(bundle: .main)
+    override convenience init() {
+        self.init(configurationState: Self.resolveConfiguration(bundle: .main))
+    }
+
+    init(configurationState: ConfigurationState) {
+        self.configurationState = configurationState
         self.feedDelegate = configurationState.feedURL.map(FeedDelegate.init(feedURL:))
         if configurationState.isConfigured {
             self.updaterController = SPUStandardUpdaterController(
@@ -127,21 +151,24 @@ final class UpdaterService: NSObject, ObservableObject {
 
     var statusMessage: String {
         if configurationState.isConfigured {
-            return configurationState.statusMessage
+            return "\(configurationState.statusMessage) · \(autoUpdateEnabled ? "自动检查已开启" : "默认关闭自动联网检查")"
         }
         switch phase {
         case .idle:
-            return "当前 v\(currentShortVersion) (\(currentBuildNumber)) · \(autoUpdateEnabled ? "自动更新已开启" : "手动检查")"
+            return "当前 v\(currentShortVersion) (\(currentBuildNumber)) · \(autoUpdateEnabled ? "自动检查新版本" : "手动检查（默认零联网）")"
         case .checking:
             return "正在检查新版本…"
         case .upToDate(let ver):
             return "已是最新版本 v\(ver)"
         case .updateAvailable(let ver, _):
-            return "发现新版本 v\(ver)，点击一键更新"
+            if configurationState.canInstallBuiltInUpdates {
+                return "发现新版本 v\(ver)，点击下载并验证签名后更新"
+            }
+            return "发现新版本 v\(ver)，点击前往发布页手动更新（防辅助功能权限失效）"
         case .downloading(let ver):
-            return "正在下载并校验 v\(ver)…"
+            return "正在下载并校验 v\(ver) 开发者签名…"
         case .readyToInstall(let ver, _):
-            return "新版本 v\(ver) 已就绪，点击立即重启更新"
+            return "新版本 v\(ver) 已通过签名校验，点击立即重启更新"
         case .installing(let ver):
             return "正在安装 v\(ver) 并重启…"
         case .failed(let msg):
@@ -158,7 +185,7 @@ final class UpdaterService: NSObject, ObservableObject {
         case .installing:
             return "正在重启…"
         case .updateAvailable(let ver, _):
-            return "一键更新 v\(ver)"
+            return configurationState.canInstallBuiltInUpdates ? "下载更新 v\(ver)" : "查看 v\(ver) 发布页"
         case .readyToInstall(let ver, _):
             return "立即重启升至 v\(ver)"
         default:
@@ -178,11 +205,12 @@ final class UpdaterService: NSObject, ObservableObject {
     func start() {
         isStarted = true
         if let updaterController {
+            updaterController.updater.automaticallyChecksForUpdates = autoUpdateEnabled
             updaterController.startUpdater()
             if #available(macOS 14.0, *) {
                 updaterController.updater.clearFeedURLFromUserDefaults()
             }
-            PPLogger.updater.info("Sparkle updater started with feed=\(self.configurationState.feedURL?.absoluteString ?? "nil")")
+            PPLogger.updater.info("Sparkle updater initialized (autoCheck=\(self.autoUpdateEnabled), feed=\(self.configurationState.feedURL?.absoluteString ?? "nil"))")
             return
         }
 
@@ -192,7 +220,7 @@ final class UpdaterService: NSObject, ObservableObject {
                 self?.triggerBackgroundUpdateCheckIfNeeded()
             }
         }
-        PPLogger.updater.info("Built-in release updater started (autoUpdate=\(self.autoUpdateEnabled))")
+        PPLogger.updater.info("Release checker initialized (autoCheck=\(self.autoUpdateEnabled), canInstallInPlace=\(self.configurationState.canInstallBuiltInUpdates))")
     }
 
     private func configurePeriodicCheckTimer() {
@@ -208,20 +236,17 @@ final class UpdaterService: NSObject, ObservableObject {
         periodicTimer = timer
     }
 
+    /// Background check only inspects release metadata and surfaces `.updateAvailable`;
+    /// it never downloads or replaces the app bundle silently in the background.
     func triggerBackgroundUpdateCheckIfNeeded() {
         guard autoUpdateEnabled, !configurationState.isConfigured else { return }
-        if case .readyToInstall = phase {
-            if canAutoInstallSilentlyProvider?() == true {
-                _ = installStagedUpdateNow()
-            }
-            return
-        }
+        if case .readyToInstall = phase { return }
         guard canCheckForUpdates, !isUpdateFlowInFlight else { return }
         isUpdateFlowInFlight = true
         canCheckForUpdates = false
         phase = .checking
         Task { @MainActor in
-            await performNativeUpdateFlow(userInitiated: false, autoInstallWhenReady: true)
+            await performNativeUpdateFlow(userInitiated: false)
         }
     }
 
@@ -239,29 +264,45 @@ final class UpdaterService: NSObject, ObservableObject {
         if case .readyToInstall = phase {
             return installStagedUpdateNow()
         }
+        if case .updateAvailable(let ver, _) = phase, let candidate = stagedCandidate {
+            if !configurationState.canInstallBuiltInUpdates {
+                return openManualReleaseGuide(for: candidate)
+            }
+            guard !isUpdateFlowInFlight else {
+                return "正在准备 v\(ver) 更新包，请稍候…"
+            }
+            isUpdateFlowInFlight = true
+            canCheckForUpdates = false
+            Task { @MainActor in
+                await downloadAndStageVerifiedCandidate(candidate)
+            }
+            return "正在下载并校验 v\(ver) 开发者签名…"
+        }
         if isUpdateFlowInFlight {
             if case .downloading(let ver) = phase {
-                return "正在后台下载并校验 v\(ver)，完成后将自动安装…"
+                return "正在下载并校验 v\(ver)，请稍候…"
             }
             return "正在检查新版本，请稍候…"
-        }
-        if case .checking = phase {
-            return "正在检查新版本，请稍候…"
-        }
-        if case .downloading(let ver) = phase {
-            return "正在后台下载并校验 v\(ver)，完成后将自动安装…"
         }
 
         isUpdateFlowInFlight = true
         canCheckForUpdates = false
         phase = .checking
         Task { @MainActor in
-            await performNativeUpdateFlow(userInitiated: true, autoInstallWhenReady: true)
+            await performNativeUpdateFlow(userInitiated: true)
         }
-        return "正在检查最新版本（发现更新将自动下载校验并一键升级）…"
+        return "正在检查最新版本…"
     }
 
-    private func performNativeUpdateFlow(userInitiated: Bool, autoInstallWhenReady: Bool) async {
+    private func openManualReleaseGuide(for candidate: ReleaseCandidate) -> String {
+        let targetURL = candidate.releasePageURL
+            .flatMap { Self.isAllowedUpdateURL($0) ? $0 : nil }
+            ?? Self.canonicalReleasesURL
+        NSWorkspace.shared.open(targetURL)
+        return "已打开发布页（v\(candidate.version)）。当前构建未配置开发者证书锚定，请手动下载替换；替换后若自动粘贴失效，可在「设置 → 偏好 → 权限与启动」点击重置辅助功能权限。"
+    }
+
+    private func performNativeUpdateFlow(userInitiated: Bool) async {
         isUpdateFlowInFlight = true
         defer { isUpdateFlowInFlight = false }
         canCheckForUpdates = false
@@ -271,9 +312,10 @@ final class UpdaterService: NSObject, ObservableObject {
         let syncEndpoint = syncEndpointProvider?() ?? ""
 
         do {
-            let candidate = try await Task.detached(priority: .utility) {
-                try Self.fetchLatestReleaseCandidate(syncEndpoint: syncEndpoint, forceRefresh: userInitiated)
-            }.value
+            let candidate = try await Self.fetchLatestReleaseCandidate(
+                syncEndpoint: syncEndpoint,
+                forceRefresh: userInitiated
+            )
 
             guard Self.isNewerVersion(
                 remoteVersion: candidate.version,
@@ -286,30 +328,16 @@ final class UpdaterService: NSObject, ObservableObject {
                 return
             }
 
-            if !autoInstallWhenReady && !userInitiated && !autoUpdateEnabled {
-                stagedCandidate = candidate
+            stagedCandidate = candidate
+            // Without an anchored Developer ID TeamIdentifier (or on background checks),
+            // stop at notification — never auto-download or silently overwrite the binary.
+            guard userInitiated, configurationState.canInstallBuiltInUpdates else {
                 phase = .updateAvailable(version: candidate.version, build: candidate.build)
                 canCheckForUpdates = true
                 return
             }
 
-            phase = .downloading(version: candidate.version)
-            let (unpackedApp, tempRoot) = try await Task.detached(priority: .utility) {
-                try Self.downloadVerifyAndUnpack(candidate: candidate, expectedBundleId: Bundle.main.bundleIdentifier)
-            }.value
-
-            if let oldRoot = stagedRootDir, oldRoot != tempRoot {
-                try? FileManager.default.removeItem(at: oldRoot)
-            }
-            stagedCandidate = candidate
-            stagedAppURL = unpackedApp
-            stagedRootDir = tempRoot
-            phase = .readyToInstall(version: candidate.version, build: candidate.build)
-            canCheckForUpdates = true
-
-            if userInitiated || (autoUpdateEnabled && (canAutoInstallSilentlyProvider?() ?? true)) {
-                _ = installStagedUpdateNow()
-            }
+            try await stageVerifiedCandidateInternal(candidate)
         } catch {
             let friendlyMessage = Self.friendlyUpdateErrorMessage(for: error)
             PPLogger.updater.error("Update flow failed: \(friendlyMessage)")
@@ -318,18 +346,73 @@ final class UpdaterService: NSObject, ObservableObject {
         }
     }
 
+    private func downloadAndStageVerifiedCandidate(_ candidate: ReleaseCandidate) async {
+        isUpdateFlowInFlight = true
+        defer { isUpdateFlowInFlight = false }
+        do {
+            try await stageVerifiedCandidateInternal(candidate)
+        } catch {
+            let friendlyMessage = Self.friendlyUpdateErrorMessage(for: error)
+            PPLogger.updater.error("Update download/verification failed: \(friendlyMessage)")
+            phase = .failed(message: "更新校验失败：\(friendlyMessage)")
+            canCheckForUpdates = true
+        }
+    }
+
+    private func stageVerifiedCandidateInternal(_ candidate: ReleaseCandidate) async throws {
+        guard let expectedTeamId = configurationState.expectedTeamIdentifier,
+              ConfigurationState.isValidAppleTeamIdentifier(expectedTeamId) else {
+            phase = .updateAvailable(version: candidate.version, build: candidate.build)
+            canCheckForUpdates = true
+            return
+        }
+
+        phase = .downloading(version: candidate.version)
+        let expectedBundleId = Bundle.main.bundleIdentifier
+        let (unpackedApp, tempRoot) = try await Self.downloadVerifyAndUnpack(
+            candidate: candidate,
+            expectedBundleId: expectedBundleId,
+            expectedTeamIdentifier: expectedTeamId
+        )
+
+        if let oldRoot = stagedRootDir, oldRoot != tempRoot {
+            try? FileManager.default.removeItem(at: oldRoot)
+        }
+        stagedCandidate = candidate
+        stagedAppURL = unpackedApp
+        stagedRootDir = tempRoot
+        phase = .readyToInstall(version: candidate.version, build: candidate.build)
+        canCheckForUpdates = true
+    }
+
     @discardableResult
     func installStagedUpdateNow() -> String {
-        guard let candidate = stagedCandidate, let stagedAppURL, FileManager.default.fileExists(atPath: stagedAppURL.path) else {
+        guard let candidate = stagedCandidate else {
             return checkForUpdates()
+        }
+        guard configurationState.canInstallBuiltInUpdates,
+              let expectedTeamId = configurationState.expectedTeamIdentifier else {
+            return openManualReleaseGuide(for: candidate)
+        }
+        guard let stagedAppURL, FileManager.default.fileExists(atPath: stagedAppURL.path) else {
+            return checkForUpdates()
+        }
+
+        do {
+            try Self.verifyDeveloperIDSignature(
+                appURL: stagedAppURL,
+                expectedBundleId: Bundle.main.bundleIdentifier,
+                expectedTeamIdentifier: expectedTeamId
+            )
+        } catch {
+            let msg = Self.friendlyUpdateErrorMessage(for: error)
+            phase = .failed(message: "安装前签名复核未通过：\(msg)")
+            return "安装前签名复核未通过：\(msg)"
         }
 
         let targetAppURL = Bundle.main.bundleURL
         guard targetAppURL.pathExtension == "app" else {
-            if let page = candidate.releasePageURL {
-                NSWorkspace.shared.open(page)
-            }
-            return "当前为开发态命令行运行，已打开版本发布页。"
+            return openManualReleaseGuide(for: candidate)
         }
 
         let parentDir = targetAppURL.deletingLastPathComponent()
@@ -358,7 +441,6 @@ final class UpdaterService: NSObject, ObservableObject {
           mv "$TARGET_APP" "${TARGET_APP}.old" 2>/dev/null || rm -rf "$TARGET_APP"
         fi
         if /usr/bin/ditto "$STAGED_APP" "$TARGET_APP"; then
-          /usr/bin/xattr -dr com.apple.quarantine "$TARGET_APP" 2>/dev/null || true
           rm -rf "${TARGET_APP}.old" "$STAGE_DIR" 2>/dev/null || true
           /usr/bin/open "$TARGET_APP"
         else
@@ -394,7 +476,100 @@ final class UpdaterService: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - Pure Helpers & Network Fetch
+    // MARK: - Transport & Code Signing Guards
+
+    /// Enforces HTTPS for all update metadata and binary downloads, permitting plain HTTP
+    /// strictly for local loopback addresses (`localhost`, `127.0.0.1`, `::1`).
+    nonisolated static func isAllowedUpdateURL(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(),
+              let host = url.host?.lowercased(),
+              !host.isEmpty else {
+            return false
+        }
+        if scheme == "https" {
+            return true
+        }
+        if scheme == "http" {
+            return isLoopbackHost(host)
+        }
+        return false
+    }
+
+    nonisolated static func isLoopbackHost(_ rawHost: String) -> Bool {
+        let cleaned = rawHost
+            .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+            .lowercased()
+        return cleaned == "localhost" || cleaned == "127.0.0.1" || cleaned == "::1"
+    }
+
+    nonisolated static func bundleTeamIdentifier(for bundleURL: URL) -> String? {
+        var staticCode: SecStaticCode?
+        let createStatus = SecStaticCodeCreateWithPath(bundleURL as CFURL, SecCSFlags(), &staticCode)
+        guard createStatus == errSecSuccess, let staticCode else {
+            return nil
+        }
+        var signingInfoCF: CFDictionary?
+        let infoStatus = SecCodeCopySigningInformation(
+            staticCode,
+            SecCSFlags(rawValue: kSecCSSigningInformation),
+            &signingInfoCF
+        )
+        guard infoStatus == errSecSuccess,
+              let signingInfo = signingInfoCF as? [String: Any],
+              let teamId = (signingInfo[kSecCodeInfoTeamIdentifier as String] as? String)?
+                  .trimmingCharacters(in: .whitespacesAndNewlines),
+              ConfigurationState.isValidAppleTeamIdentifier(teamId) else {
+            return nil
+        }
+        return teamId
+    }
+
+    /// Verifies that `appURL` is signed with a valid Apple Developer ID Application certificate
+    /// anchored to `expectedTeamIdentifier` and matching `expectedBundleId`. Ad-hoc (`--sign -`)
+    /// or third-party certificates are rejected.
+    nonisolated static func verifyDeveloperIDSignature(
+        appURL: URL,
+        expectedBundleId: String?,
+        expectedTeamIdentifier: String
+    ) throws {
+        guard ConfigurationState.isValidAppleTeamIdentifier(expectedTeamIdentifier) else {
+            throw NSError(domain: "UpdaterService", code: 36, userInfo: [NSLocalizedDescriptionKey: "缺少有效的开发者 Team ID 签名锚点"])
+        }
+        let bundleClause: String
+        if let expectedBundleId, !expectedBundleId.isEmpty {
+            let sanitizedBundleId = expectedBundleId.replacingOccurrences(of: "\"", with: "")
+            bundleClause = "identifier \"\(sanitizedBundleId)\" and "
+        } else {
+            bundleClause = ""
+        }
+        let requirementString = "\(bundleClause)anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = \"\(expectedTeamIdentifier)\""
+
+        var requirement: SecRequirement?
+        guard SecRequirementCreateWithString(requirementString as CFString, SecCSFlags(), &requirement) == errSecSuccess,
+              let requirement else {
+            throw NSError(domain: "UpdaterService", code: 36, userInfo: [NSLocalizedDescriptionKey: "无法构建开发者签名校验规则"])
+        }
+
+        var staticCode: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(appURL as CFURL, SecCSFlags(), &staticCode) == errSecSuccess,
+              let staticCode else {
+            throw NSError(domain: "UpdaterService", code: 36, userInfo: [NSLocalizedDescriptionKey: "无法读取更新包代码签名"])
+        }
+
+        let flags = SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSCheckNestedCode | kSecCSStrictValidate)
+        var validationError: Unmanaged<CFError>?
+        let status = SecStaticCodeCheckValidityWithErrors(staticCode, flags, requirement, &validationError)
+        if status != errSecSuccess {
+            _ = validationError?.takeRetainedValue()
+            throw NSError(
+                domain: "UpdaterService",
+                code: 36,
+                userInfo: [NSLocalizedDescriptionKey: "更新包未通过 Apple Developer ID (\(expectedTeamIdentifier)) 签名校验，已拒绝安装"]
+            )
+        }
+    }
+
+    // MARK: - Pure Helpers & Async Network Fetch
 
     nonisolated static func isNewerVersion(
         remoteVersion: String,
@@ -430,9 +605,8 @@ final class UpdaterService: NSObject, ObservableObject {
         let trimmed = rawEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               var comps = URLComponents(string: trimmed),
-              let scheme = comps.scheme?.lowercased(),
-              scheme == "http" || scheme == "https",
-              let host = comps.host, !host.isEmpty else {
+              let initialURL = comps.url,
+              isAllowedUpdateURL(initialURL) else {
             return nil
         }
 
@@ -462,16 +636,16 @@ final class UpdaterService: NSObject, ObservableObject {
     nonisolated private static func fetchLatestReleaseCandidate(
         syncEndpoint: String,
         forceRefresh: Bool
-    ) throws -> ReleaseCandidate {
+    ) async throws -> ReleaseCandidate {
         if let mirrorURL = resolvedUpdateURL(fromSyncEndpoint: syncEndpoint, forceRefresh: forceRefresh),
-           let candidate = try? fetchFromMirror(mirrorURL: mirrorURL) {
+           let candidate = try? await fetchFromMirror(mirrorURL: mirrorURL) {
             return candidate
         }
-        return try fetchFromGitHub()
+        return try await fetchFromGitHub()
     }
 
-    nonisolated private static func fetchFromMirror(mirrorURL: URL) throws -> ReleaseCandidate {
-        let data = try performSynchronousGET(url: mirrorURL, timeout: 8.0)
+    nonisolated private static func fetchFromMirror(mirrorURL: URL) async throws -> ReleaseCandidate {
+        let data = try await performGET(url: mirrorURL, timeout: 8.0)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let version = (json["version"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
               !version.isEmpty,
@@ -480,18 +654,24 @@ final class UpdaterService: NSObject, ObservableObject {
         }
         let build = (json["build"] as? Int) ?? 0
         let sha256 = ((json["macosZip"] as? [String: Any])?["sha256"] as? String ?? "").lowercased()
-        let githubURL = (zipDict["githubUrl"] as? String).flatMap(URL.init(string:))
+        let githubURL = (zipDict["githubUrl"] as? String)
+            .flatMap(URL.init(string:))
+            .flatMap { isAllowedUpdateURL($0) ? $0 : nil }
         var mirrorZipURL: URL?
         if let mirrorPath = zipDict["mirrorPath"] as? String, !mirrorPath.isEmpty,
            var baseComps = URLComponents(url: mirrorURL, resolvingAgainstBaseURL: false) {
             baseComps.path = mirrorPath
             baseComps.query = nil
-            mirrorZipURL = baseComps.url
+            if let candidateURL = baseComps.url, isAllowedUpdateURL(candidateURL) {
+                mirrorZipURL = candidateURL
+            }
         }
         guard let primary = mirrorZipURL ?? githubURL else {
-            throw NSError(domain: "UpdaterService", code: 11, userInfo: [NSLocalizedDescriptionKey: "未找到 macOS 更新包地址"])
+            throw NSError(domain: "UpdaterService", code: 11, userInfo: [NSLocalizedDescriptionKey: "未找到安全的 HTTPS macOS 更新包地址"])
         }
-        let releasePage = (json["releaseUrl"] as? String).flatMap(URL.init(string:))
+        let releasePage = (json["releaseUrl"] as? String)
+            .flatMap(URL.init(string:))
+            .flatMap { isAllowedUpdateURL($0) ? $0 : nil }
         return ReleaseCandidate(
             version: version,
             build: build,
@@ -502,11 +682,11 @@ final class UpdaterService: NSObject, ObservableObject {
         )
     }
 
-    nonisolated private static func fetchFromGitHub() throws -> ReleaseCandidate {
+    nonisolated private static func fetchFromGitHub() async throws -> ReleaseCandidate {
         guard let apiURL = URL(string: "https://api.github.com/repos/\(canonicalGitHubRepo)/releases/latest") else {
             throw NSError(domain: "UpdaterService", code: 20, userInfo: [NSLocalizedDescriptionKey: "GitHub 地址无效"])
         }
-        let data = try performSynchronousGET(url: apiURL, timeout: 12.0, accept: "application/vnd.github+json")
+        let data = try await performGET(url: apiURL, timeout: 12.0, accept: "application/vnd.github+json")
         if CloudSyncService.looksLikeHTMLPayload(data) {
             throw NSError(domain: "UpdaterService", code: 21, userInfo: [NSLocalizedDescriptionKey: "更新源返回了网页而非版本信息，请检查网络或代理设置"])
         }
@@ -525,7 +705,8 @@ final class UpdaterService: NSObject, ObservableObject {
         for asset in assets {
             guard let name = asset["name"] as? String,
                   let urlStr = asset["browser_download_url"] as? String,
-                  let url = URL(string: urlStr) else { continue }
+                  let url = URL(string: urlStr),
+                  isAllowedUpdateURL(url) else { continue }
             if name == "SHA256SUMS.txt" {
                 sumsURL = url
             } else if name.hasSuffix("-macos.zip") {
@@ -551,7 +732,7 @@ final class UpdaterService: NSObject, ObservableObject {
         }
 
         if zipDigest.isEmpty, let sumsURL,
-           let sumsData = try? performSynchronousGET(url: sumsURL, timeout: 10.0),
+           let sumsData = try? await performGET(url: sumsURL, timeout: 10.0),
            let sumsText = String(data: sumsData, encoding: .utf8) {
             for line in sumsText.split(whereSeparator: \.isNewline) {
                 let parts = line.split(whereSeparator: \.isWhitespace)
@@ -565,7 +746,9 @@ final class UpdaterService: NSObject, ObservableObject {
             }
         }
 
-        let releasePage = (json["html_url"] as? String).flatMap(URL.init(string:))
+        let releasePage = (json["html_url"] as? String)
+            .flatMap(URL.init(string:))
+            .flatMap { isAllowedUpdateURL($0) ? $0 : nil }
         return ReleaseCandidate(
             version: shortVer,
             build: buildNum,
@@ -578,17 +761,18 @@ final class UpdaterService: NSObject, ObservableObject {
 
     nonisolated private static func downloadVerifyAndUnpack(
         candidate: ReleaseCandidate,
-        expectedBundleId: String?
-    ) throws -> (URL, URL) {
+        expectedBundleId: String?,
+        expectedTeamIdentifier: String
+    ) async throws -> (URL, URL) {
         guard !candidate.sha256.isEmpty else {
             throw NSError(domain: "UpdaterService", code: 30, userInfo: [NSLocalizedDescriptionKey: "缺少发行包 SHA-256 校验值"])
         }
 
         let zipData: Data
-        if let primaryData = try? performSynchronousGET(url: candidate.primaryZipURL, timeout: 60.0) {
+        if let primaryData = try? await performGET(url: candidate.primaryZipURL, timeout: 60.0) {
             zipData = primaryData
         } else if let fallback = candidate.fallbackZipURL {
-            zipData = try performSynchronousGET(url: fallback, timeout: 90.0)
+            zipData = try await performGET(url: fallback, timeout: 90.0)
         } else {
             throw NSError(domain: "UpdaterService", code: 31, userInfo: [NSLocalizedDescriptionKey: "下载更新包失败，请检查网络连接"])
         }
@@ -598,95 +782,94 @@ final class UpdaterService: NSObject, ObservableObject {
             throw NSError(domain: "UpdaterService", code: 32, userInfo: [NSLocalizedDescriptionKey: "更新包 SHA-256 校验未通过，已拦截安装"])
         }
 
-        let fm = FileManager.default
-        let stageRoot = fm.temporaryDirectory.appendingPathComponent("promptpanel-stage-\(UUID().uuidString)", isDirectory: true)
-        try fm.createDirectory(at: stageRoot, withIntermediateDirectories: true)
+        let unpackResult = try await Task.detached(priority: .utility) { () throws -> (URL, URL) in
+            let fm = FileManager.default
+            let stageRoot = fm.temporaryDirectory.appendingPathComponent("promptpanel-stage-\(UUID().uuidString)", isDirectory: true)
+            try fm.createDirectory(at: stageRoot, withIntermediateDirectories: true)
 
-        let zipFile = stageRoot.appendingPathComponent("update.zip")
-        let unpackDir = stageRoot.appendingPathComponent("unpacked", isDirectory: true)
-        try fm.createDirectory(at: unpackDir, withIntermediateDirectories: true)
-        try zipData.write(to: zipFile, options: .atomic)
+            let zipFile = stageRoot.appendingPathComponent("update.zip")
+            let unpackDir = stageRoot.appendingPathComponent("unpacked", isDirectory: true)
+            try fm.createDirectory(at: unpackDir, withIntermediateDirectories: true)
+            try zipData.write(to: zipFile, options: .atomic)
 
-        let ditto = Process()
-        ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-        ditto.arguments = ["-x", "-k", zipFile.path, unpackDir.path]
-        try ditto.run()
-        ditto.waitUntilExit()
-        guard ditto.terminationStatus == 0 else {
-            try? fm.removeItem(at: stageRoot)
-            throw NSError(domain: "UpdaterService", code: 33, userInfo: [NSLocalizedDescriptionKey: "解压更新包失败"])
-        }
+            let ditto = Process()
+            ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+            ditto.arguments = ["-x", "-k", zipFile.path, unpackDir.path]
+            try ditto.run()
+            ditto.waitUntilExit()
+            guard ditto.terminationStatus == 0 else {
+                try? fm.removeItem(at: stageRoot)
+                throw NSError(domain: "UpdaterService", code: 33, userInfo: [NSLocalizedDescriptionKey: "解压更新包失败"])
+            }
 
-        let appURL = unpackDir.appendingPathComponent("PromptPanel.app", isDirectory: true)
-        let plistURL = appURL.appendingPathComponent("Contents/Info.plist")
-        guard fm.fileExists(atPath: plistURL.path),
-              let plistData = try? Data(contentsOf: plistURL),
-              let plist = (try? PropertyListSerialization.propertyList(from: plistData, format: nil)) as? [String: Any] else {
-            try? fm.removeItem(at: stageRoot)
-            throw NSError(domain: "UpdaterService", code: 34, userInfo: [NSLocalizedDescriptionKey: "更新包内未找到有效的 PromptPanel.app"])
-        }
+            let appURL = unpackDir.appendingPathComponent("PromptPanel.app", isDirectory: true)
+            let plistURL = appURL.appendingPathComponent("Contents/Info.plist")
+            guard fm.fileExists(atPath: plistURL.path),
+                  let plistData = try? Data(contentsOf: plistURL),
+                  let plist = (try? PropertyListSerialization.propertyList(from: plistData, format: nil)) as? [String: Any] else {
+                try? fm.removeItem(at: stageRoot)
+                throw NSError(domain: "UpdaterService", code: 34, userInfo: [NSLocalizedDescriptionKey: "更新包内未找到有效的 PromptPanel.app"])
+            }
 
-        if let expectedBundleId, !expectedBundleId.isEmpty,
-           let bundleId = plist["CFBundleIdentifier"] as? String,
-           bundleId != expectedBundleId {
-            try? fm.removeItem(at: stageRoot)
-            throw NSError(domain: "UpdaterService", code: 35, userInfo: [NSLocalizedDescriptionKey: "更新包 Bundle ID 不匹配"])
-        }
+            if let expectedBundleId, !expectedBundleId.isEmpty,
+               let bundleId = plist["CFBundleIdentifier"] as? String,
+               bundleId != expectedBundleId {
+                try? fm.removeItem(at: stageRoot)
+                throw NSError(domain: "UpdaterService", code: 35, userInfo: [NSLocalizedDescriptionKey: "更新包 Bundle ID 不匹配"])
+            }
 
-        let codesign = Process()
-        codesign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        codesign.arguments = ["--verify", "--deep", "--strict", appURL.path]
-        codesign.standardOutput = FileHandle.nullDevice
-        codesign.standardError = FileHandle.nullDevice
-        try codesign.run()
-        codesign.waitUntilExit()
-        guard codesign.terminationStatus == 0 else {
-            try? fm.removeItem(at: stageRoot)
-            throw NSError(domain: "UpdaterService", code: 36, userInfo: [NSLocalizedDescriptionKey: "更新包代码签名校验失败"])
-        }
+            do {
+                try Self.verifyDeveloperIDSignature(
+                    appURL: appURL,
+                    expectedBundleId: expectedBundleId,
+                    expectedTeamIdentifier: expectedTeamIdentifier
+                )
+            } catch {
+                try? fm.removeItem(at: stageRoot)
+                throw error
+            }
 
-        try? fm.removeItem(at: zipFile)
-        return (appURL, stageRoot)
+            try? fm.removeItem(at: zipFile)
+            return (appURL, stageRoot)
+        }.value
+
+        return unpackResult
     }
 
-    nonisolated private static func performSynchronousGET(
+    nonisolated private static func performGET(
         url: URL,
         timeout: TimeInterval,
         accept: String = "*/*"
-    ) throws -> Data {
+    ) async throws -> Data {
+        guard isAllowedUpdateURL(url) else {
+            throw NSError(
+                domain: "UpdaterService",
+                code: 42,
+                userInfo: [NSLocalizedDescriptionKey: "安全策略拦截了非加密 HTTP 更新地址（仅支持 https:// 或本机 localhost）"]
+            )
+        }
+
         var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         req.httpMethod = "GET"
         req.setValue("PromptPanel-macOS-Updater", forHTTPHeaderField: "User-Agent")
         req.setValue(accept, forHTTPHeaderField: "Accept")
 
-        let sem = DispatchSemaphore(value: 0)
-        var resultData: Data?
-        var resultResp: URLResponse?
-        var resultErr: Error?
-
-        let task = URLSession.shared.dataTask(with: req) { data, resp, err in
-            resultData = data
-            resultResp = resp
-            resultErr = err
-            sem.signal()
-        }
-        task.resume()
-        if sem.wait(timeout: .now() + timeout + 2.0) == .timedOut {
-            task.cancel()
-            throw NSError(domain: "UpdaterService", code: 40, userInfo: [NSLocalizedDescriptionKey: "网络请求超时，请检查网络连接后重试"])
-        }
-
-        if let resultErr {
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: req)
+        } catch {
             throw NSError(
                 domain: "UpdaterService",
                 code: 41,
-                userInfo: [NSLocalizedDescriptionKey: friendlyUpdateErrorMessage(for: resultErr)]
+                userInfo: [NSLocalizedDescriptionKey: friendlyUpdateErrorMessage(for: error)]
             )
         }
-        guard let http = resultResp as? HTTPURLResponse else {
+
+        guard let http = response as? HTTPURLResponse else {
             throw NSError(domain: "UpdaterService", code: 40, userInfo: [NSLocalizedDescriptionKey: "网络请求超时，请检查网络连接后重试"])
         }
-        guard (200..<300).contains(http.statusCode), let data = resultData, !data.isEmpty else {
+        guard (200..<300).contains(http.statusCode), !data.isEmpty else {
             throw NSError(
                 domain: "UpdaterService",
                 code: http.statusCode,
@@ -728,6 +911,8 @@ final class UpdaterService: NSObject, ObservableObject {
                 return "无法连接到更新服务器，请检查网络或代理设置"
             case .networkConnectionLost:
                 return "下载更新时网络连接中断，请稍后重试"
+            case .appTransportSecurityRequiresSecureConnection:
+                return "系统安全策略要求使用 HTTPS 加密连接"
             case .secureConnectionFailed,
                  .serverCertificateHasBadDate,
                  .serverCertificateUntrusted,
@@ -753,9 +938,16 @@ final class UpdaterService: NSObject, ObservableObject {
             .flatMap { $0.isEmpty ? nil : $0 }
             ?? (info["SUPublicEDKey"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        let resolvedFeedURL = feedURLString
+            .flatMap(URL.init(string:))
+            .flatMap { isAllowedUpdateURL($0) ? $0 : nil }
+
+        let teamId = bundleTeamIdentifier(for: bundle.bundleURL)
+
         return ConfigurationState(
-            feedURL: feedURLString.flatMap(URL.init(string:)),
-            publicKey: publicKey
+            feedURL: resolvedFeedURL,
+            publicKey: publicKey,
+            expectedTeamIdentifier: teamId
         )
     }
 }

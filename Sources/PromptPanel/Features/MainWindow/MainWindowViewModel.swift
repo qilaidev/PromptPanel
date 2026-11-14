@@ -188,7 +188,7 @@ final class MainWindowViewModel: ObservableObject {
     @Published private(set) var executionHealthSummary: LogRepository.HealthSummary?
     @Published private(set) var updaterStatusMessage: String = "自动更新未初始化。"
     @Published private(set) var canCheckForUpdates: Bool = false
-    @Published var autoUpdateEnabled: Bool = true
+    @Published var autoUpdateEnabled: Bool = false
     @Published private(set) var updaterActionTitle: String = "检查更新"
     @Published private(set) var hasPendingAppUpdate: Bool = false
     @Published private(set) var currentProjectId: String = ""
@@ -387,6 +387,8 @@ final class MainWindowViewModel: ObservableObject {
     private var pendingAutoCloudSyncWorkItem: DispatchWorkItem?
     private var pendingCloudSyncSettingsPersistWorkItem: DispatchWorkItem?
     private var autoCloudSyncPollTimer: DispatchSourceTimer?
+    private var activeCloudSyncTask: Task<Void, Never>?
+    private var activeConnectionTestTask: Task<Void, Never>?
     private var lastOpportunisticCloudSyncAt: Date = .distantPast
     private var isHydratingCloudSyncState = false
     private var isApplyingCloudSyncChanges = false
@@ -475,7 +477,7 @@ final class MainWindowViewModel: ObservableObject {
         self.inlineSession.onFieldMutation = { [weak self] in
             self?.handleInlineDraftFieldMutation()
         }
-        self.autoUpdateEnabled = (try? settingsRepository.isAutoUpdateEnabled()) ?? true
+        self.autoUpdateEnabled = (try? settingsRepository.isAutoUpdateEnabled()) ?? false
         refreshUpdaterStatus()
         refreshCloudSyncState()
         updateAutoCloudSyncPollTimer()
@@ -494,6 +496,8 @@ final class MainWindowViewModel: ObservableObject {
         pendingAutoCloudSyncWorkItem?.cancel()
         pendingCloudSyncSettingsPersistWorkItem?.cancel()
         autoCloudSyncPollTimer?.cancel()
+        activeCloudSyncTask?.cancel()
+        activeConnectionTestTask?.cancel()
         bannerDismissWorkItem?.cancel()
     }
 
@@ -1778,10 +1782,13 @@ final class MainWindowViewModel: ObservableObject {
         guard !trimmed.isEmpty else { return nil }
         let lower = trimmed.lowercased()
         if !(lower.hasPrefix("http://") || lower.hasPrefix("https://")) {
-            return "当前同步地址是 Mac 本地文件路径，手机无法直接访问。请部署或填入 http(s):// 同步服务地址后再配对手机。"
+            return "当前同步地址是 Mac 本地文件路径，手机无法直接访问。请部署并填入 https:// 同步服务地址后再配对手机。"
         }
-        if lower.contains("://127.0.0.1") || lower.contains("://localhost") || lower.contains("://0.0.0.0") {
-            return "当前地址指向本机回环 (localhost / 127.0.0.1)，手机扫码后无法直连；请改填局域网 IP（如 http://192.168.x.x:18787/v1/sync）或公网域名。"
+        if lower.contains("://127.0.0.1") || lower.contains("://localhost") || lower.contains("://0.0.0.0") || lower.contains("://[::1]") {
+            return "当前地址指向本机回环 (localhost / 127.0.0.1)，手机扫码后无法直连；请改填已配置 TLS 的 https:// 域名地址。"
+        }
+        if lower.hasPrefix("http://") {
+            return "非本机同步禁止明文 http:// 传输；请为同步服务配置反向代理或有效证书并改用 https:// 地址。"
         }
         return nil
     }
@@ -1857,22 +1864,21 @@ final class MainWindowViewModel: ObservableObject {
         let endpoint = cloudSyncEndpoint
         let apiKey = cloudSyncApiKey
         cloudSyncConnectionStatus = "正在检测连接…"
-        statusQueue.async { [weak self] in
-            let result = Result {
-                try cloudSyncService.testConnection(endpoint: endpoint, apiKey: apiKey)
-            }
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                switch result {
-                case .success(let report):
-                    self.cloudSyncConnectionHealthy = report.isReachable && report.authenticated
-                    self.cloudSyncConnectionStatus = report.summaryText
-                    self.bannerMessage = report.summaryText
-                case .failure(let error):
-                    self.cloudSyncConnectionHealthy = false
-                    self.cloudSyncConnectionStatus = "连接异常：\(error.localizedDescription)"
-                    self.bannerMessage = "测试连接失败：\(error.localizedDescription)"
-                }
+        activeConnectionTestTask?.cancel()
+        activeConnectionTestTask = Task { @MainActor [weak self] in
+            do {
+                let report = try await cloudSyncService.testConnection(endpoint: endpoint, apiKey: apiKey)
+                guard let self, !Task.isCancelled else { return }
+                self.cloudSyncConnectionHealthy = report.isReachable && report.authenticated
+                self.cloudSyncConnectionStatus = report.summaryText
+                self.bannerMessage = report.summaryText
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self, !Task.isCancelled else { return }
+                self.cloudSyncConnectionHealthy = false
+                self.cloudSyncConnectionStatus = "连接异常：\(error.localizedDescription)"
+                self.bannerMessage = "测试连接失败：\(error.localizedDescription)"
             }
         }
     }
@@ -1908,28 +1914,38 @@ final class MainWindowViewModel: ObservableObject {
         saveCloudSyncSettings()
         let endpoint = cloudSyncEndpoint
         let apiKey = cloudSyncApiKey
+        let label = "正在执行云端双向同步…"
         isCloudSyncInFlight = true
-        runMaintenance("正在执行云端双向同步…") {
-            try cloudSyncService.syncNow(endpoint: endpoint, apiKey: apiKey)
-        } onSuccess: { [weak self] summary in
-            guard let self else { return }
-            self.isCloudSyncInFlight = false
-            self.isApplyingCloudSyncChanges = true
-            defer { self.isApplyingCloudSyncChanges = false }
-            self.cloudSyncConnectionHealthy = true
-            self.refreshCloudSyncState()
-            self.refreshOperationalStatus()
-            self.notifyProjectsChanged()
-            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
-            self.refreshSelectedEntryVersions()
-            let guardInfo = summary.totalProtectedCount > 0
-                ? "，已触发防丢熔断保护 \(summary.protectedEntriesCount) 条词条/\(summary.protectedProjectsCount) 个分组并回填云端"
-                : ""
-            self.bannerMessage = "云端同步成功：项目 +\(summary.projectsCreated)/更\(summary.projectsUpdated)，词条 +\(summary.entriesCreated)/更\(summary.entriesUpdated)，冲突版本保护 \(summary.conflictsPreservedInVersions) 处\(guardInfo)。"
-        } onFailure: { [weak self] error in
-            self?.isCloudSyncInFlight = false
-            self?.cloudSyncConnectionHealthy = false
-            return error.localizedDescription
+        activeMaintenanceTask = label
+        bannerMessage = label
+        activeCloudSyncTask = Task { @MainActor [weak self] in
+            defer {
+                self?.isCloudSyncInFlight = false
+                self?.activeMaintenanceTask = nil
+                self?.activeCloudSyncTask = nil
+            }
+            do {
+                let summary = try await cloudSyncService.syncNow(endpoint: endpoint, apiKey: apiKey)
+                guard let self, !Task.isCancelled else { return }
+                self.isApplyingCloudSyncChanges = true
+                defer { self.isApplyingCloudSyncChanges = false }
+                self.cloudSyncConnectionHealthy = true
+                self.refreshCloudSyncState()
+                self.refreshOperationalStatus()
+                self.notifyProjectsChanged()
+                NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+                self.refreshSelectedEntryVersions()
+                let guardInfo = summary.totalProtectedCount > 0
+                    ? "，已触发防丢熔断保护 \(summary.protectedEntriesCount) 条词条/\(summary.protectedProjectsCount) 个分组并回填云端"
+                    : ""
+                self.bannerMessage = "云端同步成功：项目 +\(summary.projectsCreated)/更\(summary.projectsUpdated)，词条 +\(summary.entriesCreated)/更\(summary.entriesUpdated)，冲突版本保护 \(summary.conflictsPreservedInVersions) 处\(guardInfo)。"
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self else { return }
+                self.cloudSyncConnectionHealthy = false
+                self.bannerMessage = error.localizedDescription
+            }
         }
     }
 
@@ -1951,30 +1967,40 @@ final class MainWindowViewModel: ObservableObject {
         saveCloudSyncSettings()
         let endpoint = cloudSyncEndpoint
         let apiKey = cloudSyncApiKey
+        let label = "正在恢复本地误删记录并回填云端…"
         isCloudSyncInFlight = true
-        runMaintenance("正在恢复本地误删记录并回填云端…") {
-            try cloudSyncService.recoverDeletedAndSync(endpoint: endpoint, apiKey: apiKey)
-        } onSuccess: { [weak self] result in
-            guard let self else { return }
-            self.isCloudSyncInFlight = false
-            self.isApplyingCloudSyncChanges = true
-            defer { self.isApplyingCloudSyncChanges = false }
-            if result.syncSummary != nil {
-                self.cloudSyncConnectionHealthy = true
+        activeMaintenanceTask = label
+        bannerMessage = label
+        activeCloudSyncTask = Task { @MainActor [weak self] in
+            defer {
+                self?.isCloudSyncInFlight = false
+                self?.activeMaintenanceTask = nil
+                self?.activeCloudSyncTask = nil
             }
-            self.refreshCloudSyncState()
-            self.refreshOperationalStatus()
-            self.notifyProjectsChanged()
-            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
-            self.refreshSelectedEntryVersions()
-            if result.syncSummary != nil {
-                self.bannerMessage = "已恢复本地已删分组 \(result.projectsRestored) 个、词条 \(result.entriesRestored) 条，并已完整回推至云端。"
-            } else {
-                self.bannerMessage = "已恢复本地已删分组 \(result.projectsRestored) 个、词条 \(result.entriesRestored) 条。"
+            do {
+                let result = try await cloudSyncService.recoverDeletedAndSync(endpoint: endpoint, apiKey: apiKey)
+                guard let self, !Task.isCancelled else { return }
+                self.isApplyingCloudSyncChanges = true
+                defer { self.isApplyingCloudSyncChanges = false }
+                if result.syncSummary != nil {
+                    self.cloudSyncConnectionHealthy = true
+                }
+                self.refreshCloudSyncState()
+                self.refreshOperationalStatus()
+                self.notifyProjectsChanged()
+                NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+                self.refreshSelectedEntryVersions()
+                if result.syncSummary != nil {
+                    self.bannerMessage = "已恢复本地已删分组 \(result.projectsRestored) 个、词条 \(result.entriesRestored) 条，并已完整回推至云端。"
+                } else {
+                    self.bannerMessage = "已恢复本地已删分组 \(result.projectsRestored) 个、词条 \(result.entriesRestored) 条。"
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self else { return }
+                self.bannerMessage = error.localizedDescription
             }
-        } onFailure: { [weak self] error in
-            self?.isCloudSyncInFlight = false
-            return error.localizedDescription
         }
     }
 
@@ -2017,30 +2043,32 @@ final class MainWindowViewModel: ObservableObject {
         guard activeMaintenanceTask == nil, !isCloudSyncInFlight else { return }
         isCloudSyncInFlight = true
         lastOpportunisticCloudSyncAt = Date()
-        maintenanceQueue.async { [weak self] in
-            let result = Result { try cloudSyncService.syncNow(endpoint: endpoint, apiKey: apiKey) }
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.isCloudSyncInFlight = false
-                switch result {
-                case .success(let summary):
-                    self.cloudSyncConnectionHealthy = true
-                    self.refreshCloudSyncState()
-                    if summary.entriesCreated > 0 || summary.entriesUpdated > 0 || summary.projectsCreated > 0 || summary.projectsUpdated > 0 || summary.totalProtectedCount > 0 {
-                        self.isApplyingCloudSyncChanges = true
-                        defer { self.isApplyingCloudSyncChanges = false }
-                        self.notifyProjectsChanged()
-                        NotificationCenter.default.post(name: .entriesDidChange, object: nil)
-                        self.refreshSelectedEntryVersions()
-                    }
-                    if summary.totalProtectedCount > 0 {
-                        self.refreshOperationalStatus()
-                        self.bannerMessage = "防丢保护已触发：已拦截云端异常删除 \(summary.protectedEntriesCount) 条词条/\(summary.protectedProjectsCount) 个分组，并从本地自动恢复云端数据。"
-                    }
-                case .failure(let error):
-                    PPLogger.app.error("Auto cloud sync failed: \(error.localizedDescription)")
-                    self.cloudSyncConnectionHealthy = false
+        activeCloudSyncTask = Task { @MainActor [weak self] in
+            defer {
+                self?.isCloudSyncInFlight = false
+                self?.activeCloudSyncTask = nil
+            }
+            do {
+                let summary = try await cloudSyncService.syncNow(endpoint: endpoint, apiKey: apiKey)
+                guard let self, !Task.isCancelled else { return }
+                self.cloudSyncConnectionHealthy = true
+                self.refreshCloudSyncState()
+                if summary.entriesCreated > 0 || summary.entriesUpdated > 0 || summary.projectsCreated > 0 || summary.projectsUpdated > 0 || summary.totalProtectedCount > 0 {
+                    self.isApplyingCloudSyncChanges = true
+                    defer { self.isApplyingCloudSyncChanges = false }
+                    self.notifyProjectsChanged()
+                    NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+                    self.refreshSelectedEntryVersions()
                 }
+                if summary.totalProtectedCount > 0 {
+                    self.refreshOperationalStatus()
+                    self.bannerMessage = "防丢保护已触发：已拦截云端异常删除 \(summary.protectedEntriesCount) 条词条/\(summary.protectedProjectsCount) 个分组，并从本地自动恢复云端数据。"
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                PPLogger.app.error("Auto cloud sync failed: \(error.localizedDescription)")
+                self?.cloudSyncConnectionHealthy = false
             }
         }
     }
@@ -2075,6 +2103,10 @@ final class MainWindowViewModel: ObservableObject {
         pendingCloudSyncSettingsPersistWorkItem = nil
         autoCloudSyncPollTimer?.cancel()
         autoCloudSyncPollTimer = nil
+        activeCloudSyncTask?.cancel()
+        activeCloudSyncTask = nil
+        activeConnectionTestTask?.cancel()
+        activeConnectionTestTask = nil
     }
 
     // MARK: - Off-main maintenance plumbing

@@ -2,14 +2,160 @@ import AppKit
 import CryptoKit
 import Foundation
 import GRDB
+import LocalAuthentication
+import Security
+
+protocol CloudSyncSecretStoring: Sendable {
+    func loadSecret() throws -> String?
+    func saveSecret(_ secret: String) throws
+    func deleteSecret() throws
+}
+
+enum CloudSyncSecretStoreError: LocalizedError {
+    case keychainFailure(OSStatus)
+
+    var errorDescription: String? {
+        switch self {
+        case .keychainFailure(let status):
+            return "访问系统钥匙串失败 (OSStatus \(status))"
+        }
+    }
+}
+
+final class KeychainCloudSyncSecretStore: CloudSyncSecretStoring {
+    private let service: String
+    private let account: String
+
+    init(
+        service: String = "com.promptpanel.app.cloudsync",
+        account: String = "cloud_sync_api_key"
+    ) {
+        self.service = service
+        self.account = account
+    }
+
+    private func baseQuery(allowNonInteractiveContext: Bool = true) -> [String: Any] {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        if allowNonInteractiveContext {
+            let context = LAContext()
+            context.interactionNotAllowed = true
+            query[kSecUseAuthenticationContext as String] = context
+        }
+        return query
+    }
+
+    func loadSecret() throws -> String? {
+        var query = baseQuery()
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        switch status {
+        case errSecSuccess:
+            guard let data = item as? Data else { return nil }
+            return String(data: data, encoding: .utf8)
+        case errSecItemNotFound, errSecInteractionNotAllowed:
+            return nil
+        default:
+            throw CloudSyncSecretStoreError.keychainFailure(status)
+        }
+    }
+
+    func saveSecret(_ secret: String) throws {
+        let data = Data(secret.utf8)
+        let query = baseQuery(allowNonInteractiveContext: false)
+        let attributesToUpdate: [String: Any] = [
+            kSecValueData as String: data
+        ]
+        let updateStatus = SecItemUpdate(query as CFDictionary, attributesToUpdate as CFDictionary)
+        if updateStatus == errSecSuccess {
+            return
+        }
+        if updateStatus != errSecItemNotFound {
+            _ = SecItemDelete(query as CFDictionary)
+        }
+
+        var insertQuery = query
+        insertQuery[kSecValueData as String] = data
+        insertQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        let addStatus = SecItemAdd(insertQuery as CFDictionary, nil)
+        guard addStatus == errSecSuccess else {
+            throw CloudSyncSecretStoreError.keychainFailure(addStatus)
+        }
+    }
+
+    func deleteSecret() throws {
+        let query = baseQuery(allowNonInteractiveContext: false)
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw CloudSyncSecretStoreError.keychainFailure(status)
+        }
+    }
+}
+
+final class IsolatedMemoryCloudSyncSecretStore: CloudSyncSecretStoring, @unchecked Sendable {
+    private static let lock = NSLock()
+    private static var secretsByScope: [String: String] = [:]
+
+    private let scopeKey: String
+
+    init(scopeKey: String) {
+        self.scopeKey = scopeKey
+    }
+
+    func loadSecret() throws -> String? {
+        Self.lock.lock()
+        defer { Self.lock.unlock() }
+        return Self.secretsByScope[scopeKey]
+    }
+
+    func saveSecret(_ secret: String) throws {
+        Self.lock.lock()
+        Self.secretsByScope[scopeKey] = secret
+        Self.lock.unlock()
+    }
+
+    func deleteSecret() throws {
+        Self.lock.lock()
+        Self.secretsByScope.removeValue(forKey: scopeKey)
+        Self.lock.unlock()
+    }
+}
 
 /// Data access layer for app settings (key-value store).
 final class SettingsRepository: @unchecked Sendable {
+    static let keychainStoredMarker = "keychain:v1"
 
     private let dbQueue: DatabaseQueue
+    private let secretStore: CloudSyncSecretStoring
 
-    init(dbQueue: DatabaseQueue) {
+    init(dbQueue: DatabaseQueue, secretStore: CloudSyncSecretStoring? = nil) {
         self.dbQueue = dbQueue
+        if let secretStore {
+            self.secretStore = secretStore
+        } else if Self.shouldUseSystemKeychain(forDatabasePath: dbQueue.path) {
+            self.secretStore = KeychainCloudSyncSecretStore()
+        } else {
+            let normalizedScope = URL(fileURLWithPath: dbQueue.path).standardizedFileURL.path
+            self.secretStore = IsolatedMemoryCloudSyncSecretStore(scopeKey: normalizedScope)
+        }
+    }
+
+    private static func shouldUseSystemKeychain(forDatabasePath dbPath: String) -> Bool {
+        guard ProcessInfo.processInfo.environment["PROMPTPANEL_APP_SUPPORT_DIR"] == nil else {
+            return false
+        }
+        guard !dbPath.isEmpty, dbPath != ":memory:" else {
+            return false
+        }
+        let candidateURL = URL(fileURLWithPath: dbPath).standardizedFileURL
+        let liveURL = Constants.databaseURL.standardizedFileURL
+        return candidateURL.path == liveURL.path
     }
 
     /// Get a setting value by key.
@@ -168,7 +314,7 @@ final class SettingsRepository: @unchecked Sendable {
     }
 
     func isAutoUpdateEnabled() throws -> Bool {
-        try getBool(Constants.SettingsKey.autoUpdateEnabled, default: true)
+        try getBool(Constants.SettingsKey.autoUpdateEnabled, default: false)
     }
 
     func setAutoUpdateEnabled(_ enabled: Bool) throws {
@@ -187,14 +333,21 @@ final class SettingsRepository: @unchecked Sendable {
         guard let stored = try get(Constants.SettingsKey.cloudSyncApiKey), !stored.isEmpty else {
             return ""
         }
+        if stored == Self.keychainStoredMarker {
+            return (try secretStore.loadSecret()) ?? ""
+        }
         if stored.hasPrefix("enc:v2:") {
             let b64 = String(stored.dropFirst("enc:v2:".count))
             guard let combined = Data(base64Encoded: b64) else { return "" }
             let box = try AES.GCM.SealedBox(combined: combined)
-            let opened = try AES.GCM.open(box, using: Self.localSettingsKey, authenticating: Self.apiKeyAAD)
-            return String(data: opened, encoding: .utf8) ?? ""
+            let opened = try AES.GCM.open(box, using: Self.legacyLocalSettingsKey, authenticating: Self.legacyApiKeyAAD)
+            let decrypted = String(data: opened, encoding: .utf8) ?? ""
+            if !decrypted.isEmpty {
+                try? setCloudSyncApiKey(decrypted)
+            }
+            return decrypted
         }
-        // Transparently upgrade legacy plaintext API key in-place
+        // Transparently migrate legacy plaintext API key to Keychain and scrub SQLite row
         try? setCloudSyncApiKey(stored)
         return stored
     }
@@ -202,16 +355,25 @@ final class SettingsRepository: @unchecked Sendable {
     func setCloudSyncApiKey(_ apiKey: String) throws {
         let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
+            try secretStore.deleteSecret()
             try set(Constants.SettingsKey.cloudSyncApiKey, value: "")
             return
         }
-        let sealed = try AES.GCM.seal(Data(trimmed.utf8), using: Self.localSettingsKey, authenticating: Self.apiKeyAAD)
-        let encoded = "enc:v2:" + (sealed.combined?.base64EncodedString() ?? "")
-        try set(Constants.SettingsKey.cloudSyncApiKey, value: encoded)
+        try secretStore.saveSecret(trimmed)
+        try set(Constants.SettingsKey.cloudSyncApiKey, value: Self.keychainStoredMarker)
     }
 
-    private static let apiKeyAAD = Data("promptpanel-local-settings-apikey-v2".utf8)
-    private static let localSettingsKey: SymmetricKey = {
+    static func makeLegacyEncryptedApiKeyForMigrationTest(_ plaintext: String) throws -> String {
+        let sealed = try AES.GCM.seal(
+            Data(plaintext.utf8),
+            using: legacyLocalSettingsKey,
+            authenticating: legacyApiKeyAAD
+        )
+        return "enc:v2:" + (sealed.combined?.base64EncodedString() ?? "")
+    }
+
+    private static let legacyApiKeyAAD = Data("promptpanel-local-settings-apikey-v2".utf8)
+    private static let legacyLocalSettingsKey: SymmetricKey = {
         let material = Data("PromptPanel-Local-Settings-\(NSUserName())".utf8)
         let prk = Data(HMAC<SHA256>.authenticationCode(for: material, using: SymmetricKey(data: Data("PromptPanel-Settings-Salt-v2".utf8))))
         return SymmetricKey(data: prk)

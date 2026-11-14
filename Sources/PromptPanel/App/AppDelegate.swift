@@ -375,7 +375,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             dbQueue: databaseManager.dbQueue,
             storageMaintenanceService: storageMaintenanceService
         )
-        updaterService.autoUpdateEnabled = (try? settingsRepository.isAutoUpdateEnabled()) ?? true
+        updaterService.autoUpdateEnabled = (try? settingsRepository.isAutoUpdateEnabled()) ?? false
         updaterService.syncEndpointProvider = { [weak self] in
             (try? self?.settingsRepository?.getCloudSyncEndpoint()) ?? ""
         }
@@ -383,19 +383,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.mainWindowViewModel?.flushPendingInlineChangesIfNeeded()
             _ = try? self?.storageMaintenanceService?.createUpdateSafetyBackup()
         }
-        updaterService.canAutoInstallSilentlyProvider = { [weak self] in
-            guard let self else { return false }
-            let panelVisible = self.appState?.isPanelVisible ?? false
-            let mainVisible = self.mainWindow?.isVisible ?? false
-            let refVisible = self.referenceWindow?.isVisible ?? false
-            return !panelVisible && !mainVisible && !refVisible
-        }
         updaterService.onUpdateStateChanged = { [weak self] phase in
             guard let self else { return }
             self.mainWindowViewModel?.refreshUpdaterStatus()
             switch phase {
             case .updateAvailable(let ver, _):
-                self.trayManager?.updateCheckMenuItemTitle("一键更新至 v\(ver)…")
+                self.trayManager?.updateCheckMenuItemTitle("发现新版本 v\(ver)…")
             case .readyToInstall(let ver, _):
                 self.trayManager?.updateCheckMenuItemTitle("立即重启升至 v\(ver)…")
                 self.mainWindowViewModel?.bannerMessage = "新版本 v\(ver) 已下载校验就绪，可在设置或菜单栏一键重启更新。"
