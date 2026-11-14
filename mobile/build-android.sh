@@ -161,6 +161,21 @@ adaptive_xml = """<?xml version="1.0" encoding="utf-8"?>
 """
 (anydpi / "ic_launcher.xml").write_text(adaptive_xml, encoding="utf-8")
 (anydpi / "ic_launcher_round.xml").write_text(adaptive_xml, encoding="utf-8")
+
+# 4. Write Android Network Security Config (HTTPS required globally; cleartext permitted strictly for local loopback debugging)
+xml_dir = res_dir / "xml"
+xml_dir.mkdir(parents=True, exist_ok=True)
+network_security_xml = """<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>
+"""
+(xml_dir / "network_security_config.xml").write_text(network_security_xml, encoding="utf-8")
 PY
 
 echo "[android-build] Compiling resources with aapt2..."
@@ -203,14 +218,22 @@ echo "[android-build] Running zipalign (4-byte & page alignment)..."
 "${BUILD_TOOLS}/zipalign" -p -f 4 "${WORK_DIR}/unaligned.apk" "${WORK_DIR}/aligned.apk"
 "${BUILD_TOOLS}/zipalign" -c 4 "${WORK_DIR}/aligned.apk"
 
-KEYSTORE_DIR="${REPO_ROOT}/dist/keystore"
-mkdir -p "$KEYSTORE_DIR"
-KEYSTORE_PATH="${ANDROID_KEYSTORE_PATH:-${KEYSTORE_DIR}/promptpanel-release.jks}"
 KEY_ALIAS="${ANDROID_KEY_ALIAS:-promptpanel}"
-KEY_PASS="${ANDROID_KEY_PASS:-promptpanel2026}"
-
-if [[ ! -f "$KEYSTORE_PATH" ]]; then
-    echo "[android-build] Generating RSA-2048 release keystore..."
+if [[ -n "${ANDROID_KEYSTORE_PATH:-}" ]]; then
+    KEYSTORE_PATH="$ANDROID_KEYSTORE_PATH"
+    if [[ ! -f "$KEYSTORE_PATH" ]]; then
+        echo "Configured ANDROID_KEYSTORE_PATH does not exist: $KEYSTORE_PATH" >&2
+        exit 1
+    fi
+    if [[ -z "${ANDROID_KEY_PASS:-}" ]]; then
+        echo "ANDROID_KEY_PASS must be provided when ANDROID_KEYSTORE_PATH is set." >&2
+        exit 1
+    fi
+    KEY_PASS="$ANDROID_KEY_PASS"
+else
+    KEYSTORE_PATH="${WORK_DIR}/ephemeral-dev.p12"
+    KEY_PASS="$(openssl rand -hex 24)"
+    echo "[android-build] ANDROID_KEYSTORE_PATH not set; generating ephemeral local keystore for verification build..."
     keytool -genkeypair \
         -v \
         -keystore "$KEYSTORE_PATH" \
@@ -219,10 +242,10 @@ if [[ ! -f "$KEYSTORE_PATH" ]]; then
         -keyalg RSA \
         -keysize 2048 \
         -sigalg SHA256withRSA \
-        -validity 10000 \
+        -validity 365 \
         -storepass "$KEY_PASS" \
         -keypass "$KEY_PASS" \
-        -dname "CN=PromptPanel Release, OU=Mobile, O=qilaidev, L=Shanghai, ST=Shanghai, C=CN" >/dev/null 2>&1
+        -dname "CN=PromptPanel Dev Build, OU=Mobile, O=qilaidev, C=CN" >/dev/null 2>&1
 fi
 
 FINAL_APK="${OUTPUT_DIR}/PromptPanel-${SHORT_VERSION}+${BUILD_VERSION}-android.apk"

@@ -78,7 +78,7 @@
     "Three-tier workspace groups: Inbox & Todos (速记与待办), Reusable Categories (常用类型), and Active/Archived Projects (项目管理)",
     "Dual-window reference & clipboard assembly bench (参考窗口) for cloning templates into active projects",
     "Immutable entry version history (EntryVersion) with one-click version rollback",
-    "Optional open-source self-hosted cloud sync (CloudSyncService, Python sync server, and Flutter mobile companion) with conflict-free version preservation",
+    "Optional open-source self-hosted cloud sync (CloudSyncService, Python sync server, and Android mobile companion) with conflict-free version preservation",
     "SQLite FTS5 prefix and substring title/content search with pre-limit #tag filtering",
     "Frecency entry ranking (use count decayed on a 90-day half-life), shared by the SQL ORDER BY and the in-memory panel sort",
     "Tag filtering with #tag syntax",

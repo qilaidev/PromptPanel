@@ -1914,7 +1914,7 @@
             <div class="settings-row-label">自动检查并预下载更新</div>
             <div class="settings-row-desc">优先走已配置的同步节点镜像极速校验下载，就绪后一键安装免卸载</div>
           </div>
-          <button id="autoUpdateSwitch" type="button" role="switch" aria-checked="true" class="switch-toggle checked" onclick="toggleAutoUpdateSwitch()" aria-label="自动检查并预下载更新"></button>
+          <button id="autoUpdateSwitch" type="button" role="switch" aria-checked="false" class="switch-toggle" onclick="toggleAutoUpdateSwitch()" aria-label="自动检查并预下载更新"></button>
         </div>
         <div class="btn-row">
           <button id="checkUpdatePrimaryBtn" class="btn-primary" style="flex:1;" onclick="onTapCheckOrInstallUpdate()">检查并一键更新</button>
@@ -4267,7 +4267,7 @@ function isAutoUpdateEnabled() {
     return !!AndroidBridge.getAutoUpdate();
   }
   const v = localStorage.getItem('promptpanel_auto_update_enabled');
-  return v === null ? true : (v === 'true');
+  return v === 'true';
 }
 
 function syncAutoUpdateSwitchUI(checked) {

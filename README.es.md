@@ -214,7 +214,7 @@ Suponiendo que la app está compilada y en ejecución (icono visible en la barra
 | `#sql migrate` | Filtro de etiqueta `sql` **y** coincidencia de texto `migrate` |
 | *(vacío)* | Navega por el proyecto actual más `Universal`, ordenado por fijado → frecency → recencia → número de usos |
 
-Notas: solo se usa el primer token `#tag` como filtro de etiqueta, y coincide de forma exacta y sensible a mayúsculas (`#SQL` no coincidirá con una etiqueta `sql`); los resultados se limitan a 100 filas; la coincidencia de texto es por prefijo, así que un término tomado del interior de una palabra (o de una secuencia CJK sin espacios) no coincidirá.
+Notas: solo se usa el primer token `#tag` como filtro de etiqueta, con coincidencia exacta sin distinguir mayúsculas (`#SQL` coincide con una etiqueta `sql`); los resultados se limitan a 100 filas; la búsqueda combina el índice FTS5 `trigram` con subcadenas para encontrar también fragmentos intermedios y secuencias CJK.
 
 Puedes cambiar el proyecto activo desde dentro del panel sin abrir la ventana principal — solo con el teclado, sin desvíos. `⌘1`–`⌘9` ejecutan directamente las nueve primeras filas; `⌘C` copia sin pegar; `⌘P` fija el panel; `Esc` lo cierra.
 

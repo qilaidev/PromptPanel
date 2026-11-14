@@ -12,17 +12,11 @@ permissions:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: macos-14
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Install zsh and sqlite3
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y zsh sqlite3
 
       - name: Validate shell scripts
         run: |
@@ -68,5 +62,4 @@ jobs:
           python3 -m py_compile server/promptpanel_sync_server.py
 
       - name: Run formal release-readiness gate on macOS runner
-        if: runner.os == 'macOS'
         run: zsh scripts/release-readiness.sh --output-dir "$RUNNER_TEMP/promptpanel-release"

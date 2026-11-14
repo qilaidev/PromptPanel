@@ -19,4 +19,11 @@ You should receive an acknowledgement within 7 days. If the issue is confirmed, 
 
 ## Data handling expectations
 
-PromptPanel is local-first. Prompt content should stay on the user's Mac except when the user explicitly copies or pastes it into another app. Security reports involving prompt leakage, unexpected network access, unsafe restore behavior, or permission escalation are treated as high priority.
+PromptPanel is local-first and makes **zero outbound network requests by default**:
+
+- Prompt content stays on the user's Mac (`~/Library/Application Support/PromptPanel/promptpanel.db`) unless the user explicitly copies/pastes it into another app or opts into user-controlled sync (`设置 → 偏好 → 云端同步`).
+- Background update checks are disabled by default (`SUEnableAutomaticChecks = false`, `autoUpdateEnabled = false`). In-place app bundle updates require a valid Apple Developer ID (`TeamIdentifier`) signature and never strip `com.apple.quarantine`; ad-hoc local builds only notify and open the release page.
+- Remote sync and update endpoints require `https://` (`NSAppTransportSecurity` enforces HTTPS globally with `NSAllowsLocalNetworking` strictly scoped to local loopback `localhost` / `127.0.0.1` / `::1` for local debugging).
+- Optional sync tokens are stored in the macOS Keychain (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`) rather than in SQLite backups.
+
+Security reports involving prompt leakage, unexpected network access, unsafe restore behavior, or permission escalation are treated as high priority.

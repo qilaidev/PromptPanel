@@ -319,7 +319,7 @@ stale_scan_files=(
     "docs/接手维护指南.md"
 )
 
-stale_pattern='promptpanel\.sqlite|四个迁移|五个迁移|v1 到 v5|Option Space|⌥Space|缺少 xctest.*测试已执行|/Users/xiaomo|Linux 容器运行产品 \| 支持|普通服务器运行产品 \| 支持'
+stale_pattern='promptpanel\.sqlite|四个迁移|五个迁移|v1 到 v5|Option Space|⌥Space|缺少 xctest.*测试已执行|/Users/[A-Za-z0-9._-]+|Linux 容器运行产品 \| 支持|普通服务器运行产品 \| 支持'
 if grep -n -E "$stale_pattern" "${stale_scan_files[@]}" >/tmp/promptpanel-docs-stale.$$ 2>/dev/null; then
     cat /tmp/promptpanel-docs-stale.$$ >&2
     rm -f /tmp/promptpanel-docs-stale.$$

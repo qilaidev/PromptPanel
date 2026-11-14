@@ -34,7 +34,7 @@ PromptPanel 是一款本地优先的 **macOS Prompt 管理器**、**AI Prompt �
 | 核心问题 | 解决高频复制粘贴同一批 ChatGPT、Claude、Cursor、Copilot、VS Code、Terminal Prompt、项目上下文、命令片段和模板的问题。 |
 | 适合人群 | AI 重度用户、开发者、Prompt engineers、技术写作者、PM、顾问、需要按项目隔离 Prompt 库的独立开发者。 |
 | 核心功能 | 全局快捷键、即时搜索（SQLite FTS5 + 子串匹配）、三层工作区（`速记与待办` / `常用类型` / `项目管理` + 项目归档）、双窗参考与剪贴板装配台（`参考窗口`）、词条历史版本与一键回滚、`#tag` 过滤、frecency 智能排序、剪贴板优先、辅助功能权限下自动粘贴、执行日志、JSON/Markdown 导入导出、可选开源自托管多端同步（`server/` + `mobile/`）。 |
-| 技术栈 | Swift 5.10、AppKit `NSPanel`、SwiftUI、SQLite/GRDB、KeyboardShortcuts、Sparkle 2、Swift Package Manager（另附可选 Python 自托管同步服务与 Flutter 移动端）。 |
+| 技术栈 | Swift 5.10、AppKit `NSPanel`、SwiftUI、SQLite/GRDB、KeyboardShortcuts、Sparkle 2、Swift Package Manager（另附可选 Python 自托管同步服务与 Android 移动端）。 |
 | 快速开始 | `git clone` → `./scripts/build-app.sh` → `open dist/PromptPanel.app`。首次运行建议授予辅助功能权限；不授权也能复制到剪贴板。 |
 | 典型场景 | ChatGPT/Claude role prompt、Cursor project context、PR review checklist、terminal command snippet、会议纪要模板、客户回复模板、跨端速记与待办。 |
 | 界面语言 | 应用界面目前只有**简体中文**（`CFBundleDevelopmentRegion = zh-Hans`，无本地化资源与语言切换入口）。文档为中英双语、共 8 个语言版本。词条内容本身不限语言。 |
@@ -132,7 +132,7 @@ PromptPanel 把上面这些全部塌进一条 sub-second 的链路——而你�
 - 🔐 **权限缺失也能用**：没辅助功能权限时只走"复制"，UI 明确告知
 - 📝 **多行内容**：模板正文不限长度
 - 📊 **执行日志**：粘贴失败时可查
-- ☁️ **可选的开源自托管多端同步（`CloudSyncService` + `server/` + `mobile/`）**：默认 100% 纯本地零网络请求；需要跨设备协同的用户可在「设置 → 偏好 → 云端同步」中配置本地网盘/iCloud 文件路径，或一键部署仓库自带的零外部依赖 Python 同步服务端（`server/`）与 Flutter 手机端（`mobile/`），并发冲突自动留存进历史版本
+- ☁️ **可选的开源自托管多端同步（`CloudSyncService` + `server/` + `mobile/`）**：默认 100% 纯本地零网络请求；需要跨设备协同的用户可在「设置 → 偏好 → 云端同步」中配置本地网盘/iCloud 文件路径，或部署仓库自带的零外部依赖 Python 同步服务端（`server/`）与 Android 手机伴侣端（`mobile/`），并发冲突自动留存进历史版本
 - 🔄 **手动更新（GitHub Releases）**：Sparkle 已接入但默认关闭；正式 appcast 托管位就绪后再开启自动检查
 
 ### 永远不会做（产品边界）
@@ -212,13 +212,13 @@ open dist/PromptPanel.app
 
 | 你输入 | 实际行为 |
 |---|---|
-| `review` | 对词条标题、正文和标签做 SQLite **FTS5 前缀匹配 + 大小写不敏感子串匹配（`INSTR`）** |
-| `code rev` | 空格分隔的每个 token 都是 AND 关系，同时支持英文前缀与中文连写串中段词召回 |
-| `#sql` | 只保留打了 `sql` 标签的词条（在 SQL `LIMIT 100` 截断前完成过滤）；`#tag` 这个 token 会从文本查询里剔除 |
+| `review` | 对词条标题、正文和标签做 SQLite **FTS5 `trigram` 倒排索引 + 短词大小写不敏感子串匹配（`INSTR`）** |
+| `code rev` | 空格分隔的每个 token 都是 AND 关系，同时支持英文中段子串与中文连写串中段词召回 |
+| `#sql` | 只保留打了 `sql` 标签的词条（不区分大小写，且在 SQL `LIMIT 100` 截断前完成过滤）；`#tag` 这个 token 会从文本查询里剔除 |
 | `#sql migrate` | 标签 `sql` **且** 文本命中 `migrate` |
 | *(空)* | 浏览「当前项目 + 通用项目」，按 置顶 → frecency → 最近使用 → 使用次数 排列 |
 
-注意：一次查询只取**第一个** `#tag` 作为标签过滤，且标签是**精确、区分大小写**匹配（`#SQL` 匹配不到 `sql` 标签）；搜索结果上限 100 条；查询结合了 FTS5 前缀索引与 `INSTR` 子串匹配，因此在“并发安全”里搜“安全”也能直接命中。
+注意：一次查询只取**第一个** `#tag` 作为标签过滤，标签为**精确但大小写不敏感**匹配（`#SQL` 可正常命中 `sql` 标签）；搜索结果上限 100 条；查询结合了 FTS5 `trigram` 索引（3 字符及以上）与 `INSTR` 短词匹配，因此在“并发安全”里搜“安全”也能直接命中。
 
 切换当前项目可以直接在面板内完成，不必打开主窗口——纯键盘，零绕路。
 
@@ -327,7 +327,7 @@ PromptPanel/
 │   └── Resources/        # Info.plist / entitlements / 图标 / Assets
 ├── Tests/PromptPanelTests/
 ├── server/               # 可选的零外部依赖 Python + SQLite 自托管同步服务端
-├── mobile/               # 可选的 Flutter (Android & iOS) 跨平台手机端应用
+├── mobile/               # 可选的 Android 手机端伴侣应用
 ├── frontend-draft/       # UI 唯一基准（HTML/JSX 设计稿）
 ├── scripts/              # 构建、公证、发布预检、备份恢复
 ├── docs/                 # 公开架构、FAQ、PRD、部署、运维、交接文档

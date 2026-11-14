@@ -215,7 +215,7 @@ En supposant que l'app est compilée et lancée (icône visible dans la barre de
 | `#sql migrate` | Filtre d'étiquette `sql` **et** correspondance textuelle `migrate` |
 | *(vide)* | Parcourt le projet courant plus `Universal`, trié par épinglage → frecency → récence → nombre d'utilisations |
 
-Remarques : seul le premier jeton `#tag` sert de filtre d'étiquette, et la correspondance est exacte et sensible à la casse (`#SQL` ne correspondra pas à une étiquette `sql`) ; les résultats sont plafonnés à 100 lignes ; la correspondance textuelle est par préfixe, donc un terme pris au milieu d'un mot (ou d'une suite CJK sans espaces) ne correspondra pas.
+Remarques : seul le premier jeton `#tag` sert de filtre d'étiquette, en correspondance exacte insensible à la casse (`#SQL` correspond aussi à `sql`) ; les résultats sont plafonnés à 100 lignes ; la recherche combine l'index FTS5 `trigram` et la recherche de sous-chaînes, y compris au milieu d'un mot ou d'une séquence CJK.
 
 Vous pouvez changer de projet actif depuis l'intérieur du panneau sans ouvrir la fenêtre principale — au clavier uniquement, sans détour. `⌘1`–`⌘9` exécutent directement les neuf premières lignes ; `⌘C` copie sans coller ; `⌘P` épingle le panneau ; `Esc` le ferme.
 

@@ -51,13 +51,13 @@ Type in the search field; there is no submit step.
 
 | Input | Behavior |
 | --- | --- |
-| `review` | SQLite FTS5 prefix match + case-insensitive substring fallback (`INSTR`) over entry title, content, and tags |
+| `review` | SQLite FTS5 `trigram` index + short-token substring match (`INSTR`) over entry title, content, and tags |
 | `code rev` | Each whitespace-separated token is combined with AND |
-| `#sql` | Filters to entries tagged `sql` (evaluated before the 100-row limit); the `#tag` token is removed from the text query |
+| `#sql` | Filters to entries tagged `sql` case-insensitively (evaluated inside SQL before the 100-row limit); the `#tag` token is removed from the text query |
 | `#sql migrate` | Tag filter `sql` **and** text match `migrate` |
 | *(empty)* | Browses the current project plus the universal project |
 
-Only the first `#tag` token is treated as a tag filter and it matches exactly and case-sensitively (`#SQL` will not match a `sql` tag). Results are capped at 100 rows, and combining FTS5 prefix tokens with `INSTR` substring fallback ensures mid-word and mid-CJK-run terms (such as searching `安全` inside `并发安全`) are matched reliably.
+Only the first `#tag` token is treated as a tag filter and it matches exact tag names case-insensitively (`#SQL` matches a `sql` tag). Results are capped at 100 rows, and combining the FTS5 `trigram` index with short-token `INSTR` matching ensures mid-word and mid-CJK-run terms (such as searching `安全` inside `并发安全`) are matched reliably.
 
 ## Why do entries change position in the list? / 词条顺序为什么会变？
 
@@ -174,7 +174,7 @@ The clipboard write happens first and is treated as the durable fallback. If pas
 
 ## Can I sync prompts across my own devices or use teams?
 
-Mandatory SaaS accounts, multi-user team collaboration, and complex workflow orchestration remain permanent non-goals in `docs/项目快贴-PRD.md`. For single-user multi-device continuity, v1.6.0 includes optional, user-controlled sync (`设置 → 偏好 → 云端同步`) via a local cloud-drive file or the bundled open-source self-hosted Python sync server (`server/`) and Flutter mobile companion (`mobile/`), with conflict-free version history preservation.
+Mandatory SaaS accounts, multi-user team collaboration, and complex workflow orchestration remain permanent non-goals in `docs/项目快贴-PRD.md`. For single-user multi-device continuity, v1.6.0+ includes optional, user-controlled sync (`设置 → 偏好 → 云端同步`) via a local cloud-drive file or the bundled open-source self-hosted Python sync server (`server/`) over HTTPS and Android mobile companion (`mobile/`), with conflict-free version history preservation.
 
 ## Does PromptPanel have a public API?
 

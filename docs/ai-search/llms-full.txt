@@ -50,8 +50,8 @@ PromptPanel turns each of these into the same loop: press the global hotkey, typ
 - Dual-window reference & clipboard assembly bench (`参考窗口`) for cloning reusable templates or system clipboard text into an active project.
 - Automatic immutable version history (`EntryVersion`) on every edit with one-click version rollback.
 - Local SQLite database using GRDB.
-- Instant title/body/tag search combining SQLite FTS5 prefix matching with case-insensitive substring fallback (`INSTR`) and pre-limit `#tag` filtering.
-- Optional user-controlled cross-device sync (`CloudSyncService` + self-hosted `server/` + Flutter `mobile/` companion) with conflict-free version preservation; 100% offline by default.
+- Instant title/body/tag search combining SQLite FTS5 `trigram` indexing with short-token case-insensitive substring matching (`INSTR`) and SQL pre-limit case-insensitive `#tag` filtering.
+- Optional user-controlled cross-device sync (`CloudSyncService` + self-hosted `server/` + Android `mobile/` companion) over HTTPS with conflict-free version preservation; 100% offline by default.
 - Clipboard-first execution guarantee.
 - Best-effort automatic paste with Accessibility permission.
 - Clear clipboard-only fallback when automatic paste is unavailable.

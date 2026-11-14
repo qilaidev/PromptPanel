@@ -215,7 +215,7 @@ Vorausgesetzt, die App ist gebaut und läuft (Menüleisten-Symbol sichtbar):
 | `#sql migrate` | Tag-Filter `sql` **und** Texttreffer `migrate` |
 | *(leer)* | Durchsucht das aktuelle Projekt plus `Universal`, sortiert nach Anheften → Frecency → Aktualität → Nutzungshäufigkeit |
 
-Hinweise: Nur das erste `#tag`-Token wirkt als Tag-Filter, und es trifft exakt und case-sensitiv (`#SQL` trifft kein `sql`-Tag); Suchergebnisse sind auf 100 Zeilen begrenzt; der Textabgleich ist präfixbasiert, ein Begriff aus der Mitte eines Wortes (oder einer CJK-Folge ohne Leerzeichen) trifft also nicht.
+Hinweise: Nur das erste `#tag`-Token wirkt als Tag-Filter, exakt aber unabhängig von Groß-/Kleinschreibung (`#SQL` trifft auch ein `sql`-Tag); Suchergebnisse sind auf 100 Zeilen begrenzt; durch die Kombination aus FTS5-`trigram`-Index und Teilstring-Abgleich treffen auch Wortbestandteile und CJK-Teilfolgen.
 
 Du kannst das aktive Projekt direkt im Panel wechseln, ohne das Hauptfenster zu öffnen — nur mit der Tastatur, ohne Umweg. `⌘1`–`⌘9` führen die ersten neun Zeilen direkt aus; `⌘C` kopiert ohne Einfügen; `⌘P` fixiert das Panel; `Esc` schließt es.
 

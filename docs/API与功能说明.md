@@ -71,7 +71,7 @@ AppDelegate / AppState
 | `projects` | 工作区分组（速记与待办 / 常用类型 / 项目）。 | `id`, `name`, `is_default`, `group_kind`, `is_archived`, `icon_name`, `created_at`, `updated_at`, `deleted_at` |
 | `entries` | Prompt / snippet / todo / note 词条。 | `project_id`, `title`, `content`, `type`, `is_pinned`, `is_completed`, `sort_order`, `use_count`, `last_used_at`, `source_entry_id`, `tags`, `deleted_at` |
 | `entry_versions` | 词条历史版本快照。 | `id`, `entry_id`, `version_number`, `title`, `content`, `change_note`, `created_at` |
-| `entries_fts` | FTS5 全文索引。 | `title`, `content` |
+| `entries_fts` | FTS5 (`trigram`) 全文索引。 | `title`, `content`, `tags` |
 | `app_settings` | 本地设置键值。 | `key`, `value` |
 | `sync_metadata` | 可选多端同步元数据。 | `key`, `value`, `updated_at` |
 | `execution_logs` | 执行诊断。 | `entry_id`, `project_id`, `front_app_bundle_id`, `observed_app_bundle_id`, `failure_reason`, `total_duration_ms` |
@@ -88,6 +88,7 @@ AppDelegate / AppState
 | v5 | `v5_drop_unused_entry_tags_index` | 删除未使用的历史 tags 索引。 |
 | v6 | `v6_retire_entry_sort_order` | 清零历史 `entries.sort_order`，排序全面改用 frecency（列保留仅兼容归档导入导出）。 |
 | v7 | `v7_workspace_versions_and_sync` | 新增工作区三层角色（`group_kind`）、归档状态、内置 `速记与待办`、待办完成态、`entry_versions` 历史版本表及 `sync_metadata` 同步元数据表。 |
+| v8 | `v8_fts_trigram_and_narrow_update_trigger` | 升级 `entries_fts` 为覆盖 `title, content, tags` 的 `trigram` 索引，并将更新触发器收窄至 `title, content, tags` 列。 |
 
 数据约束：
 

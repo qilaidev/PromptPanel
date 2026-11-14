@@ -36,7 +36,7 @@ PromptPanel is a local-first **macOS prompt manager**, **AI prompt launcher**, a
 | 解决什么问题 / Problem solved | 让高频使用 ChatGPT、Claude、Cursor、Copilot、VS Code、Terminal 的用户不用反复翻笔记、复制同一段 system prompt、项目上下文或命令模板。 |
 | 适合谁 / Audience | AI heavy users、开发者、Prompt engineers、技术写作者、PM、顾问和需要按项目隔离 prompt library 的独立开发者。 |
 | 核心功能 / Core features | 全局快捷键、即时搜索（SQLite FTS5 + 子串匹配）、三层工作区（`速记与待办` / `常用类型` / `项目管理` + 项目归档）、双窗参考与剪贴板装配台（`参考窗口`）、词条版本历史与一键回滚、`#tag` 过滤、frecency 智能排序、剪贴板优先、Accessibility 自动粘贴、执行日志、JSON/Markdown 导入导出、可选的开源自托管多端同步（`server/` + `mobile/`）。 |
-| 技术栈 / Tech stack | Swift 5.10, AppKit `NSPanel`, SwiftUI, SQLite/GRDB, KeyboardShortcuts, Sparkle 2, Swift Package Manager（另附可选 Python 自托管同步服务与 Flutter 移动端）。 |
+| 技术栈 / Tech stack | Swift 5.10, AppKit `NSPanel`, SwiftUI, SQLite/GRDB, KeyboardShortcuts, Sparkle 2, Swift Package Manager（另附可选 Python 自托管同步服务与 Android 移动端）。 |
 | 快速开始 / Quick start | `git clone` -> `./scripts/build-app.sh` -> `open dist/PromptPanel.app`。首次运行授予 Accessibility 权限后可自动粘贴；不授权也能复制到剪贴板。 |
 | 典型场景 / Use cases | ChatGPT/Claude role prompt、Cursor project context、PR review checklist、terminal command snippet、meeting notes template、client-specific response template、跨端速记与待办。 |
 | 界面语言 / UI language | **应用界面目前只有简体中文**（`CFBundleDevelopmentRegion = zh-Hans`，无本地化资源）。The app UI is currently **Simplified Chinese only**; documentation is available in 8 languages. 你存储的 prompt 内容本身不限语言。 |
@@ -132,7 +132,7 @@ If "I copy and paste the same multiline prompt twenty times a day" describes you
 - 🔐 **Permission-aware degradation** — without Accessibility, you still get one-key copy and a clear UI hint
 - 📝 **Multiline content** — full template bodies, no length limit on storage
 - 📊 **Execution log** for diagnosing paste failures
-- ☁️ **Optional open-source self-hosted sync (`CloudSyncService` + `server/` + `mobile/`)** — 100% offline by default; optionally sync across Macs and mobile (`mobile/` Flutter Android/iOS app) via a local cloud-drive file or the bundled zero-dependency Python sync server (`server/`) with conflict-free version preservation
+- ☁️ **Optional open-source self-hosted sync (`CloudSyncService` + `server/` + `mobile/`)** — 100% offline by default; optionally sync across Macs and mobile (`mobile/` Android companion app) via a local cloud-drive file or the bundled zero-dependency Python sync server (`server/`) over HTTPS with conflict-free version preservation
 - 🔄 **Manual update via GitHub Releases** (Sparkle auto-update is wired in but ships off-by-default; the maintainer will enable it once a signed appcast feed is hosted)
 
 ### Explicitly *not* doing (project boundaries)
@@ -233,13 +233,13 @@ Assuming the app is built and running (menu-bar icon visible):
 
 | You type | What happens |
 |---|---|
-| `review` | SQLite **FTS5 prefix match + case-insensitive substring fallback (`INSTR`)** over entry title, content, and tags |
-| `code rev` | Every whitespace-separated token is combined with AND — matches "code review…" as well as CJK mid-word substrings |
-| `#sql` | Filters to entries tagged `sql` (evaluated inside SQL before the 100-row limit); the `#tag` token is stripped from the text query |
+| `review` | SQLite **FTS5 trigram index + short-token substring match (`INSTR`)** over entry title, content, and tags |
+| `code rev` | Every whitespace-separated token is combined with AND — matches mid-word and CJK substrings alike |
+| `#sql` | Filters to entries tagged `sql` case-insensitively (evaluated inside SQL before the 100-row limit); the `#tag` token is stripped from the text query |
 | `#sql migrate` | Tag filter `sql` **and** text match `migrate` |
 | *(empty)* | Browses the current project plus `Universal`, sorted by pin → frecency → recency → use count |
 
-Notes: only the first `#tag` token in a query is used as a tag filter, and the tag must match **exactly and case-sensitively** (`#SQL` will not match a `sql` tag); search results are capped at 100 rows; combining FTS5 prefix tokens with `INSTR` substring fallback ensures both fast token lookup and reliable mid-word CJK recall.
+Notes: only the first `#tag` token in a query is used as a tag filter, and `#tag` matching is **exact and case-insensitive** (`#SQL` matches a `sql` tag); search results are capped at 100 rows; combining the FTS5 `trigram` index (for ≥3-character tokens) with `INSTR` short-token matching ensures both fast indexed lookup and reliable mid-word / CJK recall.
 
 You can switch the active project from inside the panel without opening the main window — keyboard-only, no detour.
 
@@ -348,7 +348,7 @@ PromptPanel/
 │   └── Resources/        # Info.plist, entitlements, AppIcon, Assets
 ├── Tests/PromptPanelTests/
 ├── server/               # Optional zero-dependency Python + SQLite self-hosted sync server
-├── mobile/               # Optional Flutter (Android & iOS) mobile companion app
+├── mobile/               # Optional Android mobile companion app
 ├── frontend-draft/       # UI source-of-truth (HTML/JSX mockups)
 ├── scripts/              # build-app.sh, notarize, release readiness, restore
 ├── docs/                 # public architecture, FAQ, PRD, release, ops, handoff docs

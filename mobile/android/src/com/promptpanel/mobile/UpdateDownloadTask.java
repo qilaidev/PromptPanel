@@ -273,6 +273,9 @@ public class UpdateDownloadTask implements Runnable {
         }
         try {
             URL parsed = new URL(clean);
+            if (!MainActivity.isAllowedRemoteUrl(parsed)) {
+                return null;
+            }
             String path = parsed.getPath() != null ? parsed.getPath() : "";
             while (path.length() > 1 && path.endsWith("/")) {
                 path = path.substring(0, path.length() - 1);
@@ -337,6 +340,9 @@ public class UpdateDownloadTask implements Runnable {
 
     private static String httpGetText(String urlStr, int connectTimeout, int readTimeout, String accept) throws Exception {
         URL current = new URL(urlStr);
+        if (!MainActivity.isAllowedRemoteUrl(current)) {
+            throw new IllegalStateException("仅允许通过 HTTPS 获取更新元数据");
+        }
         String initProto = current.getProtocol() != null ? current.getProtocol().toLowerCase(Locale.US) : "";
         for (int hop = 0; hop <= 4; hop++) {
             HttpURLConnection conn = (HttpURLConnection) current.openConnection();
@@ -353,7 +359,8 @@ public class UpdateDownloadTask implements Runnable {
                     String loc = conn.getHeaderField("Location");
                     if (loc == null || loc.isEmpty()) throw new IllegalStateException("重定向缺少地址");
                     URL next = new URL(current, loc);
-                    if ("https".equals(initProto) && !"https".equalsIgnoreCase(next.getProtocol())) {
+                    if (("https".equals(initProto) && !"https".equalsIgnoreCase(next.getProtocol()))
+                            || !MainActivity.isAllowedRemoteUrl(next)) {
                         throw new IllegalStateException("拦截不安全的协议降级重定向");
                     }
                     current = next;
@@ -379,6 +386,9 @@ public class UpdateDownloadTask implements Runnable {
 
     private static String downloadToFileAndHash(String urlStr, File destFile) throws Exception {
         URL current = new URL(urlStr);
+        if (!MainActivity.isAllowedRemoteUrl(current)) {
+            throw new IllegalStateException("仅允许通过 HTTPS 下载安装包");
+        }
         String initProto = current.getProtocol() != null ? current.getProtocol().toLowerCase(Locale.US) : "";
         for (int hop = 0; hop <= 5; hop++) {
             HttpURLConnection conn = (HttpURLConnection) current.openConnection();
@@ -394,7 +404,8 @@ public class UpdateDownloadTask implements Runnable {
                     String loc = conn.getHeaderField("Location");
                     if (loc == null || loc.isEmpty()) throw new IllegalStateException("下载重定向缺少地址");
                     URL next = new URL(current, loc);
-                    if ("https".equals(initProto) && !"https".equalsIgnoreCase(next.getProtocol())) {
+                    if (("https".equals(initProto) && !"https".equalsIgnoreCase(next.getProtocol()))
+                            || !MainActivity.isAllowedRemoteUrl(next)) {
                         throw new IllegalStateException("拦截不安全的下载协议降级");
                     }
                     current = next;

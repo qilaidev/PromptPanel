@@ -27,7 +27,7 @@ PromptPanel is an open-source native macOS prompt manager, AI prompt launcher, a
 
 ## Known Limits
 
-- macOS 14+ only for the desktop launcher; no Windows or Linux desktop build (an optional Flutter companion app in `mobile/` and self-hosted sync server in `server/` are provided in-repo for users who opt into cross-device sync).
+- macOS 14+ only for the desktop launcher; no Windows or Linux desktop build (an optional Android companion app in `mobile/` and self-hosted sync server in `server/` are provided in-repo for users who opt into cross-device sync).
 - The application interface is Simplified Chinese only (CFBundleDevelopmentRegion = zh-Hans, no localization resources, no in-app language switch). Documentation is bilingual and available in eight languages, and README.md carries a Chinese-to-English UI label map. Stored prompt content is language-agnostic.
 - Current GitHub Releases do not attach a notarized binary asset yet; build from source with ./scripts/build-app.sh.
 - Automatic paste requires macOS Accessibility permission; without it, the selected entry remains on the clipboard for manual paste.

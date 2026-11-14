@@ -549,7 +549,7 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
 
     @JavascriptInterface
     public boolean getAutoUpdate() {
-        return prefs().getBoolean(KEY_AUTO_UPDATE, true);
+        return prefs().getBoolean(KEY_AUTO_UPDATE, false);
     }
 
     @JavascriptInterface
@@ -818,6 +818,24 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
         return new String(decrypted, StandardCharsets.UTF_8);
     }
 
+    static boolean isAllowedRemoteUrl(URL url) {
+        if (url == null) return false;
+        String proto = url.getProtocol() != null ? url.getProtocol().toLowerCase(Locale.US) : "";
+        String host = url.getHost() != null ? url.getHost().toLowerCase(Locale.US) : "";
+        if (host.startsWith("[") && host.endsWith("]")) {
+            host = host.substring(1, host.length() - 1);
+        }
+        if (host.isEmpty()) return false;
+        if ("https".equals(proto)) return true;
+        if ("http".equals(proto)) {
+            return "localhost".equals(host)
+                    || "127.0.0.1".equals(host)
+                    || "::1".equals(host)
+                    || "10.0.2.2".equals(host);
+        }
+        return false;
+    }
+
     @JavascriptInterface
     public String httpRequest(String method, String urlStr, String bearerToken, String bodyJson) {
         if (urlStr == null || urlStr.trim().isEmpty()) {
@@ -831,6 +849,9 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
                     : "";
             if (!"https".equals(initialProtocol) && !"http".equals(initialProtocol)) {
                 return "400\n不支持的协议：" + initialProtocol;
+            }
+            if (!isAllowedRemoteUrl(currentUrl)) {
+                return "400\n为保护同步数据与 Token 安全，远程同步仅允许 https:// 地址（仅本机调试允许 localhost / 127.0.0.1）";
             }
 
             String cleanToken = bearerToken != null ? bearerToken.trim() : "";
@@ -880,8 +901,9 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
                     String nextProto = nextUrl.getProtocol() != null
                             ? nextUrl.getProtocol().toLowerCase(Locale.US)
                             : "";
-                    if ("https".equals(initialProtocol) && !"https".equals(nextProto)) {
-                        return "400\n已拦截不安全的协议降级重定向 (HTTPS -> HTTP)";
+                    if (("https".equals(initialProtocol) && !"https".equals(nextProto))
+                            || !isAllowedRemoteUrl(nextUrl)) {
+                        return "400\n已拦截不安全的协议降级或明文 HTTP 重定向";
                     }
                     currentUrl = nextUrl;
                     redirects++;
