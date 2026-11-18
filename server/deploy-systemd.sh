@@ -5,7 +5,7 @@ set -euo pipefail
 # Features:
 # - Dedicated unprivileged system user (promptpanel-sync)
 # - Strict filesystem & kernel sandboxing (ProtectSystem=strict, ProtectHome=yes, PrivateTmp=yes, NoNewPrivileges=yes)
-# - Resource isolation (MemoryMax=128M, CPUQuota=50%)
+# - Resource isolation (MemoryMax=384M, CPUQuota=50%)
 # - Token-based namespace isolation (each token gets an isolated SQLite WAL database)
 
 SERVICE_NAME="promptpanel-sync"
@@ -66,7 +66,7 @@ RestrictSUIDSGID=yes
 ReadWritePaths=${DATA_DIR}
 
 # Performance & Resource Isolation
-MemoryMax=128M
+MemoryMax=384M
 CPUQuota=50%
 LimitNOFILE=16384
 

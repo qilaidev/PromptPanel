@@ -45,13 +45,14 @@ try:
 except ImportError as _crypto_exc:  # pragma: no cover
     AESGCM = None  # type: ignore[assignment,misc]
 
-SERVER_VERSION = "2.2.1"
+SERVER_VERSION = "2.3.0"
 SCHEMA_VERSION = 2
 MAX_NAMESPACE_LOCK_CACHE = 1024
 HKDF_SALT_V2 = b"PromptPanel-HKDF-Salt-v2"
 HKDF_INFO_AEAD_V2 = b"promptpanel-v2-aes256gcm-key\x01"
 WIRE_AAD_V2 = b"promptpanel-aead-v2"
 DB_ENC_PREFIX = "enc:v2:"
+_EPOCH_UTC = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
 
 
 def _parse_env_int(name: str, default: int, minimum: int, maximum: int | None = None) -> int:
@@ -78,11 +79,18 @@ MASS_DELETE_MIN_COUNT = 3
 MASS_DELETE_RATIO_THRESHOLD = 0.25
 raw_allowed = os.environ.get("PP_SYNC_ALLOWED_TOKENS", "").strip()
 ALLOWED_TOKENS = [t.strip() for t in raw_allowed.split(",") if t.strip()]
+MAX_TENANTS = _parse_env_int("PP_SYNC_MAX_TENANTS", 64, minimum=1, maximum=100000)
+AUTH_FAIL_WINDOW_SEC = _parse_env_int("PP_SYNC_AUTH_FAIL_WINDOW_SEC", 60, minimum=1, maximum=86400)
+AUTH_FAIL_MAX = _parse_env_int("PP_SYNC_AUTH_FAIL_MAX", 20, minimum=1, maximum=10000)
+CORS_ORIGIN = os.environ.get("PP_SYNC_CORS_ORIGIN", "").strip()
 GITHUB_RELEASE_REPO = os.environ.get("PP_SYNC_GITHUB_REPO", "qilaidev/PromptPanel").strip() or "qilaidev/PromptPanel"
 UPDATE_CACHE_TTL_SEC = _parse_env_int("PP_SYNC_UPDATE_CACHE_TTL_SEC", 300, minimum=10, maximum=86400)
 
 _NAMESPACE_LOCKS: dict[str, threading.Lock] = {}
 _GLOBAL_LOCK = threading.Lock()
+_AUTH_RATE_LOCK = threading.Lock()
+_AUTH_FAIL_HISTORY: dict[str, list[float]] = {}
+_TENANT_CREATE_LOCK = threading.Lock()
 _RELEASE_CACHE_LOCK = threading.Lock()
 _MANIFEST_REFRESH_LOCK = threading.Lock()
 _ASSET_DOWNLOAD_LOCKS: dict[str, threading.Lock] = {}
@@ -104,7 +112,117 @@ _METRICS: dict[str, int] = {
 
 
 def utc_now_iso() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def parse_iso_epoch_ms(value: Any) -> int | None:
+    """Parse an ISO8601 timestamp (Z, +00:00, with or without fractional seconds) into UTC epoch ms."""
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    if raw.endswith(("Z", "z")):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    else:
+        parsed = parsed.astimezone(datetime.timezone.utc)
+    delta = parsed - _EPOCH_UTC
+    return (delta.days * 86400 + delta.seconds) * 1000 + (delta.microseconds // 1000)
+
+
+def _is_iso_newer(a: Any, b: Any) -> bool:
+    ms_a = parse_iso_epoch_ms(a)
+    ms_b = parse_iso_epoch_ms(b)
+    if ms_a is not None and ms_b is not None:
+        return ms_a > ms_b
+    if ms_a is not None:
+        return True
+    if ms_b is not None:
+        return False
+    return str(a or "") > str(b or "")
+
+
+def _is_iso_older(a: Any, b: Any) -> bool:
+    ms_a = parse_iso_epoch_ms(a)
+    ms_b = parse_iso_epoch_ms(b)
+    if ms_a is not None and ms_b is not None:
+        return ms_a < ms_b
+    if ms_a is None and ms_b is not None:
+        return True
+    if ms_a is not None and ms_b is None:
+        return False
+    return str(a or "") < str(b or "")
+
+
+def _pick_newer_iso(a: Any, b: Any) -> str | None:
+    a_str = str(a).strip() if isinstance(a, str) else ""
+    b_str = str(b).strip() if isinstance(b, str) else ""
+    if a_str and b_str:
+        ms_a = parse_iso_epoch_ms(a_str)
+        ms_b = parse_iso_epoch_ms(b_str)
+        if ms_a is not None and ms_b is not None:
+            return a_str if ms_a >= ms_b else b_str
+        if ms_a is not None:
+            return a_str
+        if ms_b is not None:
+            return b_str
+        return a_str if a_str >= b_str else b_str
+    return a_str or b_str or None
+
+
+def _is_auth_rate_limited(client_ip: str) -> bool:
+    now = time.monotonic()
+    cutoff = now - AUTH_FAIL_WINDOW_SEC
+    with _AUTH_RATE_LOCK:
+        history = _AUTH_FAIL_HISTORY.get(client_ip)
+        if not history:
+            return False
+        recent = [ts for ts in history if ts >= cutoff]
+        if recent:
+            _AUTH_FAIL_HISTORY[client_ip] = recent
+        else:
+            _AUTH_FAIL_HISTORY.pop(client_ip, None)
+        return len(recent) >= AUTH_FAIL_MAX
+
+
+def _record_auth_failure(client_ip: str) -> bool:
+    """Record an auth failure for client_ip and return True if the burst limit is now exceeded."""
+    now = time.monotonic()
+    cutoff = now - AUTH_FAIL_WINDOW_SEC
+    with _AUTH_RATE_LOCK:
+        if len(_AUTH_FAIL_HISTORY) >= 4096:
+            stale_ips = [
+                ip for ip, timestamps in _AUTH_FAIL_HISTORY.items()
+                if not timestamps or timestamps[-1] < cutoff
+            ]
+            for ip in stale_ips:
+                _AUTH_FAIL_HISTORY.pop(ip, None)
+            if len(_AUTH_FAIL_HISTORY) >= 4096:
+                _AUTH_FAIL_HISTORY.clear()
+        recent = [ts for ts in _AUTH_FAIL_HISTORY.get(client_ip, []) if ts >= cutoff]
+        recent.append(now)
+        _AUTH_FAIL_HISTORY[client_ip] = recent
+        return len(recent) >= AUTH_FAIL_MAX
+
+
+def _check_tenant_capacity(db_path: Path) -> bool:
+    """Return True if db_path already exists or a new tenant DB can be created under PP_SYNC_MAX_TENANTS."""
+    if ALLOWED_TOKENS or db_path.exists():
+        return True
+    ns_dir = DATA_DIR / "namespaces"
+    with _TENANT_CREATE_LOCK:
+        if db_path.exists():
+            return True
+        if not ns_dir.exists():
+            return True
+        existing_count = sum(1 for _ in ns_dir.glob("*.db"))
+        return existing_count < MAX_TENANTS
 
 
 def _record_metric(key: str, delta: int = 1) -> None:
@@ -295,9 +413,44 @@ def init_namespace_db(db_path: Path) -> sqlite3.Connection:
             ON kv_records (kind, updated_at);
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            """
+        )
+        row = conn.execute("SELECT value FROM meta WHERE key = 'sync_revision'").fetchone()
+        if row is None:
+            has_records = conn.execute("SELECT 1 FROM kv_records LIMIT 1").fetchone() is not None
+            init_rev = "1" if has_records else "0"
+            with conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO meta (key, value) VALUES ('sync_revision', ?)",
+                    (init_rev,),
+                )
         with _GLOBAL_LOCK:
             _INITIALIZED_DB_PATHS.add(db_key)
     return conn
+
+
+def get_sync_revision(conn: sqlite3.Connection) -> int:
+    """Read the monotonic sync_revision from meta in O(1), initializing if absent."""
+    row = conn.execute("SELECT value FROM meta WHERE key = 'sync_revision'").fetchone()
+    if row is not None:
+        try:
+            return max(0, int(row["value"]))
+        except (TypeError, ValueError):
+            pass
+    has_records = conn.execute("SELECT 1 FROM kv_records LIMIT 1").fetchone() is not None
+    init_rev = 1 if has_records else 0
+    with conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO meta (key, value) VALUES ('sync_revision', ?)",
+            (str(init_rev),),
+        )
+    return init_rev
 
 
 def load_envelope_from_db(
@@ -321,6 +474,8 @@ def load_envelope_from_db(
                 obj = _normalize_project_payload(obj)
             elif kind == "entry" and isinstance(obj, dict):
                 obj = _normalize_entry_payload(obj)
+            elif kind == "version" and isinstance(obj, dict):
+                obj = _normalize_version_payload(obj)
             target_list.append(obj)
             if not was_encrypted and aead_key is not None and AESGCM is not None:
                 legacy_rows_to_upgrade.append((kind, rec_id, obj))
@@ -336,6 +491,7 @@ def load_envelope_from_db(
 
     return {
         "schemaVersion": SCHEMA_VERSION,
+        "revision": get_sync_revision(conn),
         "deviceId": device_id,
         "exportedAt": utc_now_iso(),
         "projects": projects,
@@ -718,32 +874,55 @@ def _get_field(obj: dict[str, Any], camel_key: str, snake_key: str, default: Any
 
 def _safe_int(val: Any, default: int = 0) -> int:
     try:
+        if val is None or isinstance(val, bool):
+            return default
         return int(val)
     except (TypeError, ValueError):
         return default
 
 
+def _safe_bool(val: Any, default: bool = False) -> bool:
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return bool(val)
+    if isinstance(val, str):
+        lowered = val.strip().lower()
+        if lowered in ("true", "1", "yes"):
+            return True
+        if lowered in ("false", "0", "no", ""):
+            return False
+    return default
+
+
+def _normalize_tags(raw_tags: Any) -> list[str]:
+    if isinstance(raw_tags, list):
+        return [str(t) for t in raw_tags if t is not None and str(t) != ""]
+    if isinstance(raw_tags, str):
+        return [t.strip() for t in re.split(r"[\s,，、]+", raw_tags) if t.strip()]
+    return []
+
+
 def _bump_iso_timestamp(reference_iso: str) -> str:
-    now_dt = datetime.datetime.now(datetime.timezone.utc)
-    ref_dt = now_dt
-    if reference_iso:
-        try:
-            cleaned = reference_iso.replace("Z", "+00:00")
-            parsed = datetime.datetime.fromisoformat(cleaned)
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=datetime.timezone.utc)
-            if parsed > ref_dt:
-                ref_dt = parsed
-        except ValueError:
-            pass
-    bumped = ref_dt + datetime.timedelta(seconds=2)
-    return bumped.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    now_ms = parse_iso_epoch_ms(utc_now_iso()) or 0
+    ref_ms = parse_iso_epoch_ms(reference_iso)
+    base_ms = max(now_ms, ref_ms) if ref_ms is not None else now_ms
+    bumped_dt = datetime.datetime.fromtimestamp((base_ms + 2000) / 1000.0, tz=datetime.timezone.utc)
+    return bumped_dt.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _prefer_camel_side(record: dict[str, Any]) -> bool:
     camel_u = str(record.get("updatedAt") or "")
     snake_u = str(record.get("updated_at") or "")
     if camel_u and snake_u:
+        ms_c = parse_iso_epoch_ms(camel_u)
+        ms_s = parse_iso_epoch_ms(snake_u)
+        if ms_c is not None and ms_s is not None:
+            return ms_c >= ms_s
+        if ms_c is not None:
+            return True
+        if ms_s is not None:
+            return False
         return camel_u >= snake_u
     return bool(camel_u)
 
@@ -771,18 +950,33 @@ def _normalize_project_payload(raw_proj: dict[str, Any]) -> dict[str, Any]:
     prefer_camel = _prefer_camel_side(proj)
     camel_u = str(proj.get("updatedAt") or "")
     snake_u = str(proj.get("updated_at") or "")
-    resolved_updated = max(camel_u, snake_u) if (camel_u and snake_u) else (camel_u or snake_u or utc_now_iso())
+    resolved_updated = _pick_newer_iso(camel_u, snake_u) or utc_now_iso()
     resolved_created = str(_pick_pair(proj, "createdAt", "created_at", prefer_camel) or resolved_updated)
-    is_def = bool(_pick_pair(proj, "isDefault", "is_default", prefer_camel, False))
+    is_def = _safe_bool(_pick_pair(proj, "isDefault", "is_default", prefer_camel, False), False)
     if prefer_camel:
-        kind_raw = proj.get("groupKindRaw") or proj.get("groupKind") or proj.get("group_kind") or ("category" if is_def else "project")
+        kind_raw = str(
+            proj.get("groupKindRaw")
+            or proj.get("groupKind")
+            or proj.get("group_kind")
+            or ("category" if is_def else "project")
+        )
     else:
-        kind_raw = proj.get("group_kind") or proj.get("groupKindRaw") or proj.get("groupKind") or ("category" if is_def else "project")
-    is_arch = bool(_pick_pair(proj, "isArchived", "is_archived", prefer_camel, False))
-    icon_val = _pick_pair(proj, "iconName", "icon_name", prefer_camel, allow_none=True)
-    deleted_val = _pick_pair(proj, "deletedAt", "deleted_at", prefer_camel, allow_none=True)
-    sort_val = _safe_int(_pick_pair(proj, "sortOrder", "sort_order", prefer_camel, 0))
+        kind_raw = str(
+            proj.get("group_kind")
+            or proj.get("groupKindRaw")
+            or proj.get("groupKind")
+            or ("category" if is_def else "project")
+        )
+    if kind_raw == "inbox":
+        kind_raw = "builtin-inbox"
+    is_arch = _safe_bool(_pick_pair(proj, "isArchived", "is_archived", prefer_camel, False), False)
+    icon_raw = _pick_pair(proj, "iconName", "icon_name", prefer_camel, allow_none=True)
+    icon_val = str(icon_raw) if icon_raw is not None else None
+    deleted_raw = _pick_pair(proj, "deletedAt", "deleted_at", prefer_camel, allow_none=True)
+    deleted_val = str(deleted_raw) if (deleted_raw is not None and str(deleted_raw).strip() != "") else None
+    sort_val = _safe_int(_pick_pair(proj, "sortOrder", "sort_order", prefer_camel, 0), 0)
 
+    proj["name"] = str(proj.get("name") or "")
     proj["isDefault"] = is_def
     proj["is_default"] = is_def
     proj["groupKindRaw"] = kind_raw
@@ -807,22 +1001,27 @@ def _normalize_entry_payload(raw_entry: dict[str, Any]) -> dict[str, Any]:
     prefer_camel = _prefer_camel_side(entry)
     camel_u = str(entry.get("updatedAt") or "")
     snake_u = str(entry.get("updated_at") or "")
-    resolved_updated = max(camel_u, snake_u) if (camel_u and snake_u) else (camel_u or snake_u or utc_now_iso())
+    resolved_updated = _pick_newer_iso(camel_u, snake_u) or utc_now_iso()
     resolved_created = str(_pick_pair(entry, "createdAt", "created_at", prefer_camel) or resolved_updated)
     proj_id = str(_pick_pair(entry, "projectId", "project_id", prefer_camel, "") or "")
-    is_pin = bool(_pick_pair(entry, "isPinned", "is_pinned", prefer_camel, False))
-    is_comp = bool(_pick_pair(entry, "isCompleted", "is_completed", prefer_camel, False))
-    sort_val = _safe_int(_pick_pair(entry, "sortOrder", "sort_order", prefer_camel, 0))
+    is_pin = _safe_bool(_pick_pair(entry, "isPinned", "is_pinned", prefer_camel, False), False)
+    is_comp = _safe_bool(_pick_pair(entry, "isCompleted", "is_completed", prefer_camel, False), False)
+    sort_val = _safe_int(_pick_pair(entry, "sortOrder", "sort_order", prefer_camel, 0), 0)
     use_c = max(
         _safe_int(entry.get("useCount"), 0),
         _safe_int(entry.get("use_count"), 0),
     )
     lu_c = entry.get("lastUsedAt")
     lu_s = entry.get("last_used_at")
-    last_used = max(str(lu_c), str(lu_s)) if (lu_c and lu_s) else (lu_c or lu_s)
-    deleted_val = _pick_pair(entry, "deletedAt", "deleted_at", prefer_camel, allow_none=True)
-    src_val = _pick_pair(entry, "sourceEntryId", "source_entry_id", prefer_camel, allow_none=True)
+    last_used = _pick_newer_iso(lu_c, lu_s)
+    deleted_raw = _pick_pair(entry, "deletedAt", "deleted_at", prefer_camel, allow_none=True)
+    deleted_val = str(deleted_raw) if (deleted_raw is not None and str(deleted_raw).strip() != "") else None
+    src_raw = _pick_pair(entry, "sourceEntryId", "source_entry_id", prefer_camel, allow_none=True)
+    src_val = str(src_raw) if (src_raw is not None and str(src_raw).strip() != "") else None
 
+    entry["title"] = str(entry.get("title") or "")
+    entry["content"] = str(entry.get("content") or "")
+    entry["tags"] = _normalize_tags(entry.get("tags"))
     entry["projectId"] = proj_id
     entry["project_id"] = proj_id
     entry["isPinned"] = is_pin
@@ -846,13 +1045,37 @@ def _normalize_entry_payload(raw_entry: dict[str, Any]) -> dict[str, Any]:
     return entry
 
 
+def _normalize_version_payload(raw_ver: dict[str, Any]) -> dict[str, Any]:
+    ver = dict(raw_ver)
+    eid_val = str(_get_field(ver, "entryId", "entry_id") or "")
+    vnum_val = _safe_int(_get_field(ver, "versionNumber", "version_number", 1), default=1)
+    note_val = _get_field(ver, "changeNote", "change_note")
+    v_created = str(_get_field(ver, "createdAt", "created_at") or utc_now_iso())
+    ver["title"] = str(ver.get("title") or "")
+    ver["content"] = str(ver.get("content") or "")
+    ver["entryId"] = eid_val
+    ver["entry_id"] = eid_val
+    ver["versionNumber"] = vnum_val
+    ver["version_number"] = vnum_val
+    if note_val is not None:
+        note_str = str(note_val)
+        ver["changeNote"] = note_str
+        ver["change_note"] = note_str
+    else:
+        ver["changeNote"] = None
+        ver["change_note"] = None
+    ver["createdAt"] = v_created
+    ver["created_at"] = v_created
+    return ver
+
+
 def merge_envelope_into_db(
     conn: sqlite3.Connection,
     incoming: dict[str, Any],
     aead_key: bytes | None = None,
     db_path: Path | None = None,
     namespace: str | None = None,
-) -> dict[str, int]:
+) -> tuple[dict[str, int], dict[str, Any]]:
     if not isinstance(incoming, dict):
         raise ValueError("Sync envelope root must be a JSON object")
     for collection_key in ("projects", "entries", "versions"):
@@ -870,20 +1093,21 @@ def merge_envelope_into_db(
         "protectedProjects": 0,
     }
     remote_device = str(_get_field(incoming, "deviceId", "device_id") or "remote-client")
-    allow_mass_delete = bool(_get_field(incoming, "allowMassDelete", "allow_mass_delete", False))
+    allow_mass_delete = _safe_bool(_get_field(incoming, "allowMassDelete", "allow_mass_delete", False), False)
 
     # Single-pass load of existing records to avoid repeated SQLite scans & AES-GCM decryptions
     srv_projects: dict[str, tuple[str, dict[str, Any]]] = {}
     srv_entries: dict[str, tuple[str, dict[str, Any]]] = {}
     existing_versions_by_entry: dict[str, list[dict[str, Any]]] = {}
     existing_version_ids: set[str] = set()
+    legacy_rows_to_upgrade: list[tuple[str, str, dict[str, Any]]] = []
     existing_default_id: str | None = None
 
     for row in conn.execute("SELECT kind, id, updated_at, payload_json FROM kv_records"):
         kind = str(row["kind"])
         rec_id = str(row["id"])
         upd_str = str(row["updated_at"])
-        obj, _ = decrypt_db_record(row["payload_json"], aead_key, kind, rec_id)
+        obj, was_encrypted = decrypt_db_record(row["payload_json"], aead_key, kind, rec_id)
         if not isinstance(obj, dict):
             continue
         if kind == "project":
@@ -891,19 +1115,27 @@ def merge_envelope_into_db(
             srv_projects[rec_id] = (upd_str, norm_p)
             if existing_default_id is None and bool(norm_p.get("isDefault", False)):
                 existing_default_id = rec_id
+            if not was_encrypted and aead_key is not None and AESGCM is not None:
+                legacy_rows_to_upgrade.append((kind, rec_id, norm_p))
         elif kind == "entry":
             norm_e = _normalize_entry_payload(obj)
             srv_entries[rec_id] = (upd_str, norm_e)
+            if not was_encrypted and aead_key is not None and AESGCM is not None:
+                legacy_rows_to_upgrade.append((kind, rec_id, norm_e))
         elif kind == "version":
-            eid = str(_get_field(obj, "entryId", "entry_id") or "")
-            existing_versions_by_entry.setdefault(eid, []).append(obj)
+            norm_v = _normalize_version_payload(obj)
+            eid = str(norm_v.get("entryId") or "")
+            existing_versions_by_entry.setdefault(eid, []).append(norm_v)
             existing_version_ids.add(rec_id)
+            if not was_encrypted and aead_key is not None and AESGCM is not None:
+                legacy_rows_to_upgrade.append((kind, rec_id, norm_v))
 
     # Pre-flight inspection for mass-tombstone circuit breaker & pre-drop guard backup
+    # Completed todos are excluded from the breaker so clearing completed todos never resurrects them.
     srv_active_entries: dict[str, tuple[str, dict[str, Any]]] = {
         eid_str: (upd_str, e_obj)
         for eid_str, (upd_str, e_obj) in srv_entries.items()
-        if e_obj.get("deletedAt") is None
+        if e_obj.get("deletedAt") is None and not bool(e_obj.get("isCompleted", False))
     }
 
     srv_active_count = len(srv_active_entries)
@@ -916,7 +1148,11 @@ def merge_envelope_into_db(
         if eid_str in srv_active_entries:
             srv_upd, _ = srv_active_entries[eid_str]
             inc_upd = str(norm_inc.get("updatedAt") or "")
-            if norm_inc.get("deletedAt") is not None and inc_upd > srv_upd:
+            if (
+                norm_inc.get("deletedAt") is not None
+                and not bool(norm_inc.get("isCompleted", False))
+                and _is_iso_newer(inc_upd, srv_upd)
+            ):
                 incoming_deleting_count += 1
 
     should_block_mass_delete = False
@@ -933,6 +1169,9 @@ def merge_envelope_into_db(
         except Exception:
             pass
 
+    db_mutated = False
+    updated_record_keys: set[tuple[str, str]] = set()
+
     with conn:
         remapped_project_ids: dict[str, str] = {}
 
@@ -943,6 +1182,7 @@ def merge_envelope_into_db(
             proj = _normalize_project_payload(proj)
             pid = str(proj["id"])
             is_default_proj = bool(proj.get("isDefault", False))
+            proj_kind = str(proj.get("groupKindRaw") or "")
             inc_updated = str(proj.get("updatedAt") or "")
             existing_proj_pair = srv_projects.get(pid)
             if existing_proj_pair is None:
@@ -951,31 +1191,38 @@ def merge_envelope_into_db(
                     continue
                 if is_default_proj and existing_default_id is None:
                     existing_default_id = pid
+                if (is_default_proj or proj_kind == "builtin-inbox") and proj.get("deletedAt") is not None:
+                    proj["deletedAt"] = None
+                    proj["deleted_at"] = None
                 conn.execute(
                     "INSERT INTO kv_records (kind, id, updated_at, payload_json) VALUES ('project', ?, ?, ?)",
                     (pid, inc_updated, encrypt_db_record(proj, aead_key, "project", pid)),
                 )
                 srv_projects[pid] = (inc_updated, proj)
+                updated_record_keys.add(("project", pid))
+                db_mutated = True
                 if _get_field(proj, "deletedAt", "deleted_at") is None:
                     stats["projectsCreated"] += 1
-            elif inc_updated > existing_proj_pair[0]:
+            elif _is_iso_newer(inc_updated, existing_proj_pair[0]):
                 srv_proj = existing_proj_pair[1]
                 srv_deleted = _get_field(srv_proj, "deletedAt", "deleted_at")
                 inc_deleted = _get_field(proj, "deletedAt", "deleted_at")
-                if srv_deleted is None and inc_deleted is not None and should_block_mass_delete:
+                srv_kind = str(srv_proj.get("groupKindRaw") or srv_proj.get("group_kind") or "")
+                is_system_protected = (srv_kind == "builtin-inbox") or bool(srv_proj.get("isDefault", False))
+                if srv_deleted is None and inc_deleted is not None and (is_system_protected or should_block_mass_delete):
                     healed_proj = dict(srv_proj)
-                    healed_proj.pop("deletedAt", None)
-                    healed_proj.pop("deleted_at", None)
+                    healed_proj["deletedAt"] = None
+                    healed_proj["deleted_at"] = None
                     healed_upd = _bump_iso_timestamp(inc_updated)
-                    if "updated_at" in healed_proj or "updatedAt" not in healed_proj:
-                        healed_proj["updated_at"] = healed_upd
-                    if "updatedAt" in healed_proj:
-                        healed_proj["updatedAt"] = healed_upd
+                    healed_proj["updated_at"] = healed_upd
+                    healed_proj["updatedAt"] = healed_upd
                     conn.execute(
                         "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'project' AND id = ?",
                         (healed_upd, encrypt_db_record(healed_proj, aead_key, "project", pid), pid),
                     )
                     srv_projects[pid] = (healed_upd, healed_proj)
+                    updated_record_keys.add(("project", pid))
+                    db_mutated = True
                     stats["protectedProjects"] += 1
                     continue
                 conn.execute(
@@ -983,30 +1230,27 @@ def merge_envelope_into_db(
                     (inc_updated, encrypt_db_record(proj, aead_key, "project", pid), pid),
                 )
                 srv_projects[pid] = (inc_updated, proj)
+                updated_record_keys.add(("project", pid))
+                db_mutated = True
                 stats["projectsUpdated"] += 1
 
         def insert_version_obj(v_obj: dict[str, Any]) -> None:
+            nonlocal db_mutated
             vid = str(v_obj.get("id") or uuid.uuid4())
             v_obj["id"] = vid
-            eid_val = str(_get_field(v_obj, "entryId", "entry_id") or "")
-            vnum_val = _safe_int(_get_field(v_obj, "versionNumber", "version_number", 1), default=1)
-            note_val = _get_field(v_obj, "changeNote", "change_note")
-            v_created = str(_get_field(v_obj, "createdAt", "created_at") or utc_now_iso())
-            v_obj["entryId"] = eid_val
-            v_obj["entry_id"] = eid_val
-            v_obj["versionNumber"] = vnum_val
-            v_obj["version_number"] = vnum_val
-            if note_val is not None:
-                v_obj["changeNote"] = note_val
-                v_obj["change_note"] = note_val
-            v_obj["createdAt"] = v_created
-            v_obj["created_at"] = v_created
-            conn.execute(
+            norm_v = _normalize_version_payload(v_obj)
+            eid_val = norm_v["entryId"]
+            v_created = norm_v["createdAt"]
+            cur = conn.execute(
                 "INSERT OR IGNORE INTO kv_records (kind, id, updated_at, payload_json) VALUES ('version', ?, ?, ?)",
-                (vid, v_created, encrypt_db_record(v_obj, aead_key, "version", vid)),
+                (vid, v_created, encrypt_db_record(norm_v, aead_key, "version", vid)),
             )
-            existing_versions_by_entry.setdefault(eid_val, []).append(v_obj)
-            existing_version_ids.add(vid)
+            if cur.rowcount > 0:
+                db_mutated = True
+                updated_record_keys.add(("version", vid))
+            if vid not in existing_version_ids:
+                existing_versions_by_entry.setdefault(eid_val, []).append(norm_v)
+                existing_version_ids.add(vid)
 
         # 2. Merge Entries with automatic Conflict-to-Version-History preservation
         for entry in incoming.get("entries") or []:
@@ -1029,6 +1273,8 @@ def merge_envelope_into_db(
                     (eid, inc_updated, encrypt_db_record(entry, aead_key, "entry", eid)),
                 )
                 srv_entries[eid] = (inc_updated, entry)
+                updated_record_keys.add(("entry", eid))
+                db_mutated = True
                 stats["entriesCreated"] += 1
                 if not existing_versions_by_entry.get(eid):
                     insert_version_obj(
@@ -1049,10 +1295,11 @@ def merge_envelope_into_db(
                     or server_entry.get("title") != entry.get("title")
                 )
 
-                if inc_updated > srv_updated:
+                if _is_iso_newer(inc_updated, srv_updated):
                     srv_deleted = _get_field(server_entry, "deletedAt", "deleted_at")
                     inc_deleted = _get_field(entry, "deletedAt", "deleted_at")
                     is_incoming_deletion = srv_deleted is None and inc_deleted is not None
+                    is_completed_todo = bool(server_entry.get("isCompleted", False)) or bool(entry.get("isCompleted", False))
 
                     if has_diff or is_incoming_deletion:
                         vers = existing_versions_by_entry.get(eid, [])
@@ -1083,52 +1330,46 @@ def merge_envelope_into_db(
                     merged_use_count = max(srv_use_count, inc_use_count)
                     srv_used = _get_field(server_entry, "lastUsedAt", "last_used_at")
                     inc_used = _get_field(entry, "lastUsedAt", "last_used_at")
-                    merged_used = max(str(srv_used), str(inc_used)) if (srv_used and inc_used) else (srv_used or inc_used)
+                    merged_used = _pick_newer_iso(srv_used, inc_used)
 
-                    if is_incoming_deletion and should_block_mass_delete:
+                    if is_incoming_deletion and should_block_mass_delete and not is_completed_todo:
                         healed_entry = dict(server_entry)
-                        healed_entry.pop("deletedAt", None)
-                        healed_entry.pop("deleted_at", None)
+                        healed_entry["deletedAt"] = None
+                        healed_entry["deleted_at"] = None
                         healed_upd = _bump_iso_timestamp(inc_updated)
-                        if "updated_at" in healed_entry or "updatedAt" not in healed_entry:
-                            healed_entry["updated_at"] = healed_upd
-                        if "updatedAt" in healed_entry:
-                            healed_entry["updatedAt"] = healed_upd
-                        if "use_count" in healed_entry or "useCount" not in healed_entry:
-                            healed_entry["use_count"] = merged_use_count
-                        if "useCount" in healed_entry:
-                            healed_entry["useCount"] = merged_use_count
+                        healed_entry["updated_at"] = healed_upd
+                        healed_entry["updatedAt"] = healed_upd
+                        healed_entry["use_count"] = merged_use_count
+                        healed_entry["useCount"] = merged_use_count
                         if merged_used is not None:
-                            if "last_used_at" in healed_entry or "lastUsedAt" not in healed_entry:
-                                healed_entry["last_used_at"] = merged_used
-                            if "lastUsedAt" in healed_entry:
-                                healed_entry["lastUsedAt"] = merged_used
+                            healed_entry["last_used_at"] = merged_used
+                            healed_entry["lastUsedAt"] = merged_used
                         conn.execute(
                             "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'entry' AND id = ?",
                             (healed_upd, encrypt_db_record(healed_entry, aead_key, "entry", eid), eid),
                         )
                         srv_entries[eid] = (healed_upd, healed_entry)
+                        updated_record_keys.add(("entry", eid))
+                        db_mutated = True
                         stats["protectedEntries"] += 1
                         continue
 
-                    if "use_count" in entry or "useCount" not in entry:
-                        entry["use_count"] = merged_use_count
-                    if "useCount" in entry:
-                        entry["useCount"] = merged_use_count
+                    entry["use_count"] = merged_use_count
+                    entry["useCount"] = merged_use_count
                     if merged_used is not None:
-                        if "last_used_at" in entry or "lastUsedAt" not in entry:
-                            entry["last_used_at"] = merged_used
-                        if "lastUsedAt" in entry:
-                            entry["lastUsedAt"] = merged_used
+                        entry["last_used_at"] = merged_used
+                        entry["lastUsedAt"] = merged_used
 
                     conn.execute(
                         "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'entry' AND id = ?",
                         (inc_updated, encrypt_db_record(entry, aead_key, "entry", eid), eid),
                     )
                     srv_entries[eid] = (inc_updated, entry)
+                    updated_record_keys.add(("entry", eid))
+                    db_mutated = True
                     stats["entriesUpdated"] += 1
                 else:
-                    if inc_updated < srv_updated and has_diff:
+                    if _is_iso_older(inc_updated, srv_updated) and has_diff:
                         # Incoming is older than server state, but has different text -> save incoming as historical version
                         vers = existing_versions_by_entry.get(eid, [])
                         already_recorded = any(
@@ -1156,26 +1397,24 @@ def merge_envelope_into_db(
                     srv_used = _get_field(server_entry, "lastUsedAt", "last_used_at")
                     inc_used = _get_field(entry, "lastUsedAt", "last_used_at")
                     merged_use_count = max(srv_use_count, inc_use_count)
-                    merged_used = max(str(srv_used), str(inc_used)) if (srv_used and inc_used) else (srv_used or inc_used)
+                    merged_used = _pick_newer_iso(srv_used, inc_used)
                     usage_changed = (merged_use_count > srv_use_count) or (
-                        merged_used is not None and str(merged_used) != str(srv_used or "")
+                        merged_used is not None and _is_iso_newer(merged_used, srv_used)
                     )
                     if usage_changed:
                         updated_srv_entry = dict(server_entry)
-                        if "use_count" in updated_srv_entry or "useCount" not in updated_srv_entry:
-                            updated_srv_entry["use_count"] = merged_use_count
-                        if "useCount" in updated_srv_entry:
-                            updated_srv_entry["useCount"] = merged_use_count
+                        updated_srv_entry["use_count"] = merged_use_count
+                        updated_srv_entry["useCount"] = merged_use_count
                         if merged_used is not None:
-                            if "last_used_at" in updated_srv_entry or "lastUsedAt" not in updated_srv_entry:
-                                updated_srv_entry["last_used_at"] = merged_used
-                            if "lastUsedAt" in updated_srv_entry:
-                                updated_srv_entry["lastUsedAt"] = merged_used
+                            updated_srv_entry["last_used_at"] = merged_used
+                            updated_srv_entry["lastUsedAt"] = merged_used
                         conn.execute(
                             "UPDATE kv_records SET payload_json = ? WHERE kind = 'entry' AND id = ?",
                             (encrypt_db_record(updated_srv_entry, aead_key, "entry", eid), eid),
                         )
                         srv_entries[eid] = (srv_updated, updated_srv_entry)
+                        updated_record_keys.add(("entry", eid))
+                        db_mutated = True
 
         # 3. Revive any soft-deleted project that still contains active entries
         active_project_ids_needed: set[str] = set()
@@ -1191,18 +1430,18 @@ def merge_envelope_into_db(
                 p_upd, p_obj = proj_pair
                 if _get_field(p_obj, "deletedAt", "deleted_at") is not None:
                     revived = dict(p_obj)
-                    revived.pop("deletedAt", None)
-                    revived.pop("deleted_at", None)
+                    revived["deletedAt"] = None
+                    revived["deleted_at"] = None
                     revived_upd = _bump_iso_timestamp(p_upd)
-                    if "updated_at" in revived or "updatedAt" not in revived:
-                        revived["updated_at"] = revived_upd
-                    if "updatedAt" in revived:
-                        revived["updatedAt"] = revived_upd
+                    revived["updated_at"] = revived_upd
+                    revived["updatedAt"] = revived_upd
                     conn.execute(
                         "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'project' AND id = ?",
                         (revived_upd, encrypt_db_record(revived, aead_key, "project", needed_pid), needed_pid),
                     )
                     srv_projects[needed_pid] = (revived_upd, revived)
+                    updated_record_keys.add(("project", needed_pid))
+                    db_mutated = True
                     stats["protectedProjects"] += 1
 
         # 4. Merge Explicit Incoming Versions
@@ -1212,33 +1451,81 @@ def merge_envelope_into_db(
             vid_str = str(ver["id"])
             if vid_str in existing_version_ids:
                 continue
-            eid = str(_get_field(ver, "entryId", "entry_id") or "")
+            norm_inc_ver = _normalize_version_payload(ver)
+            eid = norm_inc_ver["entryId"]
             if not eid:
                 continue
-            vnum = _safe_int(_get_field(ver, "versionNumber", "version_number", 1), default=1)
+            vnum = norm_inc_ver["versionNumber"]
             vers = existing_versions_by_entry.get(eid, [])
             if any(v.get("id") == vid_str for v in vers):
                 continue
             has_num_collision = any(_safe_int(_get_field(v, "versionNumber", "version_number", 0)) == vnum for v in vers)
             if not has_num_collision:
-                insert_version_obj(dict(ver))
+                insert_version_obj(norm_inc_ver)
             else:
                 already_has_same_text = any(
-                    v.get("content") == ver.get("content") and v.get("title") == ver.get("title")
+                    v.get("content") == norm_inc_ver.get("content") and v.get("title") == norm_inc_ver.get("title")
                     for v in vers
                 )
                 if not already_has_same_text:
                     max_ver = max((_safe_int(_get_field(v, "versionNumber", "version_number", 0)) for v in vers), default=0)
-                    renumbered = dict(ver)
+                    renumbered = dict(norm_inc_ver)
                     renumbered["versionNumber"] = max_ver + 1
                     renumbered["version_number"] = max_ver + 1
                     insert_version_obj(renumbered)
 
-    return stats
+        # Upgrade any untouched legacy plaintext rows to enc:v2
+        if legacy_rows_to_upgrade and aead_key is not None:
+            for kind, rec_id, obj in legacy_rows_to_upgrade:
+                if (kind, rec_id) not in updated_record_keys:
+                    conn.execute(
+                        "UPDATE kv_records SET payload_json = ? WHERE kind = ? AND id = ?",
+                        (encrypt_db_record(obj, aead_key, kind, rec_id), kind, rec_id),
+                    )
+
+        current_rev = get_sync_revision(conn)
+        if db_mutated:
+            current_rev += 1
+            conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('sync_revision', ?)",
+                (str(current_rev),),
+            )
+
+    sorted_projects = [
+        p_obj
+        for _, p_obj in sorted(
+            srv_projects.values(),
+            key=lambda pair: (parse_iso_epoch_ms(pair[0]) or 0, str(pair[1].get("id") or "")),
+        )
+    ]
+    sorted_entries = [
+        e_obj
+        for _, e_obj in sorted(
+            srv_entries.values(),
+            key=lambda pair: (parse_iso_epoch_ms(pair[0]) or 0, str(pair[1].get("id") or "")),
+        )
+    ]
+    all_versions = [v for v_list in existing_versions_by_entry.values() for v in v_list]
+    sorted_versions = sorted(
+        all_versions,
+        key=lambda v: (parse_iso_epoch_ms(v.get("createdAt")) or 0, str(v.get("id") or "")),
+    )
+
+    envelope = {
+        "schemaVersion": SCHEMA_VERSION,
+        "revision": current_rev,
+        "deviceId": "promptpanel-sync-server",
+        "exportedAt": utc_now_iso(),
+        "projects": sorted_projects,
+        "entries": sorted_entries,
+        "versions": sorted_versions,
+    }
+    return stats, envelope
 
 
 class SyncRequestHandler(BaseHTTPRequestHandler):
     server_version = f"PromptPanelSync/{SERVER_VERSION}"
+    timeout = 15
 
     def log_message(self, fmt: str, *args: Any) -> None:
         record = {
@@ -1248,6 +1535,36 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             "message": fmt % args,
         }
         sys.stderr.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    def _send_cors_headers(self) -> None:
+        if CORS_ORIGIN:
+            self.send_header("Access-Control-Allow-Origin", CORS_ORIGIN)
+            if CORS_ORIGIN != "*":
+                self.send_header("Vary", "Origin")
+
+    def _authenticate_sync_request(self) -> tuple[str | None, bytes | None]:
+        client_ip = self.client_address[0] if self.client_address else "unknown"
+        if _is_auth_rate_limited(client_ip):
+            _record_metric("syncErrorsTotal")
+            self._send_json(
+                HTTPStatus.TOO_MANY_REQUESTS,
+                {"error": "Too many authentication failures, please retry later"},
+                extra_headers={"Retry-After": str(AUTH_FAIL_WINDOW_SEC)},
+            )
+            return None, None
+        ok, namespace, aead_key, err = verify_and_derive_namespace(self.headers.get("Authorization"))
+        if not ok or not namespace or aead_key is None:
+            _record_metric("syncErrorsTotal")
+            if _record_auth_failure(client_ip):
+                self._send_json(
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    {"error": "Too many authentication failures, please retry later"},
+                    extra_headers={"Retry-After": str(AUTH_FAIL_WINDOW_SEC)},
+                )
+            else:
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": err or "Unauthorized"})
+            return None, None
+        return namespace, aead_key
 
     def _send_json(self, status: int, payload: dict[str, Any], extra_headers: dict[str, str] | None = None) -> None:
         raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -1260,6 +1577,7 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("X-PromptPanel-Schema", str(SCHEMA_VERSION))
+            self._send_cors_headers()
             if use_gzip:
                 self.send_header("Content-Encoding", "gzip")
             if extra_headers:
@@ -1267,6 +1585,23 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                     self.send_header(k, v)
             self.end_headers()
             self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+    def do_OPTIONS(self) -> None:
+        try:
+            self.send_response(HTTPStatus.NO_CONTENT)
+            self.send_header("Content-Length", "0")
+            self.send_header("Allow", "GET, POST, OPTIONS")
+            if CORS_ORIGIN:
+                self._send_cors_headers()
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header(
+                    "Access-Control-Allow-Headers",
+                    "Authorization, Content-Type, Content-Encoding, X-PromptPanel-Cipher",
+                )
+                self.send_header("Access-Control-Max-Age", "86400")
+            self.end_headers()
         except (BrokenPipeError, ConnectionResetError):
             return
 
@@ -1369,19 +1704,45 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
             return
 
-        ok, namespace, aead_key, err = verify_and_derive_namespace(self.headers.get("Authorization"))
-        if not ok or not namespace or aead_key is None:
-            _record_metric("syncErrorsTotal")
-            self._send_json(HTTPStatus.UNAUTHORIZED, {"error": err or "Unauthorized"})
+        namespace, aead_key = self._authenticate_sync_request()
+        if not namespace or aead_key is None:
             return
+
+        qs = parse_qs(parsed.query)
+        since_rev_raw = qs.get("since_revision", [None])[0]
+        since_rev: int | None = None
+        if since_rev_raw is not None and since_rev_raw.strip() != "":
+            try:
+                since_rev = int(since_rev_raw.strip())
+            except ValueError:
+                since_rev = None
 
         _record_metric("syncGetTotal")
         lock = get_namespace_lock(namespace)
         with lock:
             db_path = DATA_DIR / "namespaces" / f"{namespace}.db"
+            if not _check_tenant_capacity(db_path):
+                _record_metric("syncErrorsTotal")
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "Tenant capacity limit reached"})
+                return
             conn = init_namespace_db(db_path)
             try:
-                envelope = load_envelope_from_db(conn, aead_key=aead_key)
+                if since_rev is not None:
+                    current_rev = get_sync_revision(conn)
+                    if since_rev == current_rev:
+                        envelope = {
+                            "schemaVersion": SCHEMA_VERSION,
+                            "unchanged": True,
+                            "revision": current_rev,
+                            "generatedAt": utc_now_iso(),
+                            "projects": [],
+                            "entries": [],
+                            "versions": [],
+                        }
+                    else:
+                        envelope = load_envelope_from_db(conn, aead_key=aead_key)
+                else:
+                    envelope = load_envelope_from_db(conn, aead_key=aead_key)
             except Exception as exc:
                 _record_metric("syncErrorsTotal")
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": f"Decryption or database error: {exc}"})
@@ -1409,10 +1770,8 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
             return
 
-        ok, namespace, aead_key, err = verify_and_derive_namespace(self.headers.get("Authorization"))
-        if not ok or not namespace or aead_key is None:
-            _record_metric("syncErrorsTotal")
-            self._send_json(HTTPStatus.UNAUTHORIZED, {"error": err or "Unauthorized"})
+        namespace, aead_key = self._authenticate_sync_request()
+        if not namespace or aead_key is None:
             return
 
         try:
@@ -1482,16 +1841,19 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
         lock = get_namespace_lock(namespace)
         with lock:
             db_path = DATA_DIR / "namespaces" / f"{namespace}.db"
+            if not _check_tenant_capacity(db_path):
+                _record_metric("syncErrorsTotal")
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "Tenant capacity limit reached"})
+                return
             conn = init_namespace_db(db_path)
             try:
-                stats = merge_envelope_into_db(
+                stats, merged_envelope = merge_envelope_into_db(
                     conn,
                     incoming,
                     aead_key=aead_key,
                     db_path=db_path,
                     namespace=namespace,
                 )
-                merged_envelope = load_envelope_from_db(conn, aead_key=aead_key)
             except (ValueError, TypeError) as exc:
                 _record_metric("syncErrorsTotal")
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})

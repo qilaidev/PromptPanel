@@ -10,7 +10,7 @@
 3. **服务端冲突版本自动保护**：
    - 当手机端与 macOS 端并发推送修改时，服务端会在合并时自动将被覆盖的差异文本转存为 `EntryVersion` 历史版本，并返回最新合并后的完整快照，**绝不丢失任何一端的文字**。
 4. **Systemd / Docker 双重沙箱隔离**：
-   - Systemd 部署默认启用独立无特权系统用户 `promptpanel-sync`、`ProtectSystem=strict`、`ProtectHome=yes`、`PrivateTmp=yes`、`NoNewPrivileges=yes`，并限制 `MemoryMax=128M`、`CPUQuota=50%`，完全不影响宿主机其他业务。
+   - Systemd 部署默认启用独立无特权系统用户 `promptpanel-sync`、`ProtectSystem=strict`、`ProtectHome=yes`、`PrivateTmp=yes`、`NoNewPrivileges=yes`，并限制 `MemoryMax=384M`、`CPUQuota=50%`，完全不影响宿主机其他业务。
 
 ## 部署方式
 
@@ -24,7 +24,9 @@ sudo PP_SYNC_PORT=18787 ./deploy-systemd.sh
 docker compose up -d --build
 ```
 
-## 接口协议
+## 接口协议与环境变量
 - `GET /v1/health`：连通性、延迟与 Token 鉴权状态检测
-- `GET /v1/sync`：拉取当前 Token 命名空间下的完整同步信封 (`CloudSyncEnvelope v2`)
-- `POST /v1/sync`：双向智能合并客户端信封并返回合并后的最新信封（支持 Gzip 压缩）
+- `GET /v1/sync`：拉取当前 Token 命名空间下的完整同步信封 (`CloudSyncEnvelope v2`，含单调 `revision`)；支持 `?since_revision=<int>` O(1) 快速轮询（无变更时返回 `unchanged: true`）
+- `POST /v1/sync`：双向智能合并客户端信封并返回合并后的最新信封（支持 Gzip 压缩与 `AES-256-GCM+Gzip` 端到端线缆加密）
+- `OPTIONS /v1/sync`：支持按 `PP_SYNC_CORS_ORIGIN` 配置 CORS 预检
+- 安全与限流配置：`PP_SYNC_MAX_TENANTS`（默认 `64`，未配置 `PP_SYNC_ALLOWED_TOKENS` 时限制自动建库数）、`PP_SYNC_AUTH_FAIL_MAX` / `PP_SYNC_AUTH_FAIL_WINDOW_SEC`（每 IP 认证失败滑动窗口限流，触发后返回 `429`）
