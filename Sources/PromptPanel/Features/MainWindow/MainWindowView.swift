@@ -6,6 +6,10 @@ struct MainWindowView: View {
     @ObservedObject var viewModel: MainWindowViewModel
     private var _isContextDropdownOpen = SwiftUI.State(initialValue: false)
 
+    init(viewModel: MainWindowViewModel) {
+        self.viewModel = viewModel
+    }
+
     private var isContextDropdownOpen: Bool {
         get { _isContextDropdownOpen.wrappedValue }
         nonmutating set { _isContextDropdownOpen.wrappedValue = newValue }
@@ -736,6 +740,20 @@ private struct ContextDropdownRow: View {
     let action: () -> Void
 
     private var _isHovered = SwiftUI.State(initialValue: false)
+
+    init(
+        name: String,
+        iconName: String,
+        entryCount: Int,
+        isActive: Bool,
+        action: @escaping () -> Void
+    ) {
+        self.name = name
+        self.iconName = iconName
+        self.entryCount = entryCount
+        self.isActive = isActive
+        self.action = action
+    }
 
     private var isHovered: Bool {
         get { _isHovered.wrappedValue }

@@ -898,6 +898,28 @@ private struct SidebarGroupRow: View {
     private var isHoveredState = SwiftUI.State<Bool>(initialValue: false)
     private var isDropTargetedState = SwiftUI.State<Bool>(initialValue: false)
 
+    init(
+        title: String,
+        systemImage: String,
+        count: Int,
+        isSelected: Bool,
+        isCurrentContext: Bool,
+        badgeText: String?,
+        onSetCurrentContext: (() -> Void)? = nil,
+        onDropEntryIds: (([String]) -> Bool)? = nil,
+        action: @escaping () -> Void
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.count = count
+        self.isSelected = isSelected
+        self.isCurrentContext = isCurrentContext
+        self.badgeText = badgeText
+        self.onSetCurrentContext = onSetCurrentContext
+        self.onDropEntryIds = onDropEntryIds
+        self.action = action
+    }
+
     private var isHovered: Bool {
         get { isHoveredState.wrappedValue }
         nonmutating set { isHoveredState.wrappedValue = newValue }
@@ -1161,6 +1183,26 @@ private struct EntryListRow: View {
     let onTogglePin: () -> Void
 
     private var isHoveredState = SwiftUI.State<Bool>(initialValue: false)
+
+    init(
+        entry: Entry,
+        isSelected: Bool,
+        projectName: String?,
+        isInboxContext: Bool,
+        onTap: @escaping () -> Void,
+        onToggleComplete: @escaping () -> Void,
+        onCopy: @escaping () -> Void,
+        onTogglePin: @escaping () -> Void
+    ) {
+        self.entry = entry
+        self.isSelected = isSelected
+        self.projectName = projectName
+        self.isInboxContext = isInboxContext
+        self.onTap = onTap
+        self.onToggleComplete = onToggleComplete
+        self.onCopy = onCopy
+        self.onTogglePin = onTogglePin
+    }
 
     private var isHovered: Bool {
         get { isHoveredState.wrappedValue }
