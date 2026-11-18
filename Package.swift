@@ -33,6 +33,7 @@ let package = Package(
             dependencies: [
                 "PromptPanel",
                 .product(name: "GRDB", package: "GRDB.swift"),
+                .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
             ],
             path: "Tests/PromptPanelTests",
             swiftSettings: [

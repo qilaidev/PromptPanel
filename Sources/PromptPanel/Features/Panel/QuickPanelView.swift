@@ -160,110 +160,28 @@ struct QuickPanelView: View {
     @ViewBuilder
     private var headerQuickCaptureControls: some View {
         if viewModel.query.isEmpty {
-            Button {
+            HeaderGhostButton(systemImage: "square.and.pencil", title: "写便签") {
                 viewModel.startQuickCapture(type: .note)
-            } label: {
-                HStack(spacing: 3) {
-                    Text("✏️")
-                        .font(.ui(.micro))
-                    Text("写便签")
-                        .font(.ui(.caption, weight: .semibold))
-                }
-                .foregroundStyle(Constants.VisualStyle.accent)
-                .padding(.horizontal, 8)
-                .frame(height: Constants.Layout.compactControlHeight - 2)
-                .background(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(Constants.VisualStyle.accentDim)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .strokeBorder(Constants.VisualStyle.accentBorder, lineWidth: Constants.Layout.hairline)
-                )
-                .hoverHighlight(cornerRadius: 5)
-                .roundedHitTarget(cornerRadius: 5)
             }
-            .buttonStyle(.plain)
-            .fixedSize()
-            .help("一键进入便签输入模式，直接打字回车即存")
+            .help("进入便签输入模式，打字回车即存（也可输入 ; 开头）")
 
             if viewModel.hasClipboardText {
-                Button {
+                HeaderGhostButton(systemImage: "doc.on.clipboard", title: nil) {
                     viewModel.quickCreateNoteFromClipboard()
-                } label: {
-                    Text("📋")
-                        .font(.ui(.micro))
-                        .frame(width: Constants.Layout.compactControlHeight - 2, height: Constants.Layout.compactControlHeight - 2)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                .fill(Constants.VisualStyle.tintSubtle)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
-                        )
-                        .hoverHighlight(cornerRadius: 5)
-                        .roundedHitTarget(cornerRadius: 5)
                 }
-                .buttonStyle(.plain)
-                .fixedSize()
-                .help("将剪贴板内容一键存为便签")
+                .help("把剪贴板内容存为便签")
             }
         } else {
             if viewModel.quickCaptureDraft == nil {
-                Button {
+                HeaderGhostButton(systemImage: "note.text", title: "便签", shortcut: "⇧↩") {
                     viewModel.quickCreateEntryFromPanel(type: .note)
-                } label: {
-                    HStack(spacing: 3) {
-                        Text("📝")
-                            .font(.ui(.micro))
-                        Text("记便签")
-                            .font(.ui(.caption, weight: .medium))
-                        Text("⇧↩")
-                            .font(.ui(.micro, weight: .medium, mono: true))
-                            .opacity(0.8)
-                    }
-                    .foregroundStyle(Constants.VisualStyle.accent)
-                    .padding(.horizontal, 7)
-                    .frame(height: Constants.Layout.compactControlHeight - 2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .fill(Constants.VisualStyle.accentDim)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .strokeBorder(Constants.VisualStyle.accentBorder, lineWidth: Constants.Layout.hairline)
-                    )
-                    .roundedHitTarget(cornerRadius: 5)
                 }
-                .buttonStyle(.plain)
-                .fixedSize()
-                .help("将当前输入一键存为便签（⇧Enter）")
+                .help("把当前输入存为便签（⇧Enter）")
 
-                Button {
+                HeaderGhostButton(systemImage: "checklist", title: "待办", shortcut: "⌥↩") {
                     viewModel.quickCreateEntryFromPanel(type: .todo)
-                } label: {
-                    HStack(spacing: 3) {
-                        Text("☑️")
-                            .font(.ui(.micro))
-                        Text("待办")
-                            .font(.ui(.caption, weight: .medium))
-                        Text("⌥↩")
-                            .font(.ui(.micro, weight: .medium, mono: true))
-                            .opacity(0.8)
-                    }
-                    .foregroundStyle(Constants.VisualStyle.warn)
-                    .padding(.horizontal, 6)
-                    .frame(height: Constants.Layout.compactControlHeight - 2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .fill(Constants.VisualStyle.warnDim)
-                    )
-                    .roundedHitTarget(cornerRadius: 5)
                 }
-                .buttonStyle(.plain)
-                .fixedSize()
-                .help("将当前输入一键存为待办（⌥Enter）")
+                .help("把当前输入存为待办（⌥Enter）")
             }
 
             Button {
@@ -282,8 +200,12 @@ struct QuickPanelView: View {
 
     private func quickCaptureModeBadge(_ draft: QuickPanelViewModel.QuickCaptureDraft) -> some View {
         let isTodo = draft.type == .todo
-        return Text(draft.modeBadgeText)
-            .font(.ui(.caption, weight: .semibold))
+        return HStack(spacing: 4) {
+            Image(systemName: isTodo ? "checklist" : "note.text")
+                .font(.icon(.small, weight: .semibold))
+            Text(draft.modeBadgeText)
+                .font(.ui(.caption, weight: .semibold))
+        }
             .foregroundStyle(isTodo ? Constants.VisualStyle.warn : Constants.VisualStyle.accent)
             .padding(.horizontal, 8)
             .frame(height: Constants.Layout.compactControlHeight - 2)
@@ -303,7 +225,7 @@ struct QuickPanelView: View {
 
     private var searchPlaceholder: String {
         let name = currentScopeDisplayName
-        return "搜索 \(name)、#标签，或输入 ; 记便签 / t 记待办"
+        return "搜索 \(name) 或 #标签"
     }
 
     private var currentProject: Project? {
@@ -494,9 +416,14 @@ struct QuickPanelView: View {
 
             Spacer(minLength: 0)
 
-            Text("Tab 切分组")
-                .font(.ui(.micro, mono: true))
-                .foregroundStyle(Constants.VisualStyle.textQuaternary)
+            HStack(spacing: 4) {
+                KbdLabel(text: "Tab")
+                Text("切分组")
+                    .font(.ui(.caption))
+                    .foregroundStyle(Constants.VisualStyle.textTertiary)
+                    .lineLimit(1)
+            }
+            .fixedSize()
         }
         .padding(.horizontal, Design.Space.lg)
         .padding(.vertical, 5)
@@ -1056,8 +983,8 @@ struct QuickPanelView: View {
                         viewModel.startQuickCapture(type: .note)
                     } label: {
                         HStack(spacing: 4) {
-                            Text("✏️")
-                                .font(.ui(.micro))
+                            Image(systemName: "square.and.pencil")
+                                .font(.icon(.small))
                             Text("写便签")
                                 .font(.ui(.caption, weight: .semibold))
                         }
@@ -1236,7 +1163,11 @@ struct QuickPanelView: View {
                 hint(keys: "↑↓", label: "选择")
                 hint(keys: "Enter", label: "执行")
                 hint(keys: "⇧↩", label: "记便签")
-                hint(keys: "Tab", label: "切分组")
+                if showsShortcutNumbers {
+                    hint(keys: "⌘1-9", label: "直达")
+                } else {
+                    hint(keys: "⌘P", label: appState.isPanelPinned ? "取消固定" : "固定")
+                }
                 hint(keys: "⌘Y", label: "预览")
                 hint(keys: "⌘C", label: "复制")
                 Spacer(minLength: 0)
@@ -1247,7 +1178,11 @@ struct QuickPanelView: View {
                 hint(keys: "↑↓", label: "选择")
                 hint(keys: "Enter", label: "执行")
                 hint(keys: "⇧↩", label: "记便签")
-                hint(keys: "Tab", label: "分组")
+                if showsShortcutNumbers {
+                    hint(keys: "⌘1-9", label: "直达")
+                } else {
+                    hint(keys: "⌘P", label: appState.isPanelPinned ? "取消固定" : "固定")
+                }
                 hint(keys: "⌘Y", label: "预览")
                 Spacer(minLength: 0)
                 footerCountLabel
@@ -1358,36 +1293,44 @@ private struct PanelRow: View {
         let rowHeight = isCompact ? Constants.Layout.compactRowHeight : Constants.Layout.regularRowHeight
         let metrics = RowMetrics(totalWidth: availableWidth)
 
-        HStack(spacing: 0) {
+        // Fixed leading columns — number, then one 16pt glyph slot — so titles line
+        // up whether the slot holds a type icon or a todo checkbox. The checkbox
+        // used to sit in front of the number and shove the whole row 4pt right.
+        HStack(spacing: Design.Space.md) {
+            if showNumber {
+                Text("\(index + 1)")
+                    .font(.ui(.micro, weight: .medium, mono: true))
+                    .foregroundStyle(isSelected ? Constants.VisualStyle.accent : Constants.VisualStyle.textQuaternary)
+                    .frame(width: 18, height: rowHeight, alignment: .center)
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: onTap)
+            }
+
             if isInteractiveTodo {
                 Button(action: onToggleComplete) {
                     Image(systemName: entry.isCompleted ? "checkmark.circle.fill" : "circle")
                         .font(.icon(.base))
                         .foregroundStyle(entry.isCompleted ? Constants.VisualStyle.success : Constants.VisualStyle.textTertiary)
-                        .frame(width: 22, height: rowHeight)
+                        .frame(width: 16, height: rowHeight)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .padding(.leading, Design.Space.sm)
                 .help(entry.isCompleted ? "标记为未完成" : "完成并划掉")
+            } else {
+                Image(systemName: entry.isCompleted ? "checkmark.circle.fill" : type.symbolName)
+                    .font(.icon(.base))
+                    .foregroundStyle(
+                        entry.isCompleted
+                            ? Constants.VisualStyle.success
+                            : (isSelected ? Constants.VisualStyle.accent : Constants.VisualStyle.textSecondary)
+                    )
+                    .frame(width: 16, height: rowHeight)
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: onTap)
             }
 
             Button(action: onTap) {
                 HStack(spacing: Design.Space.md) {
-                    if showNumber {
-                        Text("\(index + 1)")
-                            .font(.ui(.micro, weight: .medium, mono: true))
-                            .foregroundStyle(isSelected ? Constants.VisualStyle.accent : Constants.VisualStyle.textQuaternary)
-                            .frame(width: 18, alignment: .center)
-                    }
-
-                    if !isInteractiveTodo {
-                        Image(systemName: entry.isCompleted ? "checkmark.circle.fill" : type.symbolName)
-                            .font(.icon(.base))
-                            .foregroundStyle(entry.isCompleted ? Constants.VisualStyle.success : level.color)
-                            .frame(width: 16, height: 16)
-                    }
-
                     HStack(alignment: .firstTextBaseline, spacing: Design.Space.lg) {
                         if let titleWidth = metrics.titleWidth {
                             titleLabel
@@ -1408,15 +1351,12 @@ private struct PanelRow: View {
                     }
 
                     HStack(spacing: Design.Space.xs) {
-                        Text("\(entry.useCount) 次")
-                            .font(.ui(.micro, weight: .medium, mono: true))
-                            .foregroundStyle(level.color)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(
-                                RoundedRectangle(cornerRadius: Constants.Layout.badgeCornerRadius, style: .continuous)
-                                    .fill(level.fillColor)
-                            )
+                        if entry.useCount > 0 {
+                            Text("\(entry.useCount)次")
+                                .font(.ui(.micro, weight: .medium))
+                                .monospacedDigit()
+                                .foregroundStyle(entry.useCount >= 25 ? level.color : Constants.VisualStyle.textTertiary)
+                        }
                         if let scopeBadgeText {
                             Text(scopeBadgeText)
                                 .font(.ui(.micro, weight: .medium))
@@ -1437,8 +1377,11 @@ private struct PanelRow: View {
                     }
                     .layoutPriority(2)
                     .fixedSize(horizontal: true, vertical: false)
+                    // The action strip overlays this corner; fading the meta out (rather
+                    // than removing it) keeps the row layout identical on hover, and
+                    // stops a half-covered "18 次" chip peeking out from under it.
+                    .opacity(showsQuickActions ? 0 : 1)
                 }
-                .padding(.leading, isInteractiveTodo ? Design.Space.xs : Design.Space.sm)
                 .padding(.trailing, Design.Space.lg)
                 .frame(maxWidth: .infinity)
                 .frame(height: rowHeight)
@@ -1447,6 +1390,7 @@ private struct PanelRow: View {
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity)
         }
+        .padding(.leading, Design.Space.sm)
         .roundedHitTarget(cornerRadius: Design.rowCornerRadius)
         .overlay(alignment: .leading) {
             if isSelected {
@@ -1750,5 +1694,59 @@ private struct KindFilterChipButton: View {
                 isHovered = false
             }
         }
+    }
+}
+
+
+/// Quiet header action: neutral line icon, optional label and keycap. The panel
+/// header used to mix emoji and three accent colours here; the accent now stays
+/// reserved for the selected row so the eye lands on results, not chrome.
+private struct HeaderGhostButton: View {
+    let systemImage: String
+    let title: String?
+    var shortcut: String? = nil
+    let action: () -> Void
+
+    init(systemImage: String, title: String?, shortcut: String? = nil, action: @escaping () -> Void) {
+        self.systemImage = systemImage
+        self.title = title
+        self.shortcut = shortcut
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.icon(.small))
+                if let title {
+                    Text(title)
+                        .font(.ui(.caption, weight: .medium))
+                }
+                if let shortcut {
+                    Text(shortcut)
+                        .font(.ui(.micro, weight: .medium, mono: true))
+                        .foregroundStyle(Constants.VisualStyle.textTertiary)
+                }
+            }
+            .foregroundStyle(Constants.VisualStyle.textSecondary)
+            .padding(.horizontal, title == nil ? 0 : 7)
+            .frame(
+                minWidth: Constants.Layout.compactControlHeight - 2,
+                minHeight: Constants.Layout.compactControlHeight - 2
+            )
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(Constants.VisualStyle.tintSubtle)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
+            )
+            .hoverHighlight(cornerRadius: 5)
+            .roundedHitTarget(cornerRadius: 5)
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
     }
 }

@@ -92,7 +92,7 @@ struct ReferenceLibraryWindowView: View {
                 }
             }
             .padding(.horizontal, 8)
-            .padding(.vertical, 5)
+            .frame(height: Constants.Layout.regularControlHeight)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(Constants.VisualStyle.inputFill)

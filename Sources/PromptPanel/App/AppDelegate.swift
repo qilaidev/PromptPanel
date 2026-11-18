@@ -578,9 +578,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         applyAppearance(appState.appTheme)
 
         hotkeyService = HotkeyService(
-            onTogglePanel: { [weak self] in
-                self?.panelService.toggle()
-            },
+            handlers: [
+                .togglePanel: { [weak self] in
+                    self?.panelService.toggle()
+                },
+                .quickNote: { [weak self] in
+                    self?.showPanelInQuickCapture(type: .note)
+                },
+                .quickTodo: { [weak self] in
+                    self?.showPanelInQuickCapture(type: .todo)
+                },
+                .clipboardToNote: { [weak self] in
+                    self?.handleQuickNoteFromClipboard()
+                },
+                .repeatLastEntry: { [weak self] in
+                    self?.repeatLastExecutedEntry()
+                },
+                .toggleReferenceWindow: { [weak self] in
+                    self?.toggleReferenceWindow()
+                },
+            ],
             panelOpenTracker: panelOpenTracker
         )
         if AppLaunchCoordinator.shouldRegisterGlobalHotkey(environment: ProcessInfo.processInfo.environment) {
@@ -642,6 +659,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             PPLogger.entry.error("Failed to create quick note from tray clipboard: \(error.localizedDescription)")
             toastService?.show(message: "速记保存失败，请重试。", isSuccess: false)
         }
+    }
+
+    /// Global "直接写便签 / 直接记待办": open the panel already in capture mode.
+    private func showPanelInQuickCapture(type: Constants.EntryType) {
+        panelService?.show()
+        quickPanelViewModel?.startQuickCapture(type: type)
+    }
+
+    /// The most recent entry that was actually executed (pasted or copied for a
+    /// manual paste) and still exists.
+    static func lastExecutedEntry(
+        logRepository: LogRepository,
+        entryRepository: EntryRepository
+    ) throws -> Entry? {
+        let logs = try logRepository.fetchRecent(limit: 30)
+        var checked = Set<String>()
+        for log in logs where log.result != Constants.ExecutionResult.failed.rawValue {
+            guard checked.insert(log.entryId).inserted else { continue }
+            if let entry = try entryRepository.fetchById(log.entryId) {
+                return entry
+            }
+        }
+        return nil
+    }
+
+    /// Global "重贴上一条词条". With the panel closed, paste into whatever app is
+    /// frontmost now; with it open, behave exactly like pressing Enter on that entry.
+    private func repeatLastExecutedEntry() {
+        let entry: Entry?
+        do {
+            entry = try Self.lastExecutedEntry(logRepository: logRepository, entryRepository: entryRepository)
+        } catch {
+            PPLogger.execute.error("Failed to resolve last executed entry: \(error.localizedDescription)")
+            entry = nil
+        }
+        guard let entry else {
+            toastService?.show(message: "还没有执行过的词条", isSuccess: false)
+            return
+        }
+        if appState.isPanelVisible {
+            executeService.execute(entry: entry, currentProjectId: entry.projectId, triggerSource: .globalHotkey)
+            return
+        }
+        // The hotkey fires on key-up, often while modifiers are still held; give
+        // them a moment to lift so the synthetic ⌘V is not read as ⌥⌘V etc.
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(120)) { [weak self] in
+            self?.executeService.executeInPlace(entry: entry, currentProjectId: entry.projectId)
+        }
+    }
+
+    private func toggleReferenceWindow() {
+        if let referenceWindow, referenceWindow.isVisible, referenceWindow.isKeyWindow {
+            referenceWindow.performClose(nil)
+            return
+        }
+        openReferenceWindow()
     }
 
     private func scheduleLaunchMaintenance() {

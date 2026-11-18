@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import Foundation
 import GRDB
+import KeyboardShortcuts
 @testable import PromptPanel
 
 #if canImport(XCTest)
@@ -111,6 +112,7 @@ public enum CoreTestSuite {
         try verifyQuickPanelAllScopeCaptureFilterHoverAndPreview()
         try verifyMainWindowQuickJotAutoTitleCleanupAndDebouncedAutoSave()
         try verifyPerformanceAndStabilityRegressions()
+        try verifyGlobalHotkeysRepeatLastAndClipboardRestore()
     }
 
     private static func makeTempDatabaseURL() -> URL {
@@ -2816,6 +2818,10 @@ final class PromptPanelTests: XCTestCase {
     func testPerformanceAndStabilityRegressions() throws {
         try CoreTestSuite.verifyPerformanceAndStabilityRegressions()
     }
+
+    func testGlobalHotkeysRepeatLastAndClipboardRestore() throws {
+        try CoreTestSuite.verifyGlobalHotkeysRepeatLastAndClipboardRestore()
+    }
 }
 #else
 @MainActor
@@ -2921,5 +2927,314 @@ struct PromptPanelSwiftTestingSuite {
     @Test func crossLayerEndToEndSync() async throws {
         try await CoreTestSuite.verifyCrossLayerEndToEndSyncAsync()
     }
+
+    @Test func globalHotkeysRepeatLastAndClipboardRestore() async throws {
+        try await CoreTestSuite.verifyGlobalHotkeysRepeatLastAndClipboardRestoreAsync()
+    }
 }
 #endif
+
+
+// MARK: - Global hotkeys, repeat-last and clipboard restore
+
+private final class SnapshottingClipboardSpy: ClipboardWriting, ClipboardSnapshotting {
+    var current: String? = "user-copied"
+    var changeCount = 1
+    var transientWrites: [String] = []
+    var plainWrites: [String] = []
+
+    func writeText(_ text: String) -> Bool {
+        plainWrites.append(text)
+        current = text
+        changeCount += 1
+        return true
+    }
+
+    func captureSnapshot() -> ClipboardSnapshot? {
+        guard let current else { return nil }
+        return ClipboardSnapshot(items: [[.string: Data(current.utf8)]])
+    }
+
+    func writeTransientText(_ text: String) -> Int? {
+        transientWrites.append(text)
+        current = text
+        changeCount += 1
+        return changeCount
+    }
+
+    func restore(_ snapshot: ClipboardSnapshot, ifChangeCountIs expectedChangeCount: Int) -> Bool {
+        guard changeCount == expectedChangeCount,
+              let data = snapshot.items.first?[.string] else { return false }
+        current = String(decoding: data, as: UTF8.self)
+        changeCount += 1
+        return true
+    }
+}
+
+extension CoreTestSuite {
+    static func verifyGlobalHotkeysRepeatLastAndClipboardRestore() throws {
+        try runAsyncOnMainRunLoop {
+            try await verifyGlobalHotkeysRepeatLastAndClipboardRestoreAsync()
+        }
+    }
+
+    static func verifyGlobalHotkeysRepeatLastAndClipboardRestoreAsync() async throws {
+        // Storage names: unique, bounded, and the legacy toggle name is kept.
+        let allNames = GlobalHotkeyAction.allShortcutNames.map(\.rawValue)
+        try check(allNames.count == GlobalHotkeyAction.allCases.count * GlobalHotkeyAction.maxBindings)
+        try check(Set(allNames).count == allNames.count, "every hotkey slot needs its own storage name")
+        try check(GlobalHotkeyAction.togglePanel.shortcutNames.first?.rawValue == "togglePanel",
+                  "slot 0 must keep the legacy name so existing bindings survive")
+        try check(GlobalHotkeyAction.owner(of: GlobalHotkeyAction.quickTodo.shortcutNames[2]) == .quickTodo)
+
+        // Conflict detection runs against an injected store, not real UserDefaults.
+        let optionTwo = KeyboardShortcuts.Shortcut(.two, modifiers: [.option])
+        let optionSpace = KeyboardShortcuts.Shortcut(.space, modifiers: [.option])
+        let toggleAlias = GlobalHotkeyAction.togglePanel.shortcutNames[1]
+        let store: [String: KeyboardShortcuts.Shortcut] = [
+            "togglePanel": optionTwo,
+            toggleAlias.rawValue: optionSpace,
+        ]
+        let lookup: (KeyboardShortcuts.Name) -> KeyboardShortcuts.Shortcut? = { store[$0.rawValue] }
+        try check(GlobalHotkeyAction.togglePanel.boundShortcuts(lookup: lookup).count == 2,
+                  "one action can hold several shortcuts at once")
+        try check(GlobalHotkeyAction.conflict(for: optionTwo, excluding: GlobalHotkeyAction.quickNote.shortcutNames[0], lookup: lookup) == .togglePanel)
+        try check(GlobalHotkeyAction.conflict(for: optionTwo, excluding: .togglePanel, lookup: lookup) == nil,
+                  "re-recording a slot's own shortcut is not a conflict")
+
+        try await withTempDatabaseAsync { manager, _ in
+            let projectRepo = ProjectRepository(dbQueue: manager.dbQueue)
+            let entryRepo = EntryRepository(dbQueue: manager.dbQueue)
+            let logRepo = LogRepository(dbQueue: manager.dbQueue)
+            let project = try unwrap(projectRepo.fetchDefault())
+
+            // Repeat-last: newest non-failed execution of a still-existing entry.
+            try check(try AppDelegate.lastExecutedEntry(logRepository: logRepo, entryRepository: entryRepo) == nil)
+            let older = Entry(projectId: project.id, title: "Older", content: "older body")
+            let failed = Entry(projectId: project.id, title: "Failed", content: "failed body")
+            try entryRepo.create(older)
+            try entryRepo.create(failed)
+            try logRepo.record(ExecutionLog(entryId: older.id, projectId: project.id, hasAccessibility: true, clipboardSuccess: true, pasteAttempted: true, pasteSuccess: true, result: "success", createdAt: Date(timeIntervalSinceNow: -60)))
+            try logRepo.record(ExecutionLog(entryId: failed.id, projectId: project.id, hasAccessibility: true, clipboardSuccess: false, pasteAttempted: false, pasteSuccess: false, result: "failed", createdAt: Date()))
+            try check(try AppDelegate.lastExecutedEntry(logRepository: logRepo, entryRepository: entryRepo)?.id == older.id,
+                      "failed executions must not become the repeat target")
+            try entryRepo.delete(id: older.id)
+            try check(try AppDelegate.lastExecutedEntry(logRepository: logRepo, entryRepository: entryRepo) == nil,
+                      "deleted entries are never re-pasted")
+
+            // Clipboard restore after a dispatched paste.
+            let clipboard = SnapshottingClipboardSpy()
+            let paste = SpyPasteService()
+            let permission = StubPermissionService()
+            permission.isAccessibilityGranted = true
+            let entry = Entry(projectId: project.id, title: "Paste me", content: "entry body")
+            try entryRepo.create(entry)
+            let service = ExecuteService(
+                clipboardService: clipboard,
+                pasteService: paste,
+                entryRepository: entryRepo,
+                logRepository: logRepo,
+                permissionService: permission,
+                targetApplicationProvider: { nil },
+                currentFrontApplicationProvider: { "com.example.editor" },
+                restoreClipboardEnabled: { true }
+            )
+            service.executeInPlace(entry: entry, currentProjectId: project.id)
+            try check(clipboard.transientWrites == ["entry body"], "entry is written as a transient item")
+            await waitUntilAsync(timeout: 2) { clipboard.current == "user-copied" }
+            try check(paste.dispatchCount == 1)
+            try check(clipboard.current == "user-copied", "previous clipboard comes back after the paste")
+            let logs = try logRepo.fetchRecent(limit: 1)
+            try check(logs.first?.triggerSource == Constants.ExecutionTrigger.globalHotkey.rawValue)
+
+            // A clipboard-only fallback keeps the entry on the clipboard for ⌘V.
+            permission.isAccessibilityGranted = false
+            clipboard.current = "user-copied-2"
+            service.executeInPlace(entry: entry, currentProjectId: project.id)
+            await sleepMainActor(0.9)
+            try check(clipboard.current == "entry body", "no restore when the paste never happened")
+        }
+
+        try await verifyExecutionPlaceholdersAndTerminalGuardAsync()
+    }
+
+    static func verifyExecutionPlaceholdersAndTerminalGuardAsync() async throws {
+        let fixedDate = Date(timeIntervalSince1970: 1_760_000_000)
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd"
+        let expectedFixedDate = formatter.string(from: fixedDate)
+        let expectedTodayDate = formatter.string(from: Date())
+
+        // 1. Pure resolveContent: case-insensitive {{clipboard}} + {{date}}, lazy clipboard read, no double-expansion.
+        let templateContent = "请排查以下报错：\n{{clipboard}}\n补充：{{CLIPBOARD}} ({{Date}} / {{date}})"
+        let templateEntry = Entry(projectId: "proj-test", title: "Template", content: templateContent)
+        var clipboardReadCount = 0
+        func readClipboard(_ value: String?) -> String? {
+            clipboardReadCount += 1
+            return value
+        }
+        let expanded = ExecuteService.resolveContent(
+            for: templateEntry,
+            clipboardText: readClipboard("NullPointerException at line 42"),
+            now: fixedDate,
+            targetBundleId: "com.example.editor"
+        )
+        try check(
+            expanded == "请排查以下报错：\nNullPointerException at line 42\n补充：NullPointerException at line 42 (\(expectedFixedDate) / \(expectedFixedDate))"
+        )
+        try check(clipboardReadCount == 1, "clipboardText autoclosure must be evaluated at most once per execution")
+        try check(templateEntry.content == templateContent, "resolveContent must not mutate Entry.content")
+
+        // No {{clipboard}} placeholder -> clipboard provider should not be read at all.
+        clipboardReadCount = 0
+        let dateOnlyEntry = Entry(projectId: "proj-test", title: "Date Only", content: "Report {{DATE}}")
+        let dateOnlyExpanded = ExecuteService.resolveContent(
+            for: dateOnlyEntry,
+            clipboardText: readClipboard("unused"),
+            now: fixedDate,
+            targetBundleId: "com.example.editor"
+        )
+        try check(dateOnlyExpanded == "Report \(expectedFixedDate)")
+        try check(clipboardReadCount == 0, "clipboardText must stay unread when {{clipboard}} is absent")
+
+        // Literal {{date}} inside clipboard text must not be re-expanded.
+        let nestedPlaceholderExpanded = ExecuteService.resolveContent(
+            for: Entry(projectId: "proj-test", title: "Literal", content: "Paste: {{clipboard}}"),
+            clipboardText: "echo {{date}}",
+            now: fixedDate,
+            targetBundleId: "com.example.editor"
+        )
+        try check(nestedPlaceholderExpanded == "Paste: echo {{date}}")
+
+        // Nil clipboard expands {{clipboard}} to empty string.
+        let nilClipboardExpanded = ExecuteService.resolveContent(
+            for: Entry(projectId: "proj-test", title: "Empty", content: "A{{clipboard}}B"),
+            clipboardText: nil,
+            now: fixedDate,
+            targetBundleId: "com.example.editor"
+        )
+        try check(nilClipboardExpanded == "AB")
+
+        // 2. Terminal multiline / trailing-newline safety guard.
+        let multilineEntry = Entry(
+            projectId: "proj-test",
+            title: "Shell",
+            content: "git status\necho done\r\n",
+            type: Constants.EntryType.prompt.rawValue
+        )
+        let codeEntry = Entry(
+            projectId: "proj-test",
+            title: "Code",
+            content: "ls -la\n",
+            type: Constants.EntryType.code.rawValue
+        )
+        try check(
+            ExecuteService.resolveContent(
+                for: multilineEntry,
+                clipboardText: nil,
+                now: fixedDate,
+                targetBundleId: "com.mitchellh.ghostty"
+            ) == "git status\necho done",
+            "Ghostty must strip trailing CRLF while preserving internal newlines"
+        )
+        try check(
+            ExecuteService.resolveContent(
+                for: codeEntry,
+                clipboardText: nil,
+                now: fixedDate,
+                targetBundleId: "com.apple.Terminal"
+            ) == "ls -la",
+            "Terminal.app must strip trailing newline on code entries"
+        )
+        try check(
+            ExecuteService.resolveContent(
+                for: multilineEntry,
+                clipboardText: nil,
+                now: fixedDate,
+                targetBundleId: "com.example.editor"
+            ) == "git status\necho done\r\n",
+            "Non-terminal targets must preserve trailing newlines"
+        )
+
+        // 3. End-to-end ExecuteService: {{clipboard}} + {{date}} + restoreClipboardEnabled + terminal guard.
+        try await withTempDatabaseAsync { manager, _ in
+            let projectRepo = ProjectRepository(dbQueue: manager.dbQueue)
+            let entryRepo = EntryRepository(dbQueue: manager.dbQueue)
+            let logRepo = LogRepository(dbQueue: manager.dbQueue)
+            let project = try unwrap(projectRepo.fetchDefault())
+
+            let storedTemplate = Entry(
+                projectId: project.id,
+                title: "Error Triage",
+                content: "请排查以下报错：\n{{clipboard}}\n校验：{{CLIPBOARD}} @ {{date}}"
+            )
+            let storedShell = Entry(
+                projectId: project.id,
+                title: "Deploy Cmd",
+                content: "cd /tmp\nls -la\r\n",
+                type: Constants.EntryType.code.rawValue
+            )
+            try entryRepo.create(storedTemplate)
+            try entryRepo.create(storedShell)
+
+            let clipboard = SnapshottingClipboardSpy()
+            clipboard.current = "user-copied"
+            let paste = SpyPasteService()
+            let permission = StubPermissionService()
+            permission.isAccessibilityGranted = true
+            var activeTargetBundleId = "com.example.editor"
+
+            let service = ExecuteService(
+                clipboardService: clipboard,
+                pasteService: paste,
+                entryRepository: entryRepo,
+                logRepository: logRepo,
+                permissionService: permission,
+                targetApplicationProvider: { activeTargetBundleId },
+                currentFrontApplicationProvider: { activeTargetBundleId },
+                restoreClipboardEnabled: { true },
+                clipboardTextProvider: { clipboard.current }
+            )
+
+            service.executeInPlace(entry: storedTemplate, currentProjectId: project.id)
+            let expectedExpanded = "请排查以下报错：\nuser-copied\n校验：user-copied @ \(expectedTodayDate)"
+            try check(
+                clipboard.transientWrites == [expectedExpanded],
+                "transient pasteboard write must contain expanded {{clipboard}} and {{date}}"
+            )
+            await waitUntilAsync(timeout: 2) { paste.dispatchCount == 1 && clipboard.current == "user-copied" }
+            try check(paste.dispatchCount == 1)
+            try check(
+                clipboard.current == "user-copied",
+                "original clipboard text must be restored even when {{clipboard}} expanded it during paste"
+            )
+            let persistedTemplate = try unwrap(entryRepo.fetchById(storedTemplate.id))
+            try check(
+                persistedTemplate.content == storedTemplate.content,
+                "stored Entry.content in SQLite must never be mutated by runtime placeholder expansion"
+            )
+
+            // Terminal target strips trailing \r\n end-to-end.
+            activeTargetBundleId = "com.mitchellh.ghostty"
+            service.execute(entry: storedShell, currentProjectId: project.id, triggerSource: .keyboardSubmit)
+            try check(
+                clipboard.transientWrites.last == "cd /tmp\nls -la",
+                "terminal target must stage multiline commands without trailing newline"
+            )
+            await waitUntilAsync(timeout: 2) { paste.dispatchCount == 2 && clipboard.current == "user-copied" }
+            try check(paste.dispatchCount == 2)
+
+            // Non-terminal target preserves trailing \r\n end-to-end.
+            activeTargetBundleId = "com.example.editor"
+            service.execute(entry: storedShell, currentProjectId: project.id, triggerSource: .keyboardSubmit)
+            try check(
+                clipboard.transientWrites.last == "cd /tmp\nls -la\r\n",
+                "non-terminal target must preserve trailing newline"
+            )
+            await waitUntilAsync(timeout: 2) { paste.dispatchCount == 3 && clipboard.current == "user-copied" }
+            try check(paste.dispatchCount == 3)
+        }
+    }
+}

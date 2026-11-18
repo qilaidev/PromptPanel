@@ -40,10 +40,11 @@ struct SettingsView: View {
                 SettingsColumn {
                     GeneralSettingsSection(viewModel: viewModel)
                     PanelBehaviorSection(viewModel: viewModel)
+                    PermissionSection(viewModel: viewModel)
                 }
 
                 SettingsColumn {
-                    PermissionSection(viewModel: viewModel)
+                    GlobalHotkeysSection()
                     CloudSyncSection(viewModel: viewModel)
                 }
             }
@@ -475,7 +476,7 @@ struct SettingsPillButton: View {
 
     private var fillColor: Color {
         switch tone {
-        case .primary: return Constants.VisualStyle.accent
+        case .primary: return Constants.VisualStyle.accentSolid
         case .neutral: return Constants.VisualStyle.tintMedium
         case .danger: return Color.clear
         }
@@ -508,9 +509,6 @@ private struct GeneralSettingsSection: View {
                     get: { viewModel.entrySortMode },
                     set: { viewModel.entrySortMode = $0 }
                 ))
-            }
-            SettingsRow(label: "呼出快捷键") {
-                HotkeyRecorderField(name: .togglePanel)
             }
             SettingsRow(label: "登录时启动") {
                 Toggle("", isOn: Binding(
@@ -548,6 +546,27 @@ private struct GeneralSettingsSection: View {
                     ) {
                         viewModel.checkForUpdates()
                     }
+                }
+            }
+        }
+    }
+}
+
+/// Every global action with its own set of interchangeable shortcuts.
+private struct GlobalHotkeysSection: View {
+    var body: some View {
+        SettingsCard("全局快捷键", accessory: {
+            Text("每项最多 \(GlobalHotkeyAction.maxBindings) 个 · 仅本机生效")
+                .font(.ui(.caption))
+                .foregroundStyle(Constants.VisualStyle.textQuaternary)
+        }) {
+            ForEach(GlobalHotkeyAction.allCases) { action in
+                SettingsRow(
+                    label: action.title,
+                    hint: action.hint,
+                    showsDivider: action != GlobalHotkeyAction.allCases.last
+                ) {
+                    MultiHotkeyBindingsField(action: action)
                 }
             }
         }
@@ -648,9 +667,19 @@ private struct EntrySortSegmentedPicker: View {
 
 private struct PanelBehaviorSection: View {
     @ObservedObject var viewModel: MainWindowViewModel
+    @AppStorage(Constants.LocalDefaultsKey.restoreClipboardAfterPaste) private var restoreClipboardAfterPaste = false
 
     var body: some View {
         SettingsCard("快捷面板") {
+            SettingsRow(
+                label: "粘贴后恢复剪贴板",
+                hint: "自动粘贴成功后放回你原来复制的内容；仅复制时保留词条"
+            ) {
+                Toggle("", isOn: $restoreClipboardAfterPaste)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+            }
             SettingsRow(label: "固定面板") {
                 Toggle("", isOn: Binding(
                     get: { viewModel.isPanelPinned },

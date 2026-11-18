@@ -25,6 +25,7 @@
     --text-faint: #828997;
 
     --accent: #4F5FE8;
+    --accent-solid: #4F5FE8;
     --accent-dim: rgba(79, 95, 232, 0.11);
     --accent-border: rgba(79, 95, 232, 0.30);
     --banner-fill: #ECF0FF;
@@ -85,6 +86,7 @@
       --text-faint: #6E7583;
 
       --accent: #7C8CF8;
+      --accent-solid: #5564E0;
       --accent-dim: rgba(124, 140, 248, 0.15);
       --accent-border: rgba(124, 140, 248, 0.36);
       --banner-fill: #23273A;
@@ -138,6 +140,7 @@
     --text-faint: #6E7583;
 
     --accent: #7C8CF8;
+    --accent-solid: #5564E0;
     --accent-dim: rgba(124, 140, 248, 0.15);
     --accent-border: rgba(124, 140, 248, 0.36);
     --banner-fill: #23273A;
@@ -815,7 +818,7 @@
   }
 
   .todo-check-btn.done {
-    color: var(--accent);
+    color: var(--success);
   }
 
   .todo-check-btn svg {
@@ -866,8 +869,7 @@
     font-size: 10px;
     font-weight: 500;
     font-variant-numeric: tabular-nums;
-    padding: 1px 4px;
-    border-radius: 3px;
+    color: var(--text-muted);
     flex-shrink: 0;
     line-height: 1.3;
   }
@@ -1551,8 +1553,8 @@
   }
 
   .switch-toggle.checked {
-    background: var(--accent);
-    border-color: var(--accent);
+    background: var(--accent-solid);
+    border-color: var(--accent-solid);
   }
 
   .switch-toggle.checked::after {
@@ -1572,7 +1574,7 @@
     padding: 0 12px;
     border-radius: 6px;
     border: none;
-    background: var(--accent);
+    background: var(--accent-solid);
     color: #FFFFFF;
     font-family: var(--font-sans);
     font-size: 12px;
@@ -1880,7 +1882,7 @@
       </div>
       <div class="health-inline">
         <span class="status-dot"></span>
-        <span id="healthInlineText">SQLite WAL · KeyStore AES-256 · v1.7.5 (16)</span>
+        <span id="healthInlineText">SQLite WAL · KeyStore AES-256 · v1.7.6 (17)</span>
       </div>
     </div>
 
@@ -1918,7 +1920,7 @@
       <div class="settings-card">
         <div class="settings-card-header">
           <span class="settings-card-title">版本与一键更新</span>
-          <span id="updateVersionBadge" class="kbd-badge">v1.7.5 (16)</span>
+          <span id="updateVersionBadge" class="kbd-badge">v1.7.6 (17)</span>
         </div>
         <div class="settings-row" style="padding:4px 0 10px;">
           <div>
@@ -3098,7 +3100,7 @@ function buildEntryRowHtml(item, idx, totalLen, projectNameMap) {
           <div class="entry-header">
             <div class="entry-title ${done ? 'done' : ''}">${escapeHtml(item.title)}</div>
             ${pinned ? `<svg class="pin-glyph" viewBox="0 0 24 24" fill="currentColor"><path d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>` : ''}
-            ${useCount > 0 ? `<span class="level-badge" style="color:${level.color};background:${level.bg};">${useCount}次</span>` : ''}
+            ${useCount > 0 ? `<span class="level-badge"${useCount >= 25 ? ` style="color:${level.color};"` : ''}>${useCount}次</span>` : ''}
             <span class="type-badge">${typeInfo.name}</span>
           </div>
           <div class="entry-preview ${done ? 'done' : ''}">${escapeHtml(previewLine)}</div>
@@ -3609,8 +3611,8 @@ function patchEntryRowInPlace(entryId) {
         const typeBadge = headerEl.querySelector('.type-badge');
         headerEl.insertBefore(badge, typeBadge || null);
       }
-      badge.style.color = level.color;
-      badge.style.background = level.bg;
+      badge.style.color = useCount >= 25 ? level.color : '';
+      badge.style.background = '';
       badge.textContent = useCount + '次';
     } else if (badge) {
       badge.remove();
@@ -3670,7 +3672,7 @@ function copyEntry(entryId) {
   showToast('已复制：' + item.title);
   const modalCopyBtn = document.getElementById('modalCopyBtn');
   if (modalCopyBtn && editingEntryId === entryId) {
-    modalCopyBtn.textContent = '已复制 ✓';
+    modalCopyBtn.textContent = '已复制';
   }
   patchEntryRowInPlace(entryId);
   clearTimeout(window.__copyFeedbackTimer);

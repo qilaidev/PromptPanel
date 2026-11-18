@@ -255,7 +255,7 @@ struct PrimaryActionButton: View {
             .frame(height: Constants.Layout.regularControlHeight)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Constants.VisualStyle.accent)
+                    .fill(Constants.VisualStyle.accentSolid)
             )
             .roundedHitTarget(cornerRadius: 6)
         }

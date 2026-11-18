@@ -89,7 +89,7 @@ final class QuickPanelViewModel: ObservableObject {
         }
 
         var modeBadgeText: String {
-            type == .todo ? "☑️ 待办速记 · 回车即存" : "📝 便签速记 · 回车即存"
+            type == .todo ? "待办 · 回车即存" : "便签 · 回车即存"
         }
     }
 

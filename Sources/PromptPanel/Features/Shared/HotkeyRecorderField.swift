@@ -117,12 +117,18 @@ final class HotkeyRecorderModel: ObservableObject {
 
     @Published private(set) var isRecording = false
     @Published private(set) var shortcutDescription: String?
+    /// Set when the last keystroke was refused because another binding owns it.
+    @Published private(set) var conflictMessage: String?
 
     private var eventMonitor: Any?
 
     init(name: KeyboardShortcuts.Name) {
         self.name = name
         self.shortcutDescription = KeyboardShortcuts.getShortcut(for: name)?.description
+    }
+
+    private func notifyBindingsChanged() {
+        NotificationCenter.default.post(name: .globalHotkeysDidChange, object: nil)
     }
 
     deinit {
@@ -140,7 +146,7 @@ final class HotkeyRecorderModel: ObservableObject {
 
     var displayText: String {
         if isRecording {
-            return "按下快捷键…"
+            return conflictMessage ?? "按下快捷键…"
         }
         return shortcutDescription ?? "未设置"
     }
@@ -154,10 +160,12 @@ final class HotkeyRecorderModel: ObservableObject {
     }
 
     func clearShortcut() {
-        stopRecording()
+        stopRecording(notify: false)
         KeyboardShortcuts.setShortcut(nil, for: name)
         shortcutDescription = nil
-        PPLogger.hotkey.notice("Toggle-panel hotkey cleared by user")
+        conflictMessage = nil
+        PPLogger.hotkey.notice("Global hotkey cleared by user: \(self.name.rawValue, privacy: .public)")
+        notifyBindingsChanged()
     }
 
     func startRecording() {
@@ -170,6 +178,7 @@ final class HotkeyRecorderModel: ObservableObject {
         // they already have, and recording would toggle the panel instead.
         KeyboardShortcuts.isEnabled = false
         isRecording = true
+        conflictMessage = nil
 
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             // The monitor runs on the main thread, but its closure is not main-actor typed and
@@ -188,6 +197,10 @@ final class HotkeyRecorderModel: ObservableObject {
     }
 
     func stopRecording() {
+        stopRecording(notify: true)
+    }
+
+    private func stopRecording(notify: Bool) {
         guard isRecording else {
             return
         }
@@ -197,11 +210,15 @@ final class HotkeyRecorderModel: ObservableObject {
         }
         isRecording = false
         KeyboardShortcuts.isEnabled = true
+        if notify {
+            notifyBindingsChanged()
+        }
     }
 
     private func apply(outcome: RecordingOutcome) {
         switch outcome {
         case .cancelled:
+            conflictMessage = nil
             stopRecording()
         case .cleared:
             clearShortcut()
@@ -213,42 +230,59 @@ final class HotkeyRecorderModel: ObservableObject {
                 carbonKeyCode: carbonKeyCode,
                 carbonModifiers: carbonModifiers
             )
+            if let owner = GlobalHotkeyAction.conflict(for: shortcut, excluding: name) {
+                // Keep recording: one keypress must never fire two actions.
+                conflictMessage = "\(shortcut.description) 已用于「\(owner.title)」"
+                NSSound.beep()
+                return
+            }
+            conflictMessage = nil
             KeyboardShortcuts.setShortcut(shortcut, for: name)
             shortcutDescription = shortcut.description
-            stopRecording()
-            PPLogger.hotkey.notice("Toggle-panel hotkey updated by user")
+            stopRecording(notify: false)
+            PPLogger.hotkey.notice("Global hotkey updated by user: \(self.name.rawValue, privacy: .public)")
+            notifyBindingsChanged()
         }
     }
 }
 
-/// Click-to-record hotkey field, styled to match the surrounding settings controls.
+/// Click-to-record hotkey chip, styled to match the surrounding settings controls.
 struct HotkeyRecorderField: View {
     @StateObject private var model: HotkeyRecorderModel
+    private let autoStartRecording: Bool
+    private let showsClearButton: Bool
 
-    init(name: KeyboardShortcuts.Name) {
+    init(name: KeyboardShortcuts.Name, autoStartRecording: Bool = false, showsClearButton: Bool = true) {
         _model = StateObject(wrappedValue: HotkeyRecorderModel(name: name))
+        self.autoStartRecording = autoStartRecording
+        self.showsClearButton = showsClearButton
+    }
+
+    private var isConflict: Bool {
+        model.isRecording && model.conflictMessage != nil
     }
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             Button {
                 model.toggleRecording()
             } label: {
                 Text(model.displayText)
                     .font(.ui(.body, weight: .medium, mono: !model.isRecording && model.shortcutDescription != nil))
                     .foregroundStyle(
-                        model.isRecording
-                            ? Constants.VisualStyle.accent
-                            : Constants.VisualStyle.text
+                        isConflict
+                            ? Constants.VisualStyle.danger
+                            : (model.isRecording ? Constants.VisualStyle.accent : Constants.VisualStyle.text)
                     )
-                    .frame(minWidth: 88, minHeight: Constants.Layout.compactControlHeight)
-                    .padding(.horizontal, 10)
+                    .lineLimit(1)
+                    .frame(minWidth: 56, minHeight: Constants.Layout.compactControlHeight)
+                    .padding(.horizontal, 8)
                     .background(
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .fill(
-                                model.isRecording
-                                    ? Constants.VisualStyle.accentDim
-                                    : Constants.VisualStyle.inputFill
+                                isConflict
+                                    ? Constants.VisualStyle.dangerDim
+                                    : (model.isRecording ? Constants.VisualStyle.accentDim : Constants.VisualStyle.inputFill)
                             )
                     )
                     .overlay(
@@ -263,24 +297,125 @@ struct HotkeyRecorderField: View {
                     .roundedHitTarget(cornerRadius: 6)
             }
             .buttonStyle(.plain)
-            .help(model.isRecording ? "按下想要的组合键，Esc 取消，Delete 清除" : "点击后按下想要的组合键")
+            .help(model.isRecording ? "按下想要的组合键，Esc 取消，Delete 清除" : "点击后按下新的组合键")
 
-            if model.shortcutDescription != nil {
+            if showsClearButton, model.shortcutDescription != nil, !model.isRecording {
                 Button {
                     model.clearShortcut()
                 } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.icon(.base))
+                    Image(systemName: "xmark")
+                        .font(.icon(.micro, weight: .semibold))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
-                        .frame(width: 20, height: 20)
-                        .contentShape(Rectangle())
+                        .frame(width: 16, height: 16)
+                        .hoverHighlight(cornerRadius: 4)
+                        .roundedHitTarget(cornerRadius: 4)
                 }
                 .buttonStyle(.plain)
-                .help("清除快捷键")
+                .help("移除这个快捷键")
+            }
+        }
+        .onAppear {
+            if autoStartRecording {
+                model.startRecording()
             }
         }
         .onDisappear {
             model.stopRecording()
         }
+    }
+}
+
+/// Visible bindings for one action: every filled slot, plus at most one empty
+/// slot the user just asked for with "+" (which starts recording right away).
+@MainActor
+final class HotkeyBindingsModel: ObservableObject {
+    let action: GlobalHotkeyAction
+
+    @Published private(set) var filledNames: [KeyboardShortcuts.Name] = []
+    @Published private(set) var pendingName: KeyboardShortcuts.Name?
+
+    private var observer: NSObjectProtocol?
+
+    init(action: GlobalHotkeyAction) {
+        self.action = action
+        reload()
+        observer = NotificationCenter.default.addObserver(
+            forName: .globalHotkeysDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.pendingName = nil
+                self?.reload()
+            }
+        }
+    }
+
+    deinit {
+        if let observer {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    var visibleNames: [KeyboardShortcuts.Name] {
+        action.shortcutNames.filter { filledNames.contains($0) || $0 == pendingName }
+    }
+
+    var canAddBinding: Bool {
+        pendingName == nil && filledNames.count < GlobalHotkeyAction.maxBindings
+    }
+
+    func addBinding() {
+        guard canAddBinding else { return }
+        pendingName = action.shortcutNames.first { !filledNames.contains($0) }
+    }
+
+    func reload() {
+        filledNames = action.boundShortcuts().map(\.name)
+    }
+}
+
+/// All bindings of one global action as removable chips plus an add button.
+struct MultiHotkeyBindingsField: View {
+    @StateObject private var model: HotkeyBindingsModel
+
+    init(action: GlobalHotkeyAction) {
+        _model = StateObject(wrappedValue: HotkeyBindingsModel(action: action))
+    }
+
+    var body: some View {
+        HStack(spacing: Design.Space.sm) {
+            if model.visibleNames.isEmpty {
+                Text("未设置")
+                    .font(.ui(.body))
+                    .foregroundStyle(Constants.VisualStyle.textQuaternary)
+            }
+            ForEach(model.visibleNames, id: \.rawValue) { name in
+                HotkeyRecorderField(name: name, autoStartRecording: name == model.pendingName)
+                    .id(name.rawValue)
+            }
+            if model.canAddBinding {
+                Button {
+                    model.addBinding()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.icon(.small, weight: .semibold))
+                        .foregroundStyle(Constants.VisualStyle.textSecondary)
+                        .frame(width: Constants.Layout.compactControlHeight, height: Constants.Layout.compactControlHeight)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .strokeBorder(
+                                    Constants.VisualStyle.borderStrong,
+                                    style: StrokeStyle(lineWidth: 1, dash: [3, 2])
+                                )
+                        )
+                        .hoverHighlight(cornerRadius: 6)
+                        .roundedHitTarget(cornerRadius: 6)
+                }
+                .buttonStyle(.plain)
+                .help(model.filledNames.isEmpty ? "添加快捷键" : "再添加一个快捷键（最多 \(GlobalHotkeyAction.maxBindings) 个）")
+            }
+        }
+        .fixedSize()
     }
 }

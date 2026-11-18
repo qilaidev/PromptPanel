@@ -52,6 +52,9 @@ enum Constants {
 
         // Accent (indigo — deeper in light mode for ≥4.5:1 contrast)
         static let accent          = dynamicColor(dark: 0x7c8cf8, light: 0x4f5fe8)
+        /// Fill behind white text (primary buttons). The dark-mode `accent` is tuned
+        /// for text on dark surfaces and only reaches ~3:1 under white labels.
+        static let accentSolid     = dynamicColor(dark: 0x5564e0, light: 0x4f5fe8)
         static let accentDim       = semanticFill(dark: 0x7c8cf8, darkAlpha: 0.15, light: 0x4f5fe8, lightAlpha: 0.11)
         static let accentBorder    = semanticFill(dark: 0x7c8cf8, darkAlpha: 0.36, light: 0x4f5fe8, lightAlpha: 0.30)
         static let infoBannerFill  = dynamicColor(dark: 0x23273a, light: 0xecf0ff)
@@ -393,7 +396,18 @@ enum Constants {
     enum ExecutionTrigger: String, Codable {
         case keyboardSubmit = "keyboard_submit"
         case pointerClick = "pointer_click"
+        case globalHotkey = "global_hotkey"
     }
+
+    /// Per-machine preferences kept in `UserDefaults` rather than the synced database.
+    enum LocalDefaultsKey {
+        /// Put the user's previous clipboard back after an auto-paste succeeded.
+        static let restoreClipboardAfterPaste = "restore_clipboard_after_paste"
+    }
+
+    /// How long after a dispatched ⌘V the previous clipboard is put back. Long enough
+    /// for slow Electron / web inputs to read the pasteboard, short enough to feel instant.
+    static let clipboardRestoreDelayMs = 450
 
     // MARK: - Window Layout
 

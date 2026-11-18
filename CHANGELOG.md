@@ -6,6 +6,25 @@ The format is based on Keep a Changelog, and this project uses Conventional Comm
 
 ## [Unreleased]
 
+## [1.7.6] - 2026-11-18
+
+多维全局快捷键引擎、重贴上一条词条、粘贴后恢复剪贴板、执行期动态占位符、终端换行安全护栏与跨端界面降噪精修版本（`1.7.6+17`）。
+
+### Added
+
+- **多快捷键与全局动作热键（`HotkeyService` / `HotkeyRecorderField` / `SettingsView`）。** 新增「设置 → 偏好 → 全局快捷键」卡片：每个动作最多绑定 3 个可互换的组合键（`+` 添加、`×` 移除），新增「直接写便签」「直接记待办」「剪贴板存为便签」「重贴上一条词条」「开关参考窗口」五个全局动作（默认不占用任何键位）。录制时检测跨动作冲突并拒绝重复组合；绑定按 KeyboardShortcuts 存于本机 `UserDefaults`，不参与云同步。原 `togglePanel` 存储名保持不变，已有键位无损继承。
+- **重贴上一条词条（`ExecuteService.executeInPlace` / `AppDelegate.lastExecutedEntry`）。** 面板关闭时直接把最近一次成功执行（且未删除）的词条贴入当前前台应用，执行日志记为 `global_hotkey` 触发。
+- **粘贴后恢复剪贴板（可选，默认关闭，`ClipboardService` / `ExecuteService`）。** 自动粘贴成功派发约 450ms 后放回原剪贴板全部类型；期间用户再次复制则不覆盖；降级为仅复制时保留词条以便手动 `⌘V`。开启时中转写入带 `org.nspasteboard.TransientType` 标记，剪贴板历史工具会自动忽略。
+- **执行期动态占位符与终端换行安全护栏（`ExecuteService`）。** 执行或重贴词条时单遍大小写不敏感展开 `{{clipboard}}`（读取原剪贴板且不修改 SQLite 原始词条，配合「粘贴后恢复剪贴板」可无损恢复原剪贴板）与 `{{date}}`（本地 `yyyy-MM-dd`）；目标为 Terminal、iTerm2、Ghostty、Warp、Kitty、Alacritty、Hyper、WezTerm 等终端且内容为代码或包含换行时，自动剥离末尾 `\r`/`\n`（保留内部换行），防止合成 `⌘V` 意外触发回车提交。
+
+### Changed
+
+- **快捷面板、内容库、参考窗口与 Android 端界面降噪与交互收口（`QuickPanelView` / `LibraryView` / `ReferenceLibraryWindowView` / `mobile/android/assets/index.html`）。**
+  - **快捷面板（`QuickPanelView`）**：`✏️ / 📋 / 📝 / ☑️` 彩色胶囊统一为中性线性图标按钮与键位角标，非待办行前导图标去除彩虹着色，强调色只留给选中行；类型栏右侧采用 `Tab 切分组` 键位提示，底栏移除重复的分组提示并补充 `⌘1-9 直达` / `⌘P 固定/取消固定`。
+  - **内容库与参考窗口（`LibraryView` / `ReferenceLibraryWindowView`）**：`quickJotBar` 支持焦点/非空渐进式披露，闲置空态收起为 28pt 单行（类型切换 + 输入框 + 剪贴板快存按钮），聚焦或输入后展开目标分组路由与动作胶囊；`PreviewPane` 顶栏重构为左侧静默面包屑（`分组 ∨ / 类型 ∨`）与右侧紧凑 24pt 图标操作、版本胶囊及单一 `accentSolid` 主复制按钮；`EntryListRow` 统一待办完成勾选为 `success` 绿色、按类型筛选时隐藏重复类型标签；参考窗口搜索栏标准化为 28pt 高度并统一主按钮实色填充。
+  - **全端使用次数与主题对比度**：移除桌面端与 Android 端使用次数徽章的彩色底框，统一为等宽静默数字（仅 `>= 25` 次保留等级前景色，快捷面板隐藏 `0次`）；新增 `--accent-solid` / `accentSolid`，提升深色模式白字主按钮与开关对比度，并统一 Android 完成态勾选色（`var(--success)`）与精简复制反馈文案。
+- **设计细节修正。** 快捷面板行改为「序号 → 16pt 图标/勾选框」固定列，待办行标题不再右移错位；悬停操作条出现时隐藏右侧次数/日期，不再压住半个「18 次」徽章；次数统一为「18次」写法；搜索占位文案缩短为「搜索 X 或 #标签」不再截断。主窗口速记栏「存为待办」统一标注 `⌥↩`（与快捷面板一致，`⇧↩` 仍兼容）；侧栏「当前」文字徽章改为与顶栏一致的 `scope` 图标，避免项目名被截断；设置页「全局快捷键」移到右栏、权限卡移到左栏，两栏等高、一屏看全。
+
 ## [1.7.5] - 2026-11-18
 
 跨端云同步协议 `v2.3.0` 对齐、安全传输与凭据隔离加固、macOS 全屏/中文输入法体验修复及 Android 原生异步架构升级版本（`1.7.5+16`）。
