@@ -6,6 +6,30 @@ The format is based on Keep a Changelog, and this project uses Conventional Comm
 
 ## [Unreleased]
 
+## [1.7.5] - 2026-11-18
+
+跨端云同步协议 `v2.3.0` 对齐、安全传输与凭据隔离加固、macOS 全屏/中文输入法体验修复及 Android 原生异步架构升级版本（`1.7.5+16`）。
+
+### Security & Transport
+
+- **强制 HTTPS 远程传输与 Keychain 凭据存储（`CloudSyncService` / `KeychainService` / `UpdaterService`）。** 远程云同步与更新下载强制校验 `https://`（仅本机回环 `http://localhost` / `http://127.0.0.1` 例外）；`UpdaterService` 新增 `RedirectProtectionDelegate` 拦截 `https` 向非 `https`（含 `http://localhost`）的重定向协议降级，并为镜像站请求补齐 HTML 错误页校验与主链路错误保留；内置自更新强制要求有效 Apple Developer ID `TeamIdentifier` 与严格签名校验，自动检查更新默认改为 opt-in；同步 API Key 迁移至 macOS Keychain 安全存储。
+- **Android DOM XSS 彻底治理（`mobile/android/assets/index.html`）。** `escapeHtml()` 补齐单引号 `'` 与反引号 `` ` `` 转义，并将词条、分组、Facet、版本、克隆、参考与设置项的全部内联 `onclick` 字符串拼接重构为 `data-*` 属性与统一委托点击监听器。
+
+### Added & Improved
+
+- **全链路 $O(1)$ `since_revision` 快速轮询与毫秒级 LWW 同步协议对齐（`server/promptpanel_sync_server.py` `v2.3.0` / `CloudSyncService` / `MainWindowViewModel` / `mobile/android/assets/index.html`）。**
+  - 服务端 `utc_now_iso()` 统一输出 `.SSSZ` 毫秒时间戳，全链路（服务端/macOS/Android）采用毫秒级 Epoch LWW 比较，消除 `.000Z` 与 `.999Z` 字符串比较偏差；单次 `POST /v1/sync` 改为内存单遍构建响应，`GET /v1/sync?since_revision=<int>` 在无变更时 $O(1)$ 返回 `unchanged: true` 且零解密开销。
+  - 修复复制/执行条目（`useCount` / `lastUsedAt`）时不再覆盖 `updatedAt`，避免单调使用计数合并覆盖另一端更新的文本内容；支持 `groupKindRaw == "inbox"` 自动映射 `builtin-inbox`、`isSystemProtected` 系统分组保护、孤立 `projectId` 自愈时间戳递增，以及批量清理已完成待办时的 `allowMassDelete` 放行。
+  - macOS `MainWindowViewModel` 手动同步强制 `forceFullSync: true`，静默同步通过 `summary.hasAnyLocalMutation` 精确感知计数与版本合并刷新 UI，批量删除 `>= 3` 条时自动武装 `armAllowMassDeleteForNextSync()`。
+  - 服务端新增 `PP_SYNC_MAX_TENANTS` 租户上限、IP 维度鉴权失败限流（`429`）、`OPTIONS`/`PP_SYNC_CORS_ORIGIN` 跨域支持、`SyncRequestHandler.timeout = 15` 与 `384M` 容器内存上限。
+- **macOS 桌面端中文输入法保护、全屏防切屏、草稿防丢与搜索升级（`PanelService` / `KeyAwareSearchField` / `EntryRepository` / `MainWindowViewModel` / `QuickPanelViewModel` / `PasteService` / `HotkeyRecorderField` / `ToastService`）。**
+  - SQLite FTS5 升级为 `trigram` 分词器并配合 SQL 标签过滤与 `pp_icontains`（`localizedStandardContains`）支持 `<3` 字符 Unicode/大小写不敏感检索；`fetchByProjects` / `fetchAll` / `fetchMixed` 支持 SQL `LIMIT`。
+  - `QuickPanelWindow` 在主窗口不可见时保持 `.accessory` + `.nonactivatingPanel` + `[.canJoinAllSpaces, .fullScreenAuxiliary]`，彻底解决全屏应用内呼出快捷面板导致切屏的问题；`KeyAwareSearchField` 增加 `hasMarkedText()` 预编辑保护防止打断拼音/五笔等 IME 组词，并修复 `HotkeyRecorderModel.deinit` 快捷键监听泄漏、内联编辑空内容切条草稿丢失保护、跨显示器坐标钳制与 `CGEventSource(.hidSystemState)` 粘贴稳定性。
+- **Android 原生异步桥接、手势返回、Edge-to-Edge 适配与持久签名（`MainActivity.java` / `UpdateDownloadTask.java` / `UpdateApkProvider.java` / `mobile/build-android.sh` / `mobile/android/assets/index.html`）。**
+  - 新增 `httpRequestAsync` 有界线程池异步网络桥（支持 `SocketTimeoutException` 与 `429/502/503/504` 自动退避重试），SQLite 写入合并至单线程后台执行并在 `onPause`/`onStop` 同步冲刷；支持单行 DOM 原地局部更新、Android 13+ `OnBackInvokedCallback` 返回手势接管、Edge-to-Edge `WindowInsets` 键盘与安全区避让、原生 `Intent.ACTION_SEND` 分享、动态 `PackageInfo` 版本读取、APK 更新进度回传与本地持久化发行签名密钥（`~/.config/promptpanel/android-signing/`）。
+- **发布流水线与测试体系升级（`scripts/build-app.sh` / `scripts/release-readiness.sh` / `.github/workflows/macos-release-readiness.yml` / `.github/workflows/publish-appcast.yml` / `Tests/PromptPanelTests` / `server/test_sync_server.py`）。**
+  - `build-app.sh` 新增可复现 `.dmg` 镜像打包（含 `/Applications` 软链）；补齐 `.github/workflows/publish-appcast.yml` GitHub Pages 自动发布工作流；启用 Swift Testing 支持及跨 macOS/Python 服务端/Android 协议语义的端到端同步测试套件。
+
 ## [1.7.4] - 2026-11-13
 
 全链路性能提速、跨端容错加固与交互细节精修版本（`1.7.4+15`）。对 macOS 桌面端、Android 移动端及自托管同步服务端（`v2.2.1`）进行深度性能优化、并发重入防护与异常自愈升级。

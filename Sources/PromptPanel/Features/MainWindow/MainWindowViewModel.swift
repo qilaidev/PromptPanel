@@ -1952,7 +1952,11 @@ final class MainWindowViewModel: ObservableObject {
                 self?.activeCloudSyncTask = nil
             }
             do {
-                let summary = try await cloudSyncService.syncNow(endpoint: endpoint, apiKey: apiKey)
+                let summary = try await cloudSyncService.syncNow(
+                    endpoint: endpoint,
+                    apiKey: apiKey,
+                    forceFullSync: true
+                )
                 guard let self, !Task.isCancelled else { return }
                 self.isApplyingCloudSyncChanges = true
                 defer { self.isApplyingCloudSyncChanges = false }
@@ -2095,12 +2099,7 @@ final class MainWindowViewModel: ObservableObject {
                 guard let self, !Task.isCancelled else { return }
                 self.cloudSyncConnectionHealthy = true
                 self.refreshCloudSyncState()
-                if summary.entriesCreated > 0
-                    || summary.entriesUpdated > 0
-                    || summary.projectsCreated > 0
-                    || summary.projectsUpdated > 0
-                    || summary.conflictsPreservedInVersions > 0
-                    || summary.totalProtectedCount > 0 {
+                if summary.hasAnyLocalMutation {
                     self.isApplyingCloudSyncChanges = true
                     defer { self.isApplyingCloudSyncChanges = false }
                     self.notifyProjectsChanged()
@@ -2641,6 +2640,9 @@ final class MainWindowViewModel: ObservableObject {
                     bannerMessage = "当前分组没有已完成记录。"
                     return 0
                 }
+                if deletedCount >= 3 {
+                    cloudSyncService?.armAllowMassDeleteForNextSync()
+                }
                 entries.removeAll { $0.isCompleted && $0.projectId == selectedProjectId }
                 refreshEntryFacets()
                 refreshDisplayedEntries()
@@ -2663,6 +2665,9 @@ final class MainWindowViewModel: ObservableObject {
             guard deletedCount > 0 else {
                 bannerMessage = "当前分组没有已完成记录。"
                 return 0
+            }
+            if deletedCount >= 3 {
+                cloudSyncService?.armAllowMassDeleteForNextSync()
             }
             if archivedIds.isEmpty {
                 entries.removeAll(where: \.isCompleted)

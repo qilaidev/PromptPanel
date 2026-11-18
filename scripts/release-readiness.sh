@@ -228,8 +228,12 @@ if [[ $TEST_RUNNER_AVAILABLE -eq 1 ]]; then
 else
     SWIFT_TESTING_DEFINE="PROMPTPANEL""_SWIFT_TESTING"
     log_info "xctest is unavailable; attempting Swift Testing via swift test (${SWIFT_TESTING_DEFINE})"
+    SWIFT_TESTING_PLUGIN_ARGS=()
+    if [[ -d "/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing" ]]; then
+        SWIFT_TESTING_PLUGIN_ARGS=(-Xswiftc -plugin-path -Xswiftc /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing)
+    fi
     SWIFT_TESTING_OUTPUT=""
-    if SWIFT_TESTING_OUTPUT="$(swift test --package-path "$PACKAGE_ROOT" --enable-swift-testing --disable-xctest -Xswiftc "-D${SWIFT_TESTING_DEFINE}" 2>&1)"; then
+    if SWIFT_TESTING_OUTPUT="$(swift test --package-path "$PACKAGE_ROOT" --enable-swift-testing --disable-xctest -Xswiftc "-D${SWIFT_TESTING_DEFINE}" "${SWIFT_TESTING_PLUGIN_ARGS[@]}" 2>&1)"; then
         printf '%s\n' "$SWIFT_TESTING_OUTPUT"
         if grep -Eq 'Test run with [1-9][0-9]* tests? in [1-9][0-9]* suites? passed' <<<"$SWIFT_TESTING_OUTPUT"; then
             log_info "Swift Testing passed via swift test"

@@ -22,4 +22,4 @@
 ./mobile/build-android.sh
 ```
 
-构建脚本会编译 `mobile/android/` 原生宿主与离线前端资产并执行 4 字节对齐（`zipalign`）。正式发版可通过环境变量注入 `ANDROID_KEYSTORE_PATH` 与 `ANDROID_KEY_PASS` 完成 **V1 (JAR) + V2 + V3** 签名与 `apksigner verify` 校验；未提供发行密钥时，脚本会在临时目录生成一次性开发校验密钥并在退出时自动销毁，产物默认输出至 `dist/release/PromptPanel-1.7.4+15-android.apk`。
+构建脚本会编译 `mobile/android/` 原生宿主与离线前端资产并执行 4 字节对齐（`zipalign`）。正式发版可通过环境变量注入 `ANDROID_KEYSTORE_PATH` 与 `ANDROID_KEY_PASS` 完成 **V1 (JAR) + V2 + V3** 签名与 `apksigner verify` 校验；未提供发行密钥时，脚本会在临时目录生成一次性开发校验密钥并在退出时自动销毁，产物默认输出至 `dist/release/PromptPanel-1.7.5+16-android.apk`。

@@ -485,7 +485,10 @@ public enum CoreTestSuite {
         try check(coordinator.state == .hidden)
 
         try check(
-            PanelService.desiredActivationPolicy(isPanelVisible: true, isMainWindowVisible: false) == .regular
+            PanelService.desiredActivationPolicy(isPanelVisible: true, isMainWindowVisible: false) == .accessory
+        )
+        try check(
+            PanelService.desiredActivationPolicy(isPanelVisible: true, isMainWindowVisible: true) == .regular
         )
         try check(
             PanelService.desiredActivationPolicy(isPanelVisible: false, isMainWindowVisible: false) == .accessory
@@ -2582,6 +2585,165 @@ public enum CoreTestSuite {
         }
         try check(rejected, "HTTPS->HTTP redirect downgrade to localhost must be rejected")
     }
+
+    static func verifyCrossLayerEndToEndSyncAsync() async throws {
+        let testFileURL = URL(fileURLWithPath: #filePath)
+        let repoRoot = testFileURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let serverScript = repoRoot.appendingPathComponent("server/promptpanel_sync_server.py")
+        guard FileManager.default.fileExists(atPath: serverScript.path) else {
+            return
+        }
+
+        // Resolve python3 with cryptography available
+        let checkPy = Process()
+        checkPy.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        checkPy.arguments = ["python3", "-c", "import cryptography"]
+        checkPy.standardOutput = FileHandle.nullDevice
+        checkPy.standardError = FileHandle.nullDevice
+        try checkPy.run()
+        checkPy.waitUntilExit()
+        guard checkPy.terminationStatus == 0 else {
+            return
+        }
+
+        // Find a free localhost port via Python socket
+        let portProcess = Process()
+        portProcess.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        portProcess.arguments = ["python3", "-c", "import socket; s=socket.socket(); s.bind(('127.0.0.1', 0)); print(s.getsockname()[1]); s.close()"]
+        let portPipe = Pipe()
+        portProcess.standardOutput = portPipe
+        try portProcess.run()
+        portProcess.waitUntilExit()
+        let portStr = String(data: portPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let port = Int(portStr) ?? 0
+        try check(port > 0, "Failed to allocate free localhost port for E2E sync test")
+
+        let serverDataDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PromptPanelE2EServer-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: serverDataDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: serverDataDir) }
+
+        let token = "e2e-cross-layer-token-123456"
+        let serverProcess = Process()
+        serverProcess.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        serverProcess.arguments = ["python3", serverScript.path]
+        var env = ProcessInfo.processInfo.environment
+        env["PP_SYNC_HOST"] = "127.0.0.1"
+        env["PP_SYNC_PORT"] = "\(port)"
+        env["PP_SYNC_DATA_DIR"] = serverDataDir.path
+        env["PP_SYNC_ALLOWED_TOKENS"] = token
+        serverProcess.environment = env
+        serverProcess.standardOutput = FileHandle.nullDevice
+        serverProcess.standardError = FileHandle.nullDevice
+        try serverProcess.run()
+        defer {
+            if serverProcess.isRunning {
+                serverProcess.terminate()
+                serverProcess.waitUntilExit()
+            }
+        }
+
+        let healthURL = URL(string: "http://127.0.0.1:\(port)/health")!
+        var serverReady = false
+        for _ in 0..<50 {
+            if let (_, resp) = try? await URLSession.shared.data(from: healthURL),
+               (resp as? HTTPURLResponse)?.statusCode == 200 {
+                serverReady = true
+                break
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        try check(serverReady, "Real promptpanel_sync_server.py must become healthy on 127.0.0.1:\(port)")
+
+        let endpoint = "http://127.0.0.1:\(port)/v1/sync"
+        try await withTempDatabaseAsync { manager, _ in
+            let projectRepo = ProjectRepository(dbQueue: manager.dbQueue)
+            let entryRepo = EntryRepository(dbQueue: manager.dbQueue)
+            let defaultProject = try unwrap(projectRepo.fetchDefault())
+            let syncService = CloudSyncService(dbQueue: manager.dbQueue)
+
+            let e1 = Entry(
+                projectId: defaultProject.id,
+                title: "E2E Prompt 1",
+                content: "Mac original content",
+                updatedAt: Date(timeIntervalSince1970: 1_760_000_000.0)
+            )
+            let e2 = Entry(
+                projectId: defaultProject.id,
+                title: "E2E Prompt 2",
+                content: "Whole second content",
+                updatedAt: Date(timeIntervalSince1970: 1_760_000_100.0)
+            )
+            let e3 = Entry(projectId: defaultProject.id, title: "E2E Delete 1", content: "d1")
+            let e4 = Entry(projectId: defaultProject.id, title: "E2E Delete 2", content: "d2")
+            let e5 = Entry(projectId: defaultProject.id, title: "E2E Delete 3", content: "d3")
+            try entryRepo.create(e1)
+            try entryRepo.create(e2)
+            try entryRepo.create(e3)
+            try entryRepo.create(e4)
+            try entryRepo.create(e5)
+
+            // 1. Initial sync -> server assigns revision >= 1
+            _ = try await syncService.syncNow(endpoint: endpoint, apiKey: token)
+            let rev1 = try await manager.dbQueue.read { db in
+                try String.fetchOne(db, sql: "SELECT value FROM sync_metadata WHERE key = 'last_synced_revision'")
+            }
+            try check(rev1 != nil && (Int(rev1 ?? "") ?? 0) >= 1, "Initial sync must record server revision")
+
+            // 2. Immediate second sync -> O(1) since_revision fast-poll
+            let idleSummary = try await syncService.syncNow(endpoint: endpoint, apiKey: token)
+            try check(!idleSummary.hasAnyLocalMutation, "Idle fast-poll must have no local mutations")
+
+            // 3. Simulate Android client updating e1.useCount without bumping updatedAt, and e2 with .999Z LWW
+            var getReq = URLRequest(url: URL(string: endpoint)!)
+            getReq.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (rawEnv, _) = try await URLSession.shared.data(for: getReq)
+            var jsonObj = try unwrap(JSONSerialization.jsonObject(with: rawEnv) as? [String: Any])
+            var entriesArr = try unwrap(jsonObj["entries"] as? [[String: Any]])
+            for idx in entriesArr.indices {
+                let id = entriesArr[idx]["id"] as? String
+                if id == e1.id {
+                    entriesArr[idx]["useCount"] = 42
+                    entriesArr[idx]["lastUsedAt"] = "2026-11-18T05:00:00.999Z"
+                    // Keep updatedAt older than Mac's edit
+                    entriesArr[idx]["updatedAt"] = "2020-01-01T00:00:00.000Z"
+                } else if id == e2.id {
+                    entriesArr[idx]["content"] = "Android .999Z winner"
+                    entriesArr[idx]["updatedAt"] = "2026-11-18T06:00:00.999Z"
+                }
+            }
+            jsonObj["entries"] = entriesArr
+            jsonObj["deviceId"] = "android-e2e"
+            var postReq = URLRequest(url: URL(string: endpoint)!)
+            postReq.httpMethod = "POST"
+            postReq.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            postReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            postReq.httpBody = try JSONSerialization.data(withJSONObject: jsonObj)
+            let (_, postResp) = try await URLSession.shared.data(for: postReq)
+            try check((postResp as? HTTPURLResponse)?.statusCode == 200)
+
+            // 4. Mac syncs -> merges Android useCount=42 without clobbering Mac text, and accepts .999Z LWW
+            let mergeSummary = try await syncService.syncNow(endpoint: endpoint, apiKey: token)
+            try check(mergeSummary.hasAnyLocalMutation)
+            let fetchedE1 = try unwrap(entryRepo.fetchById(e1.id))
+            try check(fetchedE1.useCount == 42, "Android copy useCount must merge monotonically")
+            try check(fetchedE1.content == "Mac original content", "Older Android updatedAt must not clobber Mac content")
+            let fetchedE2 = try unwrap(entryRepo.fetchById(e2.id))
+            try check(fetchedE2.content == "Android .999Z winner", "Sub-second .999Z timestamp must win LWW")
+
+            // 5. Bulk delete >= 3 entries with armAllowMassDeleteForNextSync -> no mass-delete protection rollback
+            try entryRepo.delete(id: e3.id)
+            try entryRepo.delete(id: e4.id)
+            try entryRepo.delete(id: e5.id)
+            syncService.armAllowMassDeleteForNextSync()
+            let massDeleteSummary = try await syncService.syncNow(endpoint: endpoint, apiKey: token)
+            try check(massDeleteSummary.totalProtectedCount == 0, "allowMassDelete must permit >= 3 intentional deletions")
+        }
+    }
 }
 
 #if canImport(XCTest)
@@ -2754,6 +2916,10 @@ struct PromptPanelSwiftTestingSuite {
 
     @Test func updaterRedirectDowngradeRejection() async throws {
         try await CoreTestSuite.verifyUpdaterRedirectDowngradeRejectionAsync()
+    }
+
+    @Test func crossLayerEndToEndSync() async throws {
+        try await CoreTestSuite.verifyCrossLayerEndToEndSyncAsync()
     }
 }
 #endif
