@@ -224,15 +224,27 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
     @Published private(set) var completedEntryCount: Int = 0
+    private var isRevertingSelectedEntryId = false
     @Published var selectedEntryId: String? {
         didSet {
             if selectedEntryId != oldValue {
+                if isRevertingSelectedEntryId {
+                    return
+                }
                 pendingInlineAutoSaveWorkItem?.cancel()
                 pendingInlineAutoSaveWorkItem = nil
+                let previousEntryId: String?
                 if !inlineDraftEntryId.isEmpty, inlineDraftEntryId != selectedEntryId {
-                    commitPendingInlineChangesIfNeeded(forEntryId: inlineDraftEntryId)
-                } else if let oldId = oldValue {
-                    commitPendingInlineChangesIfNeeded(forEntryId: oldId)
+                    previousEntryId = inlineDraftEntryId
+                } else {
+                    previousEntryId = oldValue
+                }
+                if let previousEntryId,
+                   !commitPendingInlineChangesIfNeeded(forEntryId: previousEntryId) {
+                    isRevertingSelectedEntryId = true
+                    selectedEntryId = previousEntryId
+                    isRevertingSelectedEntryId = false
+                    return
                 }
                 refreshSelectedEntryVersions()
                 if let entry = selectedEntry {
@@ -967,7 +979,9 @@ final class MainWindowViewModel: ObservableObject {
 
     /// Commits valid unsaved inline draft changes for the specified (or currently active) entry
     /// so switching selection or closing the window never silently discards user edits.
-    func commitPendingInlineChangesIfNeeded(forEntryId targetId: String? = nil) {
+    /// Returns `false` if dirty non-blank edits could not be saved and selection should remain.
+    @discardableResult
+    func commitPendingInlineChangesIfNeeded(forEntryId targetId: String? = nil) -> Bool {
         let entryId = targetId ?? inlineDraftEntryId
         if targetId == nil || targetId == inlineDraftEntryId {
             pendingInlineAutoSaveWorkItem?.cancel()
@@ -978,17 +992,23 @@ final class MainWindowViewModel: ObservableObject {
               let entry = entries.first(where: { $0.id == entryId })
                   ?? (try? entryRepository.fetchById(entryId)),
               hasUnsavedInlineChanges(for: entry) else {
-            return
+            return true
         }
         let trimmedContent = inlineDraftContent.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedContent.isEmpty else {
-            return
+            // Only auto-discard if the persisted entry itself was a brand-new blank draft.
+            if entry.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return true
+            }
+            inlineAutoSaveState = .invalid
+            bannerMessage = "内容不能为空，已保留当前未保存编辑，请补充内容后再切换词条。"
+            return false
         }
         let trimmedTitle = inlineDraftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let effectiveTitle = trimmedTitle.isEmpty
             ? Self.deriveEntryTitle(from: inlineDraftContent, fallback: entry.title)
             : trimmedTitle
-        _ = saveInlineEntry(
+        let saved = saveInlineEntry(
             entry,
             title: effectiveTitle,
             content: inlineDraftContent,
@@ -1000,6 +1020,10 @@ final class MainWindowViewModel: ObservableObject {
             changeNote: "自动保存",
             isAutoSave: true
         )
+        if !saved {
+            bannerMessage = "保存修改失败，已保留当前未保存编辑，请重试。"
+        }
+        return saved
     }
 
     func refreshReferenceEntries() {
@@ -1557,21 +1581,24 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     func resetAccessibilityApproval() {
-        let outcome = permissionService.resetAccessibilityApproval()
-        refreshPermissionState()
-        switch outcome {
-        case .success:
-            bannerMessage = "已清空旧授权记录，请在系统设置里重新开启 PromptPanel.app。"
-        case .missingBundleIdentifier:
-            bannerMessage = "无法读取应用 Bundle ID，重置失败。"
-        case .launchFailed(let reason):
-            bannerMessage = "重置授权记录失败：\(reason)"
-        case .toolFailed(let exitCode, let output):
-            let detail = output.trimmingCharacters(in: .whitespacesAndNewlines)
-            if detail.isEmpty {
-                bannerMessage = "tccutil 退出码 \(exitCode)，重置失败。"
-            } else {
-                bannerMessage = "tccutil 退出码 \(exitCode)：\(detail)"
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let outcome = await self.permissionService.resetAccessibilityApproval()
+            self.refreshPermissionState()
+            switch outcome {
+            case .success:
+                self.bannerMessage = "已清空旧授权记录，请在系统设置里重新开启 PromptPanel.app。"
+            case .missingBundleIdentifier:
+                self.bannerMessage = "无法读取应用 Bundle ID，重置失败。"
+            case .launchFailed(let reason):
+                self.bannerMessage = "重置授权记录失败：\(reason)"
+            case .toolFailed(let exitCode, let output):
+                let detail = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                if detail.isEmpty {
+                    self.bannerMessage = "tccutil 退出码 \(exitCode)，重置失败。"
+                } else {
+                    self.bannerMessage = "tccutil 退出码 \(exitCode)：\(detail)"
+                }
             }
         }
     }
@@ -2021,12 +2048,27 @@ final class MainWindowViewModel: ObservableObject {
         autoCloudSyncPollTimer = timer
     }
 
+    private var hasActiveDirtyInlineDraft: Bool {
+        guard !inlineDraftEntryId.isEmpty,
+              let entry = entries.first(where: { $0.id == inlineDraftEntryId })
+                  ?? (try? entryRepository.fetchById(inlineDraftEntryId)) else {
+            return false
+        }
+        return hasUnsavedInlineChanges(for: entry)
+            || inlineAutoSaveState == .pending
+            || inlineAutoSaveState == .saving
+            || inlineAutoSaveState == .invalid
+    }
+
     func triggerOpportunisticCloudSyncIfNeeded(force: Bool = false, minIntervalSeconds: TimeInterval = 18) {
         guard cloudSyncEnabled,
               !isApplyingCloudSyncChanges,
               !isCloudSyncInFlight,
               activeMaintenanceTask == nil,
               let cloudSyncService else {
+            return
+        }
+        if !force, hasActiveDirtyInlineDraft {
             return
         }
         let endpoint = cloudSyncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2053,7 +2095,12 @@ final class MainWindowViewModel: ObservableObject {
                 guard let self, !Task.isCancelled else { return }
                 self.cloudSyncConnectionHealthy = true
                 self.refreshCloudSyncState()
-                if summary.entriesCreated > 0 || summary.entriesUpdated > 0 || summary.projectsCreated > 0 || summary.projectsUpdated > 0 || summary.totalProtectedCount > 0 {
+                if summary.entriesCreated > 0
+                    || summary.entriesUpdated > 0
+                    || summary.projectsCreated > 0
+                    || summary.projectsUpdated > 0
+                    || summary.conflictsPreservedInVersions > 0
+                    || summary.totalProtectedCount > 0 {
                     self.isApplyingCloudSyncChanges = true
                     defer { self.isApplyingCloudSyncChanges = false }
                     self.notifyProjectsChanged()

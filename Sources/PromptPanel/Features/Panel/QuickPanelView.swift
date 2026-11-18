@@ -721,11 +721,16 @@ struct QuickPanelView: View {
                             if viewModel.isShowingGlobalFallback {
                                 globalFallbackHeader
                             }
-                            ForEach(Array(viewModel.entries.enumerated()), id: \.element.id) { index, entry in
+                            let selectedEntryId = viewModel.selectedEntry?.id
+                            let indexById = Dictionary(
+                                uniqueKeysWithValues: viewModel.entries.enumerated().map { ($1.id, $0) }
+                            )
+                            ForEach(viewModel.entries) { entry in
+                                let index = indexById[entry.id] ?? 0
                                 PanelRow(
                                     entry: entry,
                                     index: index,
-                                    isSelected: index == viewModel.selectedIndex,
+                                    isSelected: entry.id == selectedEntryId,
                                     isHoverEnabled: hoverEnabled,
                                     showNumber: showsShortcutNumbers,
                                     scopeBadgeText: scopeBadgeText(for: entry),

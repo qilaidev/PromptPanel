@@ -14,6 +14,7 @@ final class PanelService {
     private var currentAppearance: NSAppearance?
     private var panelDelegate: PanelDelegate?
     private var targetApplication: NSRunningApplication?
+    private var openedOverOwnApp = false
     private var activationObserver: NSObjectProtocol?
     private var localKeyMonitor: Any?
     private var deactivateCloseGraceDeadline: Date?
@@ -76,7 +77,14 @@ final class PanelService {
             return
         }
 
-        updateTargetApplicationIfNeeded(NSWorkspace.shared.frontmostApplication)
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        if frontmost?.bundleIdentifier == Bundle.main.bundleIdentifier {
+            openedOverOwnApp = true
+            targetApplication = nil
+        } else {
+            openedOverOwnApp = false
+            updateTargetApplicationIfNeeded(frontmost)
+        }
 
         onWillShow?()
         deactivateCloseGraceDeadline = Date().addingTimeInterval(
@@ -108,7 +116,15 @@ final class PanelService {
         if panelOpenTracker?.currentTrace?.searchFieldFocusedAt == nil {
             panelOpenTracker?.cancelCurrentTrace(reason: "panel_hidden_before_focus")
         }
-        reactivateTargetApplication()
+        if openedOverOwnApp {
+            openedOverOwnApp = false
+            targetApplication = nil
+            if appState.isMainWindowVisible {
+                NSApp.activate(ignoringOtherApps: true)
+            }
+        } else {
+            reactivateTargetApplication()
+        }
         applyActivationPolicyForCurrentVisibility()
         PPLogger.panel.info("Panel hidden")
     }
@@ -174,7 +190,7 @@ final class PanelService {
         let windowSize = Constants.panelWindowContentSize(for: appState.panelContentSize)
         let panel = QuickPanelWindow(
             contentRect: NSRect(origin: .zero, size: windowSize),
-            styleMask: [.resizable],
+            styleMask: [.resizable, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
@@ -325,7 +341,9 @@ final class PanelService {
     }
 
     private func positionPanelForPresentation(_ panel: NSPanel) {
-        let screen = screenForPanelPlacement(panelSize: panel.frame.size)
+        guard let screen = screenForPanelPlacement(panelSize: panel.frame.size) else {
+            return
+        }
         let screenFrame = screen.visibleFrame
         let panelSize = fittedPanelSize(for: screenFrame)
         let origin = resolvedPanelOrigin(panelSize: panelSize, screenFrame: screenFrame)
@@ -357,12 +375,17 @@ final class PanelService {
         body()
     }
 
-    private func screenForPanelPlacement(panelSize: NSSize) -> NSScreen {
-        if let storedOrigin = appState.panelWindowOrigin,
-           let screen = NSScreen.screens.first(where: { $0.visibleFrame.intersects(NSRect(origin: storedOrigin, size: panelSize)) }) {
-            return screen
+    private func screenForPanelPlacement(panelSize: NSSize) -> NSScreen? {
+        if let storedOrigin = appState.panelWindowOrigin {
+            if let screen = NSScreen.screens.first(where: { $0.visibleFrame.intersects(NSRect(origin: storedOrigin, size: panelSize)) }) {
+                return screen
+            }
+            // Stored origin belonged to a disconnected monitor; clear it so the panel re-centers cleanly.
+            appState.panelWindowOrigin = nil
         }
-        return NSScreen.main ?? NSScreen.screens.first!
+        return NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) })
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
     }
 
     private func resolvedPanelOrigin(panelSize: NSSize, screenFrame: NSRect) -> NSPoint {
@@ -381,7 +404,7 @@ final class PanelService {
             panel.level = .floating
             panel.isFloatingPanel = true
             panel.hidesOnDeactivate = false
-            panel.collectionBehavior = [.transient, .ignoresCycle, .moveToActiveSpace, .fullScreenAuxiliary]
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
         }
     }
 
@@ -435,8 +458,9 @@ final class PanelService {
                 return
             }
 
+            let isNonActivating = panel.styleMask.contains(.nonactivatingPanel) && !appState.isMainWindowVisible
             let snapshot = PanelActivationSnapshot(
-                appIsActive: NSApp.isActive,
+                appIsActive: isNonActivating ? true : NSApp.isActive,
                 panelIsVisible: panel.isVisible,
                 panelIsKey: panel.isKeyWindow
             )
@@ -467,13 +491,18 @@ final class PanelService {
     }
 
     private func activatePromptPanelApplication() {
+        guard appState.isMainWindowVisible || openedOverOwnApp else {
+            return
+        }
         NSApp.activate(ignoringOtherApps: true)
         _ = NSRunningApplication.current.activate(options: [])
     }
 
     private func bringPanelToFront(_ panel: NSPanel) {
         panel.makeKeyAndOrderFront(nil)
-        panel.makeMain()
+        if appState.isMainWindowVisible || openedOverOwnApp {
+            panel.makeMain()
+        }
         panel.orderFrontRegardless()
     }
 
@@ -495,7 +524,7 @@ final class PanelService {
         isPanelVisible: Bool,
         isMainWindowVisible: Bool
     ) -> NSApplication.ActivationPolicy {
-        (isPanelVisible || isMainWindowVisible) ? .regular : .accessory
+        isMainWindowVisible ? .regular : .accessory
     }
 
     private func applyActivationPolicyForCurrentVisibility() {

@@ -22,23 +22,31 @@ final class PasteService: PasteDispatching {
             return .accessibilityNotGranted
         }
 
+        guard let eventSource = CGEventSource(stateID: .hidSystemState) else {
+            PPLogger.paste.error("Failed to create HID event source")
+            return .eventCreationFailed
+        }
+
         // Create a Cmd+V key down event
-        guard let keyDownEvent = CGEvent(keyboardEventSource: nil, virtualKey: 0x09, keyDown: true) else {
+        guard let keyDownEvent = CGEvent(keyboardEventSource: eventSource, virtualKey: 0x09, keyDown: true) else {
             PPLogger.paste.error("Failed to create key down event")
             return .eventCreationFailed
         }
         keyDownEvent.flags = .maskCommand
 
         // Create a Cmd+V key up event
-        guard let keyUpEvent = CGEvent(keyboardEventSource: nil, virtualKey: 0x09, keyDown: false) else {
+        guard let keyUpEvent = CGEvent(keyboardEventSource: eventSource, virtualKey: 0x09, keyDown: false) else {
             PPLogger.paste.error("Failed to create key up event")
             return .eventCreationFailed
         }
         keyUpEvent.flags = .maskCommand
 
-        // Post events to the system
+        // Post keyDown immediately, then keyUp after ~10ms so Electron/Chromium/terminal
+        // apps reliably register the synthetic Cmd+V chord.
         keyDownEvent.post(tap: .cghidEventTap)
-        keyUpEvent.post(tap: .cghidEventTap)
+        DispatchQueue.global(qos: .userInteractive).asyncAfter(deadline: .now() + .milliseconds(10)) {
+            keyUpEvent.post(tap: .cghidEventTap)
+        }
 
         PPLogger.paste.debug("Auto-paste Cmd+V events dispatched")
         return .dispatched

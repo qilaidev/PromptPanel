@@ -131,7 +131,9 @@ final class QuickPanelViewModel: ObservableObject {
             if isScopeDropdownOpen {
                 isScopeDropdownOpen = false
             }
-            scheduleEntriesRefresh(delayMs: Constants.panelSearchDebounceMs, reason: .scopeChanged)
+            let trimmedCount = query.trimmingCharacters(in: .whitespacesAndNewlines).count
+            let debounceMs = (1...2).contains(trimmedCount) ? 45 : Constants.panelSearchDebounceMs
+            scheduleEntriesRefresh(delayMs: debounceMs, reason: .scopeChanged)
         }
     }
     @Published var activeKindFilter: KindFilter = .all {
@@ -255,9 +257,6 @@ final class QuickPanelViewModel: ObservableObject {
     }
 
     var availableScopeIds: [String] {
-        if projects.isEmpty {
-            loadProjects(preserveAllProjectsScope: true)
-        }
         let inboxIds = projects.filter { $0.groupKind == .inbox }.map(\.id)
         let categoryIds = projects.filter { $0.groupKind == .category }.map(\.id)
         let projectIds = projects.filter { $0.groupKind == .project }.map(\.id)
@@ -295,6 +294,9 @@ final class QuickPanelViewModel: ObservableObject {
 
     func prepareForPresentation() {
         permissionService.refresh()
+        if projects.isEmpty {
+            loadProjects(preserveAllProjectsScope: true)
+        }
         clearTransientStatus(reapplyBase: false)
         applyBaseStatus()
         if !query.isEmpty {
@@ -859,6 +861,20 @@ final class QuickPanelViewModel: ObservableObject {
         return entries.filter { filter.matches($0) }
     }
 
+    private nonisolated static func entriesMetadataMatches(_ lhs: [Entry], _ rhs: [Entry]) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        for (a, b) in zip(lhs, rhs) {
+            if a.id != b.id
+                || a.updatedAt != b.updatedAt
+                || a.useCount != b.useCount
+                || a.isPinned != b.isPinned
+                || a.isCompleted != b.isCompleted {
+                return false
+            }
+        }
+        return true
+    }
+
     private func scheduleEntriesRefresh(delayMs: Int, reason: EntriesRefreshReason) {
         pendingSearchWorkItem?.cancel()
         pendingSearchWorkItem = nil
@@ -944,11 +960,11 @@ final class QuickPanelViewModel: ObservableObject {
                             self.isShowingGlobalFallback = isGlobalFallback
                         }
                         let previousSelectionId = self.selectedEntry?.id
-                        if self.unfilteredEntries != sortedEntries {
+                        if !Self.entriesMetadataMatches(self.unfilteredEntries, sortedEntries) {
                             self.unfilteredEntries = sortedEntries
                         }
                         let visibleEntries = Self.filterEntries(sortedEntries, by: self.activeKindFilter)
-                        if self.entries != visibleEntries {
+                        if !Self.entriesMetadataMatches(self.entries, visibleEntries) {
                             self.entries = visibleEntries
                         }
                         if visibleEntries.isEmpty || reason == .scopeChanged {

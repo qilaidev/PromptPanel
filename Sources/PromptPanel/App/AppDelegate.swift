@@ -250,6 +250,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         mainWindowViewModel?.commitPendingInlineChangesIfNeeded()
         mainWindowViewModel?.cancelPendingBackgroundTasks()
+        if let mainWindowKeyMonitor {
+            NSEvent.removeMonitor(mainWindowKeyMonitor)
+            self.mainWindowKeyMonitor = nil
+        }
         hotkeyService?.stop()
         flushPendingPanelGeometryPersistence()
         storageMaintenanceService?.prepareForTermination()
@@ -817,8 +821,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.title = "\(Constants.appName) · 参考词库"
             window.contentMinSize = NSSize(width: 500, height: 520)
             if let mainFrame = mainWindow?.frame {
-                let targetOrigin = NSPoint(x: mainFrame.maxX + 16, y: mainFrame.minY + 40)
-                window.setFrameOrigin(targetOrigin)
+                let candidateOrigin = NSPoint(x: mainFrame.maxX + 16, y: mainFrame.minY + 40)
+                if let targetScreen = mainWindow?.screen
+                    ?? NSScreen.screens.first(where: { $0.frame.intersects(mainFrame) })
+                    ?? NSScreen.main
+                    ?? NSScreen.screens.first {
+                    let clamped = Constants.WindowPlacement.clampedOrigin(
+                        candidateOrigin,
+                        size: window.frame.size,
+                        screenFrame: targetScreen.visibleFrame
+                    )
+                    window.setFrameOrigin(clamped)
+                } else {
+                    window.setFrameOrigin(candidateOrigin)
+                }
             } else {
                 window.center()
             }
@@ -907,6 +923,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         mainWindow?.appearance = appearance
         referenceWindow?.appearance = appearance
         panelService?.setAppearance(appearance)
+        toastService?.setAppearance(appearance)
     }
 
     private func updatePanelPinnedState(_ isPinned: Bool) -> Bool {

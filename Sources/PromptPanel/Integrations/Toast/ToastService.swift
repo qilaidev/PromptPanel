@@ -4,11 +4,18 @@ import SwiftUI
 @MainActor
 final class ToastService {
     private var panel: NSPanel?
+    private var currentAppearance: NSAppearance?
     private var hostingView: NSHostingView<ToastView>?
     private var dismissWorkItem: DispatchWorkItem?
 
+    func setAppearance(_ appearance: NSAppearance?) {
+        currentAppearance = appearance
+        panel?.appearance = appearance
+    }
+
     func show(message: String, isSuccess: Bool) {
         let panel = panel ?? createPanel()
+        panel.appearance = currentAppearance
         let rootView = ToastView(message: message, isSuccess: isSuccess)
         if let hostingView {
             hostingView.rootView = rootView
@@ -18,7 +25,10 @@ final class ToastService {
             panel.contentView = newHostingView
         }
 
-        if let screen = NSScreen.main {
+        let targetScreen = NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) })
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        if let screen = targetScreen {
             let frame = screen.visibleFrame
             let size = panel.frame.size
             panel.setFrameOrigin(
@@ -54,6 +64,7 @@ final class ToastService {
         panel.isOpaque = false
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle]
+        panel.appearance = currentAppearance
         self.panel = panel
         return panel
     }

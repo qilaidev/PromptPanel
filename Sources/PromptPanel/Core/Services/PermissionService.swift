@@ -61,43 +61,52 @@ final class PermissionService: ObservableObject, AccessibilityPermissionProvidin
     /// checked but `AXIsProcessTrusted()` keeps returning false. `tccutil reset`
     /// drops the entry entirely so the next request creates a clean grant.
     @discardableResult
-    func resetAccessibilityApproval() -> AccessibilityResetOutcome {
+    func resetAccessibilityApproval() async -> AccessibilityResetOutcome {
         guard let bundleIdentifier = Bundle.main.bundleIdentifier else {
             PPLogger.permission.error("resetAccessibilityApproval: missing bundle identifier")
             return .missingBundleIdentifier
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
-        process.arguments = ["reset", "Accessibility", bundleIdentifier]
+        let outcome = await Task.detached(priority: .userInitiated) { () -> AccessibilityResetOutcome in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
+            process.arguments = ["reset", "Accessibility", bundleIdentifier]
 
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
 
-        do {
-            try process.run()
-        } catch {
-            PPLogger.permission.error("tccutil launch failed: \(error.localizedDescription)")
-            return .launchFailed(error.localizedDescription)
-        }
+            do {
+                try process.run()
+            } catch {
+                return .launchFailed(error.localizedDescription)
+            }
 
-        // Drain the pipe before waiting: if the tool writes more than the pipe
-        // buffer (~64KB) it blocks on write, and waitUntilExit() would deadlock.
-        let outputData = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+            // Drain the pipe before waiting: if the tool writes more than the pipe
+            // buffer (~64KB) it blocks on write, and waitUntilExit() would deadlock.
+            let outputData = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
 
-        let output = String(data: outputData, encoding: .utf8) ?? ""
+            let output = String(data: outputData, encoding: .utf8) ?? ""
+            guard process.terminationStatus == 0 else {
+                return .toolFailed(exitCode: process.terminationStatus, output: output)
+            }
+            return .success
+        }.value
 
-        guard process.terminationStatus == 0 else {
+        switch outcome {
+        case .success:
+            PPLogger.permission.info("tccutil reset Accessibility \(bundleIdentifier): ok")
+            refresh()
+        case .missingBundleIdentifier:
+            break
+        case .launchFailed(let message):
+            PPLogger.permission.error("tccutil launch failed: \(message)")
+        case .toolFailed(let exitCode, let output):
             PPLogger.permission.error(
-                "tccutil reset Accessibility \(bundleIdentifier) failed (\(process.terminationStatus)): \(output)"
+                "tccutil reset Accessibility \(bundleIdentifier) failed (\(exitCode)): \(output)"
             )
-            return .toolFailed(exitCode: process.terminationStatus, output: output)
         }
-
-        PPLogger.permission.info("tccutil reset Accessibility \(bundleIdentifier): \(output.isEmpty ? "ok" : output)")
-        refresh()
-        return .success
+        return outcome
     }
 }

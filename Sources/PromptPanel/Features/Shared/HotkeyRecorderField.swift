@@ -128,9 +128,13 @@ final class HotkeyRecorderModel: ObservableObject {
     deinit {
         // `stopRecording` is main-actor isolated and deinit is not, so tear the monitor down
         // directly. Leaving a local monitor installed would keep swallowing key events for
-        // the rest of the session.
+        // the rest of the session, and leaving `KeyboardShortcuts.isEnabled` false would
+        // permanently disable the global hotkey.
         if let eventMonitor {
             NSEvent.removeMonitor(eventMonitor)
+            Task { @MainActor in
+                KeyboardShortcuts.isEnabled = true
+            }
         }
     }
 

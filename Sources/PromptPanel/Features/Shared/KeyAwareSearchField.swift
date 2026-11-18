@@ -78,7 +78,8 @@ struct KeyAwareSearchField: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: PromptSearchField, context: Context) {
-        if nsView.stringValue != text || nsView.currentEditor()?.string != text {
+        if (nsView.currentEditor() as? NSTextView)?.hasMarkedText() != true,
+           nsView.stringValue != text || nsView.currentEditor()?.string != text {
             nsView.setDisplayedText(text)
         }
 
@@ -258,10 +259,11 @@ struct KeyAwareSearchField: NSViewRepresentable {
             let window = field.window
             let hasEditor = field.currentEditor() != nil
             let firstResponderMatches = window?.firstResponder === field
-            let appIsActive = NSApp.isActive
+            let isNonActivatingPanel = window?.styleMask.contains(.nonactivatingPanel) == true
             let windowIsVisible = window?.isVisible ?? false
             let windowIsKey = window?.isKeyWindow ?? false
             let windowIsMain = window?.isMainWindow ?? false
+            let appIsActive = NSApp.isActive || (isNonActivatingPanel && windowIsKey)
             return PanelFocusResult(
                 token: token,
                 succeeded: PanelFocusResult.interactionReady(
@@ -286,14 +288,15 @@ struct KeyAwareSearchField: NSViewRepresentable {
                 return
             }
 
-            if NSApp.isActive == false {
+            let isNonActivatingPanel = window.styleMask.contains(.nonactivatingPanel)
+            if !isNonActivatingPanel, NSApp.isActive == false {
                 _ = NSRunningApplication.current.activate(options: [])
                 NSApp.activate(ignoringOtherApps: true)
             }
             if window.isKeyWindow == false {
                 window.makeKeyAndOrderFront(nil)
             }
-            if window.isMainWindow == false {
+            if !isNonActivatingPanel, window.isMainWindow == false {
                 window.makeMain()
             }
         }
@@ -391,13 +394,17 @@ final class PromptSearchField: NSSearchField {
     }
 
     func setDisplayedText(_ text: String) {
+        if (currentEditor() as? NSTextView)?.hasMarkedText() == true {
+            return
+        }
         stringValue = text
         currentEditor()?.string = text
         currentEditor()?.selectedRange = NSRange(location: (text as NSString).length, length: 0)
     }
 
     private func focusForImmediateTyping() {
-        if NSApp.isActive == false {
+        let isNonActivatingPanel = window?.styleMask.contains(.nonactivatingPanel) == true
+        if !isNonActivatingPanel, NSApp.isActive == false {
             _ = NSRunningApplication.current.activate(options: [])
             NSApp.activate(ignoringOtherApps: true)
         }
