@@ -31,7 +31,7 @@ Runs the local release-readiness checks for PromptPanel:
   2. validate documentation structure, search metadata, and sync guardrails
   3. build the Swift package
   4. run swift test
-  5. build a release .app and zip
+  5. build a release .app, zip, and dmg
   6. verify code signatures
   7. smoke-launch the built app with isolated data directories
   8. hand off the signed archive to notarization via scripts/notarize-app.sh when needed
@@ -198,13 +198,12 @@ fi
 mkdir -p "$OUTPUT_ROOT"
 
 log_info "Validating shell scripts"
-zsh -n "${REPO_ROOT}/scripts/build-app.sh"
-zsh -n "${REPO_ROOT}/scripts/launch-computer-use.sh"
-zsh -n "${REPO_ROOT}/scripts/check-docs.sh"
-zsh -n "${REPO_ROOT}/scripts/notarize-app.sh"
-zsh -n "${REPO_ROOT}/scripts/generate-appcast.sh"
-zsh -n "${REPO_ROOT}/scripts/restore-backup.sh"
-zsh -n "${REPO_ROOT}/scripts/release-readiness.sh"
+for script_path in "${REPO_ROOT}"/scripts/*.sh; do
+    zsh -n "$script_path"
+done
+if [[ -f "${REPO_ROOT}/mobile/build-android.sh" ]]; then
+    zsh -n "${REPO_ROOT}/mobile/build-android.sh"
+fi
 
 log_info "Validating documentation consistency"
 "${REPO_ROOT}/scripts/check-docs.sh"
@@ -214,12 +213,10 @@ if xcrun --find xctest >/dev/null 2>&1; then
     TEST_RUNNER_AVAILABLE=1
 elif activate_full_xcode_if_available; then
     TEST_RUNNER_AVAILABLE=1
-else
-    if [[ $ALLOW_BUILD_ONLY_TESTS -eq 1 ]]; then
-        log_warn "xctest is unavailable on this machine; continuing in build-only test validation mode because --allow-build-only-tests was set."
-    else
-        fail "Real test execution requires xctest. Install/select a full Xcode toolchain, or rerun with --allow-build-only-tests to accept build-only validation."
-    fi
+fi
+
+if [[ $PUBLIC_DISTRIBUTION -eq 1 && $TEST_RUNNER_AVAILABLE -eq 0 ]]; then
+    fail "Public distribution precheck failed because xctest is unavailable on this machine."
 fi
 
 log_info "Building Swift package"
@@ -229,26 +226,39 @@ if [[ $TEST_RUNNER_AVAILABLE -eq 1 ]]; then
     log_info "Running swift test"
     swift test --package-path "$PACKAGE_ROOT"
 else
-    log_info "Running swift test in build-only validation mode + C entrypoint execution"
-    swift build --package-path "$PACKAGE_ROOT" --build-tests
-    TEST_BINARY_CANDIDATE="$(find "${PACKAGE_ROOT}/.build" -type f -name 'PromptPanelTests' -path '*/Contents/MacOS/PromptPanelTests' | head -n 1 || true)"
-    TESTING_INTEROP_LIB_DIR="$(dirname "$(find /Library/Developer/CommandLineTools -name 'lib_TestingInterop.dylib' 2>/dev/null | head -n 1 || true)" 2>/dev/null || true)"
-    if [[ -n "$TEST_BINARY_CANDIDATE" && -f "$TEST_BINARY_CANDIDATE" ]] && command -v python3 >/dev/null 2>&1; then
-        log_info "Executing CoreTestSuite via run_promptpanel_core_tests ($TEST_BINARY_CANDIDATE)"
-        DYLD_FRAMEWORK_PATH="/Library/Developer/CommandLineTools/Library/Developer/Frameworks" \
-        DYLD_LIBRARY_PATH="${TESTING_INTEROP_LIB_DIR}" \
-        TEST_BIN="$TEST_BINARY_CANDIDATE" \
-        python3 - <<'PY' || fail "CoreTestSuite execution failed"
+    SWIFT_TESTING_DEFINE="PROMPTPANEL""_SWIFT_TESTING"
+    log_info "xctest is unavailable; attempting Swift Testing via swift test (${SWIFT_TESTING_DEFINE})"
+    SWIFT_TESTING_OUTPUT=""
+    if SWIFT_TESTING_OUTPUT="$(swift test --package-path "$PACKAGE_ROOT" --enable-swift-testing --disable-xctest -Xswiftc "-D${SWIFT_TESTING_DEFINE}" 2>&1)"; then
+        printf '%s\n' "$SWIFT_TESTING_OUTPUT"
+        if grep -Eq 'Test run with [1-9][0-9]* tests? in [1-9][0-9]* suites? passed' <<<"$SWIFT_TESTING_OUTPUT"; then
+            log_info "Swift Testing passed via swift test"
+        else
+            fail "swift test succeeded but ran 0 Swift Testing tests."
+        fi
+    elif [[ $ALLOW_BUILD_ONLY_TESTS -eq 1 ]]; then
+        printf '%s\n' "$SWIFT_TESTING_OUTPUT" >&2
+        log_warn "swift test with Swift Testing failed and xctest is unavailable; continuing in build-only test validation mode because --allow-build-only-tests was set."
+        log_info "Running swift test in build-only validation mode + C entrypoint execution"
+        swift build --package-path "$PACKAGE_ROOT" --build-tests
+        TEST_BINARY_CANDIDATE="$(find "${PACKAGE_ROOT}/.build" -type f -name 'PromptPanelTests' -path '*/Contents/MacOS/PromptPanelTests' | head -n 1 || true)"
+        TESTING_INTEROP_LIB_DIR="$(dirname "$(find /Library/Developer/CommandLineTools -name 'lib_TestingInterop.dylib' 2>/dev/null | head -n 1 || true)" 2>/dev/null || true)"
+        if [[ -n "$TEST_BINARY_CANDIDATE" && -f "$TEST_BINARY_CANDIDATE" ]] && command -v python3 >/dev/null 2>&1; then
+            log_info "Executing CoreTestSuite via run_promptpanel_core_tests ($TEST_BINARY_CANDIDATE)"
+            DYLD_FRAMEWORK_PATH="/Library/Developer/CommandLineTools/Library/Developer/Frameworks" \
+            DYLD_LIBRARY_PATH="${TESTING_INTEROP_LIB_DIR}" \
+            TEST_BIN="$TEST_BINARY_CANDIDATE" \
+            python3 - <<'PY' || fail "CoreTestSuite execution failed"
 import ctypes, os, sys
 lib = ctypes.CDLL(os.environ["TEST_BIN"])
 lib.run_promptpanel_core_tests.restype = ctypes.c_int32
 sys.exit(0 if lib.run_promptpanel_core_tests() == 0 else 1)
 PY
+        fi
+    else
+        printf '%s\n' "$SWIFT_TESTING_OUTPUT" >&2
+        fail "Real test execution failed (xctest unavailable and Swift Testing via swift test did not pass). Install/select a full Xcode toolchain, or rerun with --allow-build-only-tests to accept build-only validation."
     fi
-fi
-
-if [[ $PUBLIC_DISTRIBUTION -eq 1 && $TEST_RUNNER_AVAILABLE -eq 0 ]]; then
-    fail "Public distribution precheck failed because xctest is unavailable on this machine."
 fi
 
 # Public distribution always needs a monotonically increasing CFBundleVersion so Sparkle (when
@@ -296,7 +306,9 @@ APP_PATH="${OUTPUT_ROOT}/PromptPanel.app"
 SHORT_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${APP_PATH}/Contents/Info.plist")"
 BUILD_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${APP_PATH}/Contents/Info.plist")"
 ZIP_PATH="${OUTPUT_ROOT}/PromptPanel-${SHORT_VERSION}+${BUILD_VERSION}-macos.zip"
+DMG_PATH="${OUTPUT_ROOT}/PromptPanel-${SHORT_VERSION}+${BUILD_VERSION}-macos.dmg"
 [[ -f "$ZIP_PATH" ]] || fail "Expected built zip archive not found: $ZIP_PATH"
+[[ -f "$DMG_PATH" ]] || fail "Expected built dmg archive not found: $DMG_PATH"
 
 # README/FAQ promise an Apple Silicon + Intel universal binary. A plain `swift build` only
 # ever emits the host slice, so without this assertion an arm64-only archive could ship and

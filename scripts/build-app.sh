@@ -10,6 +10,7 @@ CONFIGURATION="release"
 OUTPUT_ROOT="${REPO_ROOT}/dist"
 SIGN_IDENTITY="none"
 ARCHIVE=1
+SKIP_DMG=0
 SHORT_VERSION_OVERRIDE=""
 BUILD_VERSION_OVERRIDE=""
 SPARKLE_FEED_URL=""
@@ -26,9 +27,10 @@ Options:
   --debug                 Build a debug app instead of release.
   --arch <mode>           universal (arm64 + x86_64, default for release) or
                           native (host architecture only, default for --debug).
-  --output-dir <path>     Output directory for the generated app and zip.
+  --output-dir <path>     Output directory for the generated app, zip, and dmg.
   --sign-identity <id>    codesign identity. Use "none" to skip signing.
-  --no-archive            Skip zip archive creation.
+  --no-archive            Skip zip and dmg archive creation.
+  --skip-dmg              Skip dmg creation when archiving.
   --short-version <ver>   Override CFBundleShortVersionString in the packaged app.
   --build-version <ver>   Override CFBundleVersion in the packaged app.
   --bundle-identifier <id>
@@ -61,6 +63,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-archive)
             ARCHIVE=0
+            shift
+            ;;
+        --skip-dmg)
+            SKIP_DMG=1
             shift
             ;;
         --short-version)
@@ -372,6 +378,22 @@ if [[ $ARCHIVE -eq 1 ]]; then
     rm -f "$ARCHIVE_PATH"
     ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ARCHIVE_PATH"
     echo "Archive created: ${ARCHIVE_PATH}"
+
+    if [[ $SKIP_DMG -eq 0 ]]; then
+        DMG_PATH="${OUTPUT_ROOT}/${APP_NAME}-${SHORT_VERSION}+${BUILD_VERSION}-macos.dmg"
+        DMG_STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/promptpanel-dmg.XXXXXX")"
+        trap 'rm -rf "$DMG_STAGE_DIR"' EXIT
+        cp -R "$APP_PATH" "${DMG_STAGE_DIR}/${APP_NAME}.app"
+        ln -s /Applications "${DMG_STAGE_DIR}/Applications"
+        rm -f "$DMG_PATH"
+        hdiutil create -volname "${APP_NAME}" -srcfolder "${DMG_STAGE_DIR}" -ov -format UDZO "${DMG_PATH}" >/dev/null
+        rm -rf "$DMG_STAGE_DIR"
+        trap - EXIT
+        if [[ "$SIGN_IDENTITY" != "none" ]]; then
+            codesign --force --sign "$SIGN_IDENTITY" --timestamp "$DMG_PATH"
+        fi
+        echo "DMG created: ${DMG_PATH}"
+    fi
 fi
 
 echo "App created: ${APP_PATH}"
