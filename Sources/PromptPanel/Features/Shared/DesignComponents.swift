@@ -113,6 +113,11 @@ struct HoverHighlightModifier: ViewModifier {
     let isEnabled: Bool
     private var _isHovered = SwiftUI.State(initialValue: false)
 
+    init(cornerRadius: CGFloat, isEnabled: Bool) {
+        self.cornerRadius = cornerRadius
+        self.isEnabled = isEnabled
+    }
+
     private var isHovered: Bool {
         get { _isHovered.wrappedValue }
         nonmutating set { _isHovered.wrappedValue = newValue }

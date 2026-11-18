@@ -1305,6 +1305,36 @@ private struct PanelRow: View {
 
     private var _isHovered = SwiftUI.State(initialValue: false)
 
+    init(
+        entry: Entry,
+        index: Int,
+        isSelected: Bool,
+        isHoverEnabled: Bool,
+        showNumber: Bool,
+        scopeBadgeText: String?,
+        isCompact: Bool,
+        availableWidth: CGFloat,
+        onTap: @escaping () -> Void,
+        onCopy: @escaping () -> Void,
+        onPreview: @escaping () -> Void,
+        onToggleComplete: @escaping () -> Void,
+        onTogglePin: @escaping () -> Void
+    ) {
+        self.entry = entry
+        self.index = index
+        self.isSelected = isSelected
+        self.isHoverEnabled = isHoverEnabled
+        self.showNumber = showNumber
+        self.scopeBadgeText = scopeBadgeText
+        self.isCompact = isCompact
+        self.availableWidth = availableWidth
+        self.onTap = onTap
+        self.onCopy = onCopy
+        self.onPreview = onPreview
+        self.onToggleComplete = onToggleComplete
+        self.onTogglePin = onTogglePin
+    }
+
     private var isHovered: Bool {
         get { _isHovered.wrappedValue }
         nonmutating set { _isHovered.wrappedValue = newValue }
@@ -1584,6 +1614,13 @@ private struct ScopeDropdownItemRow: View {
 
     private var _isHovered = SwiftUI.State(initialValue: false)
 
+    init(name: String, iconName: String, isActive: Bool, action: @escaping () -> Void) {
+        self.name = name
+        self.iconName = iconName
+        self.isActive = isActive
+        self.action = action
+    }
+
     private var isHovered: Bool {
         get { _isHovered.wrappedValue }
         nonmutating set { _isHovered.wrappedValue = newValue }
@@ -1640,6 +1677,20 @@ private struct KindFilterChipButton: View {
     let action: () -> Void
 
     private var _isHovered = SwiftUI.State(initialValue: false)
+
+    init(
+        filter: QuickPanelViewModel.KindFilter,
+        isActive: Bool,
+        isHoverEnabled: Bool,
+        count: Int,
+        action: @escaping () -> Void
+    ) {
+        self.filter = filter
+        self.isActive = isActive
+        self.isHoverEnabled = isHoverEnabled
+        self.count = count
+        self.action = action
+    }
 
     private var isHovered: Bool {
         get { _isHovered.wrappedValue }
