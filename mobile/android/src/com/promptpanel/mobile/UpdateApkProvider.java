@@ -3,9 +3,12 @@ package com.promptpanel.mobile;
 import android.content.ContentProvider;
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
+import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
 
@@ -17,11 +20,53 @@ public class UpdateApkProvider extends ContentProvider {
     private static final String APK_MIME = "application/vnd.android.package-archive";
 
     public static File getStagedApkFile(Context context) {
-        File dir = new File(context.getCacheDir(), "updates");
+        File dir = new File(context.getFilesDir(), "updates");
         if (!dir.exists()) {
             dir.mkdirs();
         }
         return new File(dir, "PromptPanel-latest.apk");
+    }
+
+    public static void pruneStagedApks(Context context, long currentVersionCode) {
+        try {
+            File legacyCacheDir = new File(context.getCacheDir(), "updates");
+            if (legacyCacheDir.exists() && legacyCacheDir.isDirectory()) {
+                File[] legacyFiles = legacyCacheDir.listFiles();
+                if (legacyFiles != null) {
+                    for (File f : legacyFiles) {
+                        f.delete();
+                    }
+                }
+                legacyCacheDir.delete();
+            }
+
+            File dir = new File(context.getFilesDir(), "updates");
+            if (!dir.exists() || !dir.isDirectory()) {
+                return;
+            }
+            File[] files = dir.listFiles();
+            if (files == null) {
+                return;
+            }
+            PackageManager pm = context.getPackageManager();
+            for (File f : files) {
+                String name = f.getName();
+                if (name.endsWith(".part") || !name.equals("PromptPanel-latest.apk")) {
+                    f.delete();
+                    continue;
+                }
+                if (currentVersionCode > 0 && f.isFile()) {
+                    PackageInfo info = pm.getPackageArchiveInfo(f.getAbsolutePath(), 0);
+                    if (info != null) {
+                        long stagedCode = Build.VERSION.SDK_INT >= 28 ? info.getLongVersionCode() : info.versionCode;
+                        if (stagedCode <= currentVersionCode) {
+                            f.delete();
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     @Override

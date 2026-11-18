@@ -12,6 +12,7 @@ import android.content.res.Configuration;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.graphics.Color;
+import android.graphics.Insets;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -19,15 +20,20 @@ import android.provider.Settings;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
+import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.Window;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
@@ -46,7 +52,12 @@ import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.security.SecureRandom;
+import java.util.Iterator;
 import java.util.Locale;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
@@ -93,6 +104,20 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
     private volatile long lastSnapshotTimeMs = 0L;
     private volatile boolean isUpdateCheckRunning = false;
     private volatile boolean pendingInstallAfterUnknownSources = false;
+    private volatile boolean isActivityDestroyed = false;
+
+    private final ExecutorService httpExecutor = Executors.newFixedThreadPool(3);
+    private final ExecutorService dbWriteExecutor = Executors.newSingleThreadExecutor();
+    private final Object storeWriteLock = new Object();
+    private String pendingStoreJson = null;
+    private boolean isStoreWriteScheduled = false;
+
+    private OnBackInvokedCallback backInvokedCallback = null;
+    private boolean isBackCallbackRegistered = false;
+
+    private volatile int safeTopDp = 0;
+    private volatile int safeBottomDp = 0;
+    private volatile int imeBottomDp = 0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -100,7 +125,13 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
 
         initSqliteStorageAndMigrate();
         migrateLegacyPlaintextToken();
+        if (Build.VERSION.SDK_INT >= 30) {
+            getWindow().setDecorFitsSystemWindows(false);
+        }
         applySystemBarAppearance(getThemeMode());
+
+        final long currentVersionCode = getAppVersionCode();
+        dbWriteExecutor.execute(new PruneUpdatesTask(this, currentVersionCode));
 
         webView = new WebView(this);
         WebSettings settings = webView.getSettings();
@@ -123,8 +154,54 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
         webView.addJavascriptInterface(this, "AndroidBridge");
         webView.setOnKeyListener(this);
 
+        if (Build.VERSION.SDK_INT >= 33) {
+            backInvokedCallback = new BackInvokedHandler(this);
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT_WATCH) {
+            webView.setOnApplyWindowInsetsListener(new InsetsApplyListener(this));
+        }
+
         setContentView(webView);
         webView.loadUrl("file:///android_asset/index.html");
+    }
+
+    private void injectSafeAreaInsetsToWebView() {
+        if (webView == null || isActivityDestroyed) return;
+        final String js = "try{var r=document.documentElement.style;"
+                + "r.setProperty('--safe-top','" + safeTopDp + "px');"
+                + "r.setProperty('--safe-bottom','" + safeBottomDp + "px');"
+                + "r.setProperty('--ime-bottom','" + imeBottomDp + "px');"
+                + "}catch(e){}";
+        webView.post(new EvalJsTask(this, js));
+    }
+
+    void evalJsOnUiThread(String js) {
+        if (webView != null && !isActivityDestroyed && js != null) {
+            webView.evaluateJavascript(js, null);
+        }
+    }
+
+    void handleInsetsChanged(WindowInsets insets) {
+        float density = getResources().getDisplayMetrics().density;
+        if (density <= 0f) density = 1f;
+        int topPx = 0;
+        int bottomPx = 0;
+        int imePx = 0;
+        if (Build.VERSION.SDK_INT >= 30) {
+            Insets sysBars = insets.getInsets(WindowInsets.Type.systemBars());
+            Insets imeInsets = insets.getInsets(WindowInsets.Type.ime());
+            topPx = sysBars.top;
+            bottomPx = sysBars.bottom;
+            imePx = Math.max(0, imeInsets.bottom - sysBars.bottom);
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            topPx = insets.getSystemWindowInsetTop();
+            bottomPx = insets.getSystemWindowInsetBottom();
+        }
+        safeTopDp = Math.round(topPx / density);
+        safeBottomDp = Math.round(bottomPx / density);
+        imeBottomDp = Math.round(imePx / density);
+        injectSafeAreaInsetsToWebView();
     }
 
     boolean openQrImagePicker(ValueCallback<Uri[]> callback) {
@@ -169,15 +246,50 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
             pendingInstallAfterUnknownSources = false;
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || getPackageManager().canRequestPackageInstalls()) {
                 installDownloadedUpdate();
+            } else if (webView != null && !isActivityDestroyed) {
+                webView.evaluateJavascript("if(window.__onInstallPermissionDenied)window.__onInstallPermissionDenied();", null);
             }
         }
-        if (webView != null) {
+        injectSafeAreaInsetsToWebView();
+        if (webView != null && !isActivityDestroyed) {
             webView.evaluateJavascript("if(window.__onAppResume)window.__onAppResume();", null);
         }
     }
 
     @Override
+    protected void onPause() {
+        flushPendingStoreSync();
+        super.onPause();
+    }
+
+    @Override
+    protected void onStop() {
+        flushPendingStoreSync();
+        super.onStop();
+    }
+
+    @Override
     protected void onDestroy() {
+        isActivityDestroyed = true;
+        flushPendingStoreSync();
+        if (Build.VERSION.SDK_INT >= 33 && isBackCallbackRegistered && backInvokedCallback != null) {
+            try {
+                getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backInvokedCallback);
+            } catch (Exception ignored) {
+            }
+            isBackCallbackRegistered = false;
+        }
+        httpExecutor.shutdownNow();
+        dbWriteExecutor.shutdown();
+        if (webView != null) {
+            try {
+                webView.stopLoading();
+                webView.removeJavascriptInterface("AndroidBridge");
+                webView.destroy();
+            } catch (Exception ignored) {
+            }
+            webView = null;
+        }
         if (sqliteDb != null && sqliteDb.isOpen()) {
             sqliteDb.close();
         }
@@ -185,11 +297,40 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
     }
 
     @Override
+    @SuppressWarnings("deprecation")
+    public void onBackPressed() {
+        if (hasOpenModal && webView != null && !isActivityDestroyed) {
+            webView.evaluateJavascript("if(window.__handleBackPress)window.__handleBackPress();", null);
+            return;
+        }
+        super.onBackPressed();
+    }
+
+    private void syncBackInvokedCallback(boolean shouldIntercept) {
+        if (Build.VERSION.SDK_INT < 33 || backInvokedCallback == null || isActivityDestroyed) {
+            return;
+        }
+        try {
+            if (shouldIntercept && !isBackCallbackRegistered) {
+                getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                        OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                        backInvokedCallback
+                );
+                isBackCallbackRegistered = true;
+            } else if (!shouldIntercept && isBackCallbackRegistered) {
+                getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backInvokedCallback);
+                isBackCallbackRegistered = false;
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    @Override
     public boolean onKey(View v, int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_BACK
                 && event.getAction() == KeyEvent.ACTION_UP
                 && hasOpenModal) {
-            if (webView != null) {
+            if (webView != null && !isActivityDestroyed) {
                 webView.evaluateJavascript("if(window.__handleBackPress)window.__handleBackPress();", null);
             }
             return true;
@@ -459,6 +600,7 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
         }
     }
 
+    @SuppressWarnings("deprecation")
     private void applySystemBarAppearance(String themeMode) {
         Window window = getWindow();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -468,16 +610,27 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
                     & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
             boolean isNight = "dark".equals(themeMode) || (!"light".equals(themeMode) && sysNight);
 
-            window.setStatusBarColor(Color.parseColor(isNight ? "#17181C" : "#FFFFFF"));
-            window.setNavigationBarColor(Color.parseColor(isNight ? "#141518" : "#F3F4F7"));
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                int flags = window.getDecorView().getSystemUiVisibility();
-                if (isNight) {
-                    flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
-                } else {
-                    flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            if (Build.VERSION.SDK_INT >= 30) {
+                window.setStatusBarColor(Color.TRANSPARENT);
+                window.setNavigationBarColor(Color.TRANSPARENT);
+                WindowInsetsController controller = window.getInsetsController();
+                if (controller != null) {
+                    int lightMask = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                            | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+                    controller.setSystemBarsAppearance(isNight ? 0 : lightMask, lightMask);
                 }
-                window.getDecorView().setSystemUiVisibility(flags);
+            } else {
+                window.setStatusBarColor(Color.parseColor(isNight ? "#17181C" : "#FFFFFF"));
+                window.setNavigationBarColor(Color.parseColor(isNight ? "#141518" : "#F3F4F7"));
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    int flags = window.getDecorView().getSystemUiVisibility();
+                    if (isNight) {
+                        flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                    } else {
+                        flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                    }
+                    window.getDecorView().setSystemUiVisibility(flags);
+                }
             }
         }
     }
@@ -487,8 +640,14 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
     }
 
     @JavascriptInterface
-    public void setModalOpen(boolean open) {
+    public void setModalOpen(final boolean open) {
         this.hasOpenModal = open;
+        runOnUiThread(new SyncBackCallbackTask(this, open));
+    }
+
+    @JavascriptInterface
+    public String getSafeAreaInsets() {
+        return "{\"top\":" + safeTopDp + ",\"bottom\":" + safeBottomDp + ",\"ime\":" + imeBottomDp + "}";
     }
 
     @JavascriptInterface
@@ -501,11 +660,57 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
     }
 
     @JavascriptInterface
-    public synchronized void saveStore(String json) {
+    public void saveStore(String json) {
+        final String safeJson = json != null ? json : "";
+        cachedStoreJson = safeJson;
+        synchronized (storeWriteLock) {
+            pendingStoreJson = safeJson;
+            if (!isStoreWriteScheduled && !isActivityDestroyed) {
+                isStoreWriteScheduled = true;
+                dbWriteExecutor.execute(new DrainStoreWritesTask(this));
+            }
+        }
+    }
+
+    void drainPendingStoreWrites() {
+        while (true) {
+            final String nextJson;
+            synchronized (storeWriteLock) {
+                if (pendingStoreJson == null) {
+                    isStoreWriteScheduled = false;
+                    return;
+                }
+                nextJson = pendingStoreJson;
+                pendingStoreJson = null;
+            }
+            try {
+                synchronized (MainActivity.this) {
+                    writeSqliteStore(getDb(), nextJson, false);
+                }
+            } catch (final Exception e) {
+                Log.e("PromptPanel", "SQLite saveStore failed", e);
+                String errMsg = e.getMessage() != null ? e.getMessage() : e.toString();
+                runOnUiThread(new EvalJsTask(
+                        this,
+                        "if(window.__onStorageError)window.__onStorageError(" + JSONObject.quote(errMsg) + ");"
+                ));
+            }
+        }
+    }
+
+    private void flushPendingStoreSync() {
+        boolean hasPending;
+        synchronized (storeWriteLock) {
+            hasPending = pendingStoreJson != null || isStoreWriteScheduled;
+        }
+        if (!hasPending) {
+            return;
+        }
+        final CountDownLatch latch = new CountDownLatch(1);
         try {
-            writeSqliteStore(getDb(), json != null ? json : "", false);
+            dbWriteExecutor.execute(new FlushLatchTask(this, latch));
+            latch.await(1500, TimeUnit.MILLISECONDS);
         } catch (Exception ignored) {
-            prefs().edit().putString(KEY_LEGACY_STORE, json != null ? json : "").apply();
         }
     }
 
@@ -557,16 +762,29 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
         prefs().edit().putBoolean(KEY_AUTO_UPDATE, enabled).apply();
     }
 
-    @JavascriptInterface
-    public String getAppVersionInfo() {
+    private String getAppVersionName() {
         try {
             PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
-            int code = Build.VERSION.SDK_INT >= 28 ? (int) pi.getLongVersionCode() : pi.versionCode;
-            String name = pi.versionName != null ? pi.versionName : "1.7.4";
-            return name + "+" + code;
+            if (pi.versionName != null && !pi.versionName.isEmpty()) {
+                return pi.versionName;
+            }
         } catch (Exception ignored) {
-            return "1.7.4+15";
         }
+        return "0.0.0";
+    }
+
+    private int getAppVersionCode() {
+        try {
+            PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
+            return Build.VERSION.SDK_INT >= 28 ? (int) pi.getLongVersionCode() : pi.versionCode;
+        } catch (Exception ignored) {
+            return 0;
+        }
+    }
+
+    @JavascriptInterface
+    public String getAppVersionInfo() {
+        return getAppVersionName() + "+" + getAppVersionCode();
     }
 
     @JavascriptInterface
@@ -575,16 +793,8 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
             return;
         }
         isUpdateCheckRunning = true;
-        int code = 15;
-        String name = "1.7.4";
-        try {
-            PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
-            code = Build.VERSION.SDK_INT >= 28 ? (int) pi.getLongVersionCode() : pi.versionCode;
-            if (pi.versionName != null && !pi.versionName.isEmpty()) {
-                name = pi.versionName;
-            }
-        } catch (Exception ignored) {
-        }
+        int code = getAppVersionCode();
+        String name = getAppVersionName();
         Thread worker = new Thread(new UpdateDownloadTask(
                 this,
                 getEndpoint(),
@@ -668,11 +878,43 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
     }
 
     @JavascriptInterface
-    public void copyText(String label, String text) {
-        ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-        if (clipboard != null) {
-            ClipData clip = ClipData.newPlainText(label != null ? label : "PromptPanel", text != null ? text : "");
-            clipboard.setPrimaryClip(clip);
+    public void copyText(final String label, final String text) {
+        runOnUiThread(new CopyTextTask(this, label, text));
+    }
+
+    void performCopyTextOnUi(String label, String text) {
+        try {
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            if (clipboard != null) {
+                ClipData clip = ClipData.newPlainText(label != null ? label : "PromptPanel", text != null ? text : "");
+                clipboard.setPrimaryClip(clip);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    @JavascriptInterface
+    public boolean shareText(final String title, final String text) {
+        if (text == null || text.isEmpty()) {
+            return false;
+        }
+        runOnUiThread(new ShareTextTask(this, title, text));
+        return true;
+    }
+
+    void performShareTextOnUi(String title, String text) {
+        try {
+            Intent sendIntent = new Intent(Intent.ACTION_SEND);
+            sendIntent.setType("text/plain");
+            sendIntent.putExtra(Intent.EXTRA_TEXT, text);
+            if (title != null && !title.trim().isEmpty()) {
+                sendIntent.putExtra(Intent.EXTRA_SUBJECT, title.trim());
+            }
+            String chooserTitle = (title != null && !title.trim().isEmpty()) ? title.trim() : "分享内容";
+            Intent chooser = Intent.createChooser(sendIntent, chooserTitle);
+            chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(chooser);
+        } catch (Exception ignored) {
         }
     }
 
@@ -837,9 +1079,123 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
     }
 
     @JavascriptInterface
+    public void httpRequestAsync(
+            final String reqId,
+            final String method,
+            final String url,
+            final String headersJson,
+            final String body
+    ) {
+        if (isActivityDestroyed) {
+            return;
+        }
+        httpExecutor.execute(new HttpAsyncTask(this, reqId, method, url, headersJson, body));
+    }
+
+    void executeHttpAsync(String reqId, String method, String url, String headersJson, String body) {
+        String bearerToken = "";
+        JSONObject extraHeaders = null;
+        if (headersJson != null && !headersJson.trim().isEmpty()) {
+            String trimmed = headersJson.trim();
+            if (trimmed.startsWith("{")) {
+                try {
+                    extraHeaders = new JSONObject(trimmed);
+                    String auth = extraHeaders.optString("Authorization", "");
+                    if (auth.isEmpty()) {
+                        auth = extraHeaders.optString("authorization", "");
+                    }
+                    if (auth.regionMatches(true, 0, "Bearer ", 0, 7)) {
+                        bearerToken = auth.substring(7).trim();
+                    } else if (!auth.isEmpty()) {
+                        bearerToken = auth.trim();
+                    }
+                } catch (Exception ignored) {
+                }
+            } else {
+                bearerToken = trimmed;
+            }
+        }
+
+        String rawResult = executeHttpWithRetry(method, url, bearerToken, extraHeaders, body);
+        int nl = rawResult.indexOf('\n');
+        int status = 0;
+        String respBody = rawResult;
+        if (nl >= 0) {
+            try {
+                status = Integer.parseInt(rawResult.substring(0, nl).trim());
+            } catch (Exception ignored) {
+            }
+            respBody = rawResult.substring(nl + 1);
+        }
+
+        final JSONObject out = new JSONObject();
+        try {
+            out.put("reqId", reqId != null ? reqId : "");
+            out.put("status", status);
+            out.put("ok", status >= 200 && status < 300);
+            out.put("body", respBody);
+        } catch (Exception ignored) {
+        }
+        final String payload = out.toString();
+        runOnUiThread(new EvalJsTask(
+                this,
+                "window.__resolveNativeHttp && window.__resolveNativeHttp(" + JSONObject.quote(payload) + ")"
+        ));
+    }
+
+    @JavascriptInterface
     public String httpRequest(String method, String urlStr, String bearerToken, String bodyJson) {
+        return executeHttpWithRetry(method, urlStr, bearerToken, null, bodyJson);
+    }
+
+    private static boolean isRetryableStatus(int code) {
+        return code == 429 || code == 502 || code == 503 || code == 504;
+    }
+
+    private String executeHttpWithRetry(
+            String method,
+            String urlStr,
+            String bearerToken,
+            JSONObject extraHeaders,
+            String bodyJson
+    ) {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            HttpAttemptResult res = executeHttpOnce(method, urlStr, bearerToken, extraHeaders, bodyJson);
+            if (attempt == 0 && res.retryable) {
+                try {
+                    Thread.sleep(450L + secureRandom.nextInt(300));
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return res.code + "\n" + res.body;
+                }
+                continue;
+            }
+            return res.code + "\n" + res.body;
+        }
+        return "0\n未知网络错误";
+    }
+
+    private static final class HttpAttemptResult {
+        final int code;
+        final String body;
+        final boolean retryable;
+
+        HttpAttemptResult(int code, String body, boolean retryable) {
+            this.code = code;
+            this.body = body;
+            this.retryable = retryable;
+        }
+    }
+
+    private HttpAttemptResult executeHttpOnce(
+            String method,
+            String urlStr,
+            String bearerToken,
+            JSONObject extraHeaders,
+            String bodyJson
+    ) {
         if (urlStr == null || urlStr.trim().isEmpty()) {
-            return "400\n请先填写同步服务地址";
+            return new HttpAttemptResult(400, "请先填写同步服务地址", false);
         }
         HttpURLConnection conn = null;
         try {
@@ -848,10 +1204,10 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
                     ? currentUrl.getProtocol().toLowerCase(Locale.US)
                     : "";
             if (!"https".equals(initialProtocol) && !"http".equals(initialProtocol)) {
-                return "400\n不支持的协议：" + initialProtocol;
+                return new HttpAttemptResult(400, "不支持的协议：" + initialProtocol, false);
             }
             if (!isAllowedRemoteUrl(currentUrl)) {
-                return "400\n为保护同步数据与 Token 安全，远程同步仅允许 https:// 地址（仅本机调试允许 localhost / 127.0.0.1）";
+                return new HttpAttemptResult(400, "为保护同步数据与 Token 安全，远程同步仅允许 https:// 地址（仅本机调试允许 localhost / 127.0.0.1）", false);
             }
 
             String cleanToken = bearerToken != null ? bearerToken.trim() : "";
@@ -872,7 +1228,20 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
                 conn.setUseCaches(false);
                 conn.setRequestProperty("Accept", "application/json");
                 conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-                conn.setRequestProperty("User-Agent", "PromptPanel-Android/1.7.4");
+                conn.setRequestProperty("User-Agent", "PromptPanel-Android/" + getAppVersionName());
+                if (extraHeaders != null) {
+                    Iterator<String> keys = extraHeaders.keys();
+                    while (keys.hasNext()) {
+                        String k = keys.next();
+                        if (k == null || k.equalsIgnoreCase("Authorization") || k.equalsIgnoreCase("Host")) {
+                            continue;
+                        }
+                        String v = extraHeaders.optString(k, "");
+                        if (!v.isEmpty()) {
+                            conn.setRequestProperty(k, v);
+                        }
+                    }
+                }
                 if (!cleanToken.isEmpty()) {
                     conn.setRequestProperty("Authorization", "Bearer " + cleanToken);
                 }
@@ -895,7 +1264,7 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
                     conn.disconnect();
                     conn = null;
                     if (location == null || location.isEmpty()) {
-                        return code + "\n重定向缺少目标地址";
+                        return new HttpAttemptResult(code, "重定向缺少目标地址", false);
                     }
                     URL nextUrl = new URL(currentUrl, location);
                     String nextProto = nextUrl.getProtocol() != null
@@ -903,7 +1272,7 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
                             : "";
                     if (("https".equals(initialProtocol) && !"https".equals(nextProto))
                             || !isAllowedRemoteUrl(nextUrl)) {
-                        return "400\n已拦截不安全的协议降级或明文 HTTP 重定向";
+                        return new HttpAttemptResult(400, "已拦截不安全的协议降级或明文 HTTP 重定向", false);
                     }
                     currentUrl = nextUrl;
                     redirects++;
@@ -930,15 +1299,175 @@ public class MainActivity extends Activity implements View.OnKeyListener, Runnab
                 if (code >= 200 && code < 300 && useWireCipher && !rawResp.isEmpty()) {
                     rawResp = openSyncEnvelopeIfNeeded(rawResp, cleanToken);
                 }
-                return code + "\n" + rawResp;
+                return new HttpAttemptResult(code, rawResp, isRetryableStatus(code));
             }
-            return "400\n重定向次数过多";
+            return new HttpAttemptResult(400, "重定向次数过多", false);
+        } catch (SocketTimeoutException ste) {
+            return new HttpAttemptResult(0, translateNetworkException(ste), true);
         } catch (Exception e) {
-            return "0\n" + translateNetworkException(e);
+            return new HttpAttemptResult(0, translateNetworkException(e), false);
         } finally {
             if (conn != null) {
                 conn.disconnect();
             }
+        }
+    }
+
+    private static final class PruneUpdatesTask implements Runnable {
+        private final MainActivity activity;
+        private final long versionCode;
+
+        PruneUpdatesTask(MainActivity activity, long versionCode) {
+            this.activity = activity;
+            this.versionCode = versionCode;
+        }
+
+        @Override
+        public void run() {
+            UpdateApkProvider.pruneStagedApks(activity, versionCode);
+        }
+    }
+
+    private static final class BackInvokedHandler implements OnBackInvokedCallback {
+        private final MainActivity activity;
+
+        BackInvokedHandler(MainActivity activity) {
+            this.activity = activity;
+        }
+
+        @Override
+        public void onBackInvoked() {
+            activity.evalJsOnUiThread("if(window.__handleBackPress)window.__handleBackPress();");
+        }
+    }
+
+    private static final class InsetsApplyListener implements View.OnApplyWindowInsetsListener {
+        private final MainActivity activity;
+
+        InsetsApplyListener(MainActivity activity) {
+            this.activity = activity;
+        }
+
+        @Override
+        public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
+            activity.handleInsetsChanged(insets);
+            return insets;
+        }
+    }
+
+    private static final class EvalJsTask implements Runnable {
+        private final MainActivity activity;
+        private final String js;
+
+        EvalJsTask(MainActivity activity, String js) {
+            this.activity = activity;
+            this.js = js;
+        }
+
+        @Override
+        public void run() {
+            activity.evalJsOnUiThread(js);
+        }
+    }
+
+    private static final class SyncBackCallbackTask implements Runnable {
+        private final MainActivity activity;
+        private final boolean open;
+
+        SyncBackCallbackTask(MainActivity activity, boolean open) {
+            this.activity = activity;
+            this.open = open;
+        }
+
+        @Override
+        public void run() {
+            activity.syncBackInvokedCallback(open);
+        }
+    }
+
+    private static final class DrainStoreWritesTask implements Runnable {
+        private final MainActivity activity;
+
+        DrainStoreWritesTask(MainActivity activity) {
+            this.activity = activity;
+        }
+
+        @Override
+        public void run() {
+            activity.drainPendingStoreWrites();
+        }
+    }
+
+    private static final class FlushLatchTask implements Runnable {
+        private final MainActivity activity;
+        private final CountDownLatch latch;
+
+        FlushLatchTask(MainActivity activity, CountDownLatch latch) {
+            this.activity = activity;
+            this.latch = latch;
+        }
+
+        @Override
+        public void run() {
+            activity.drainPendingStoreWrites();
+            latch.countDown();
+        }
+    }
+
+    private static final class CopyTextTask implements Runnable {
+        private final MainActivity activity;
+        private final String label;
+        private final String text;
+
+        CopyTextTask(MainActivity activity, String label, String text) {
+            this.activity = activity;
+            this.label = label;
+            this.text = text;
+        }
+
+        @Override
+        public void run() {
+            activity.performCopyTextOnUi(label, text);
+        }
+    }
+
+    private static final class ShareTextTask implements Runnable {
+        private final MainActivity activity;
+        private final String title;
+        private final String text;
+
+        ShareTextTask(MainActivity activity, String title, String text) {
+            this.activity = activity;
+            this.title = title;
+            this.text = text;
+        }
+
+        @Override
+        public void run() {
+            activity.performShareTextOnUi(title, text);
+        }
+    }
+
+    private static final class HttpAsyncTask implements Runnable {
+        private final MainActivity activity;
+        private final String reqId;
+        private final String method;
+        private final String url;
+        private final String headersJson;
+        private final String body;
+
+        HttpAsyncTask(MainActivity activity, String reqId, String method, String url, String headersJson, String body) {
+            this.activity = activity;
+            this.reqId = reqId;
+            this.method = method;
+            this.url = url;
+            this.headersJson = headersJson;
+            this.body = body;
+        }
+
+        @Override
+        public void run() {
+            activity.executeHttpAsync(reqId, method, url, headersJson, body);
         }
     }
 }

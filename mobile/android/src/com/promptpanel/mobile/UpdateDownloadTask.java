@@ -90,12 +90,12 @@ public class UpdateDownloadTask implements Runnable {
             String downloadedHash = null;
             Exception firstErr = null;
             try {
-                downloadedHash = downloadToFileAndHash(primaryUrl, partFile);
+                downloadedHash = downloadToFileAndHash(primaryUrl, partFile, remoteVer, remoteBuild);
             } catch (Exception e) {
                 firstErr = e;
             }
             if (downloadedHash == null && !fallbackUrl.isEmpty() && !fallbackUrl.equals(primaryUrl)) {
-                downloadedHash = downloadToFileAndHash(fallbackUrl, partFile);
+                downloadedHash = downloadToFileAndHash(fallbackUrl, partFile, remoteVer, remoteBuild);
             }
             if (downloadedHash == null) {
                 throw firstErr != null ? firstErr : new IllegalStateException("下载新版本安装包失败");
@@ -134,6 +134,10 @@ public class UpdateDownloadTask implements Runnable {
     }
 
     private void dispatchState(String state, String version, int build, String message, boolean finished) {
+        dispatchStateWithProgress(state, version, build, message, -1, finished);
+    }
+
+    private void dispatchStateWithProgress(String state, String version, int build, String message, int progressPct, boolean finished) {
         try {
             JSONObject obj = new JSONObject();
             obj.put("state", state);
@@ -141,6 +145,9 @@ public class UpdateDownloadTask implements Runnable {
             obj.put("build", build);
             obj.put("manual", manualTrigger);
             obj.put("message", message != null ? message : "");
+            if (progressPct >= 0) {
+                obj.put("progress", progressPct);
+            }
             activity.runOnUiThread(new UpdateUiDispatchTask(activity, obj.toString(), finished));
         } catch (Exception ignored) {
             if (finished) {
@@ -151,9 +158,10 @@ public class UpdateDownloadTask implements Runnable {
 
     private JSONObject resolveCandidate() throws Exception {
         String mirrorUpdateUrl = buildMirrorUpdateUrl(syncEndpoint, manualTrigger);
+        Exception mirrorErr = null;
         if (mirrorUpdateUrl != null) {
             try {
-                String raw = httpGetText(mirrorUpdateUrl, 8000, 12000, "application/json");
+                String raw = httpGetText(mirrorUpdateUrl, 8000, 12000, "application/json", localVersionName);
                 JSONObject json = new JSONObject(raw);
                 JSONObject apkObj = json.optJSONObject("androidApk");
                 String ver = json.optString("version", "").trim();
@@ -179,15 +187,26 @@ public class UpdateDownloadTask implements Runnable {
                         return out;
                     }
                 }
-            } catch (Exception ignored) {
-                // Fall back to GitHub Releases directly
+            } catch (Exception e) {
+                mirrorErr = e;
             }
         }
-        return fetchFromGitHub();
+        try {
+            return fetchFromGitHub();
+        } catch (Exception ghErr) {
+            if (mirrorErr != null) {
+                throw new IllegalStateException(
+                        "镜像源(" + MainActivity.translateNetworkException(mirrorErr)
+                                + ")与GitHub源(" + MainActivity.translateNetworkException(ghErr) + ")均不可达",
+                        ghErr
+                );
+            }
+            throw ghErr;
+        }
     }
 
     private JSONObject fetchFromGitHub() throws Exception {
-        String raw = httpGetText(GITHUB_LATEST_URL, 10000, 15000, "application/vnd.github+json");
+        String raw = httpGetText(GITHUB_LATEST_URL, 10000, 15000, "application/vnd.github+json", localVersionName);
         JSONObject rel = new JSONObject(raw);
         String tag = rel.optString("tag_name", "").trim();
         String ver = tag.startsWith("v") || tag.startsWith("V") ? tag.substring(1) : tag;
@@ -232,7 +251,7 @@ public class UpdateDownloadTask implements Runnable {
 
         if (apkSha.isEmpty() && !sumsUrl.isEmpty()) {
             try {
-                String sumsText = httpGetText(sumsUrl, 8000, 12000, "text/plain");
+                String sumsText = httpGetText(sumsUrl, 8000, 12000, "text/plain", localVersionName);
                 String[] lines = sumsText.split("\\r?\\n");
                 for (int i = 0; i < lines.length; i++) {
                     String line = lines[i].trim();
@@ -338,11 +357,12 @@ public class UpdateDownloadTask implements Runnable {
         return nums;
     }
 
-    private static String httpGetText(String urlStr, int connectTimeout, int readTimeout, String accept) throws Exception {
+    private static String httpGetText(String urlStr, int connectTimeout, int readTimeout, String accept, String versionName) throws Exception {
         URL current = new URL(urlStr);
         if (!MainActivity.isAllowedRemoteUrl(current)) {
             throw new IllegalStateException("仅允许通过 HTTPS 获取更新元数据");
         }
+        String ua = "PromptPanel-Android-Updater/" + (versionName != null && !versionName.isEmpty() ? versionName : "0.0.0");
         String initProto = current.getProtocol() != null ? current.getProtocol().toLowerCase(Locale.US) : "";
         for (int hop = 0; hop <= 4; hop++) {
             HttpURLConnection conn = (HttpURLConnection) current.openConnection();
@@ -352,7 +372,7 @@ public class UpdateDownloadTask implements Runnable {
                 conn.setConnectTimeout(connectTimeout);
                 conn.setReadTimeout(readTimeout);
                 conn.setUseCaches(false);
-                conn.setRequestProperty("User-Agent", "PromptPanel-Android-Updater/1.7.4");
+                conn.setRequestProperty("User-Agent", ua);
                 conn.setRequestProperty("Accept", accept);
                 int code = conn.getResponseCode();
                 if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
@@ -384,11 +404,12 @@ public class UpdateDownloadTask implements Runnable {
         throw new IllegalStateException("重定向次数过多");
     }
 
-    private static String downloadToFileAndHash(String urlStr, File destFile) throws Exception {
+    private String downloadToFileAndHash(String urlStr, File destFile, String remoteVer, int remoteBuild) throws Exception {
         URL current = new URL(urlStr);
         if (!MainActivity.isAllowedRemoteUrl(current)) {
             throw new IllegalStateException("仅允许通过 HTTPS 下载安装包");
         }
+        String ua = "PromptPanel-Android-Updater/" + (localVersionName != null && !localVersionName.isEmpty() ? localVersionName : "0.0.0");
         String initProto = current.getProtocol() != null ? current.getProtocol().toLowerCase(Locale.US) : "";
         for (int hop = 0; hop <= 5; hop++) {
             HttpURLConnection conn = (HttpURLConnection) current.openConnection();
@@ -398,7 +419,7 @@ public class UpdateDownloadTask implements Runnable {
                 conn.setConnectTimeout(12000);
                 conn.setReadTimeout(60000);
                 conn.setUseCaches(false);
-                conn.setRequestProperty("User-Agent", "PromptPanel-Android-Updater/1.7.4");
+                conn.setRequestProperty("User-Agent", ua);
                 int code = conn.getResponseCode();
                 if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
                     String loc = conn.getHeaderField("Location");
@@ -414,8 +435,13 @@ public class UpdateDownloadTask implements Runnable {
                 if (code < 200 || code >= 300) {
                     throw new IllegalStateException("下载返回 HTTP " + code);
                 }
+                long contentLength = android.os.Build.VERSION.SDK_INT >= 24
+                        ? conn.getContentLengthLong()
+                        : conn.getContentLength();
                 MessageDigest md = MessageDigest.getInstance("SHA-256");
                 long total = 0L;
+                int lastReportedPct = -1;
+                long lastReportMs = 0L;
                 try (InputStream is = conn.getInputStream();
                      FileOutputStream fos = new FileOutputStream(destFile)) {
                     byte[] buf = new byte[32768];
@@ -426,6 +452,15 @@ public class UpdateDownloadTask implements Runnable {
                         total += n;
                         if (total > 120L * 1024L * 1024L) {
                             throw new IllegalStateException("安装包体积异常");
+                        }
+                        if (contentLength > 0L) {
+                            int pct = (int) Math.min(99L, (total * 100L) / contentLength);
+                            long nowMs = System.currentTimeMillis();
+                            if (pct >= lastReportedPct + 3 || nowMs - lastReportMs >= 200L) {
+                                lastReportedPct = pct;
+                                lastReportMs = nowMs;
+                                dispatchStateWithProgress("downloading", remoteVer, remoteBuild, "", pct, false);
+                            }
                         }
                     }
                     fos.flush();

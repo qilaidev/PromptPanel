@@ -59,6 +59,9 @@
     --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Noto Sans CJK SC", sans-serif;
     --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
     --ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --ime-bottom: 0px;
   }
 
   @media (prefers-color-scheme: dark) {
@@ -198,8 +201,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    height: 44px;
-    padding: 0 12px;
+    height: calc(44px + var(--safe-top));
+    padding: var(--safe-top) 12px 0;
     background: var(--surface);
     border-bottom: 0.5px solid var(--divider);
     flex-shrink: 0;
@@ -947,10 +950,17 @@
     color: var(--text-muted);
   }
 
+  .row-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
   .row-copy-btn {
     width: 26px;
     height: 26px;
-    margin-top: 2px;
     border-radius: 5px;
     border: 0.5px solid var(--border);
     background: var(--tint-subtle);
@@ -1021,7 +1031,7 @@
     gap: 4px;
     background: var(--sidebar);
     border-top: 0.5px solid var(--divider);
-    padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+    padding: 6px 8px calc(6px + var(--safe-bottom));
     flex-shrink: 0;
   }
 
@@ -1216,7 +1226,8 @@
   .sheet {
     width: 100%;
     max-width: 640px;
-    max-height: 92vh;
+    max-height: calc(92dvh - var(--ime-bottom) - var(--safe-top));
+    padding-bottom: var(--safe-bottom);
     background: var(--surface);
     border-top: 0.5px solid var(--border-strong);
     border-radius: 12px 12px 0 0;
@@ -1747,7 +1758,7 @@
   .toast {
     position: fixed;
     left: 50%;
-    bottom: 56px;
+    bottom: calc(56px + var(--safe-bottom));
     transform: translateX(-50%);
     background: var(--surface-raised);
     color: var(--text);
@@ -1920,7 +1931,7 @@
           <button id="checkUpdatePrimaryBtn" class="btn-primary" style="flex:1;" onclick="onTapCheckOrInstallUpdate()">检查并一键更新</button>
           <button class="btn-secondary" onclick="copyDirectAndroidDownloadLink()">复制安装包直链</button>
         </div>
-        <div id="appUpdateStatusText" style="margin-top:8px;font-family:var(--font-mono);font-size:11px;color:var(--text-sub);line-height:1.45;">当前版本 v1.7.4 (15) · 已启用后台自动预下载</div>
+        <div id="appUpdateStatusText" style="margin-top:8px;font-family:var(--font-mono);font-size:11px;color:var(--text-sub);line-height:1.45;">当前版本 · 默认关闭后台自动预下载</div>
       </div>
 
       <div class="settings-card">
@@ -1976,6 +1987,9 @@
           <button class="btn-secondary" style="flex:1;" onclick="copyExportedJson()">复制词库 JSON 到剪贴板</button>
           <button class="btn-secondary" style="flex:1;" onclick="openImportJsonModal()">从 JSON 导入合并</button>
         </div>
+        <div class="btn-row" style="margin-top:8px;">
+          <button class="btn-danger" style="flex:1;" onclick="clearCompletedTodos()">清理已完成待办（同步删除）</button>
+        </div>
       </div>
     </div>
   </div>
@@ -2019,6 +2033,10 @@
         <button id="modalCloneBtn" class="quiet-btn" style="display:none;" onclick="openCloneCurrentEntryModal()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           <span>克隆</span>
+        </button>
+        <button id="modalShareBtn" class="quiet-btn" style="display:none;" onclick="shareEditingEntry()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+          <span>分享</span>
         </button>
         <button id="modalCopyBtn" class="btn-primary" style="height:26px;padding:0 10px;font-size:11px;display:none;" onclick="copyEditingEntry()">复制</button>
         <button id="deleteBtn" class="quiet-btn quiet-icon-btn" style="display:none;" onclick="deleteCurrentEntry()" title="删除此词条">
@@ -2099,7 +2117,7 @@
 
 <!-- 双窗对照与剪贴板装配台 (Mirrors ReferenceLibraryWindowView) -->
 <div id="referenceModal" class="modal-backdrop" onclick="if(event.target===this)closeModals()">
-  <div class="sheet" style="height:88vh;">
+  <div class="sheet" style="height:88dvh;">
     <div class="sheet-grabber-bar"><div class="sheet-grabber"></div></div>
     <div class="sheet-header">
       <span class="sheet-title">参考窗口与剪贴板装配台</span>
@@ -2508,10 +2526,25 @@ function defaultSeedStore() {
   };
 }
 
+function parseIsoEpochMs(iso) {
+  if (!iso) return 0;
+  const ms = Date.parse(String(iso));
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function makeId(prefix = 'mob-') {
+  try {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+      return prefix + window.crypto.randomUUID();
+    }
+  } catch (e) {}
+  return prefix + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+}
+
 function pickNewerSide(rec) {
   const cu = String(rec.updatedAt || '');
   const su = String(rec.updated_at || '');
-  if (cu && su) return cu >= su;
+  if (cu && su) return parseIsoEpochMs(cu) >= parseIsoEpochMs(su);
   return !!cu;
 }
 
@@ -2529,7 +2562,7 @@ function normalizeProject(raw) {
   const preferCamel = pickNewerSide(p);
   const cu = String(p.updatedAt || '');
   const su = String(p.updated_at || '');
-  const resolvedUpdated = (cu && su) ? (cu >= su ? cu : su) : (cu || su || new Date().toISOString());
+  const resolvedUpdated = (cu && su) ? (parseIsoEpochMs(cu) >= parseIsoEpochMs(su) ? cu : su) : (cu || su || new Date().toISOString());
   const isDef = !!pickPairField(p, 'isDefault', 'is_default', preferCamel, false);
   p.isDefault = isDef;
   p.groupKindRaw = preferCamel
@@ -2559,7 +2592,7 @@ function normalizeEntry(raw) {
   const preferCamel = pickNewerSide(e);
   const cu = String(e.updatedAt || '');
   const su = String(e.updated_at || '');
-  const resolvedUpdated = (cu && su) ? (cu >= su ? cu : su) : (cu || su || new Date().toISOString());
+  const resolvedUpdated = (cu && su) ? (parseIsoEpochMs(cu) >= parseIsoEpochMs(su) ? cu : su) : (cu || su || new Date().toISOString());
   e.projectId = String(pickPairField(e, 'projectId', 'project_id', preferCamel, BUILTIN_INBOX_ID) || BUILTIN_INBOX_ID);
   e.isPinned = !!pickPairField(e, 'isPinned', 'is_pinned', preferCamel, false);
   e.isCompleted = !!pickPairField(e, 'isCompleted', 'is_completed', preferCamel, false);
@@ -2567,7 +2600,7 @@ function normalizeEntry(raw) {
   e.useCount = Math.max(Number(e.useCount || 0) || 0, Number(e.use_count || 0) || 0);
   const luc = e.lastUsedAt || null;
   const lus = e.last_used_at || null;
-  e.lastUsedAt = (luc && lus) ? (new Date(luc) >= new Date(lus) ? luc : lus) : (luc || lus || null);
+  e.lastUsedAt = (luc && lus) ? (parseIsoEpochMs(luc) >= parseIsoEpochMs(lus) ? luc : lus) : (luc || lus || null);
   e.createdAt = String(pickPairField(e, 'createdAt', 'created_at', preferCamel, resolvedUpdated) || resolvedUpdated);
   e.updatedAt = resolvedUpdated;
   e.deletedAt = pickPairField(e, 'deletedAt', 'deleted_at', preferCamel, null, true);
@@ -2611,6 +2644,11 @@ let lastCreatedEntryId = null;
 let hasPendingStoreFlush = false;
 let lastRenderContextKey = '';
 let lastListScrollTimeMs = 0;
+let localMutationSeq = 0;
+let lastSyncedMutationSeq = -1;
+let lastSyncedRevision = null;
+let lastSyncedCredKey = '';
+let pendingAllowMassDelete = false;
 
 function triggerHaptic(ms = 10) {
   try {
@@ -2674,12 +2712,15 @@ function loadPreferencesAndStore() {
 
 function persistStore(triggerAuto = false, flushImmediate = false) {
   store.exportedAt = new Date().toISOString();
+  if (triggerAuto) {
+    localMutationSeq++;
+  }
   hasPendingStoreFlush = true;
   clearTimeout(window.__storeFlushTimer);
   if (flushImmediate) {
     flushPendingStoreSave();
   } else {
-    window.__storeFlushTimer = setTimeout(flushPendingStoreSave, 45);
+    window.__storeFlushTimer = setTimeout(flushPendingStoreSave, 200);
   }
 
   if (triggerAuto && isAutoSyncEnabled()) {
@@ -2916,7 +2957,7 @@ function submitMobileQuickJot(type) {
     ? selectedGroupId
     : BUILTIN_INBOX_ID;
   const title = parsed.content.split('\n')[0].slice(0, 28) || (type === 'todo' ? '待办事项' : '随手速记');
-  const newId = 'mob-' + Date.now();
+  const newId = makeId('mob-');
   store.entries.unshift({
     id: newId,
     projectId: targetProjId,
@@ -2992,9 +3033,9 @@ function toggleShowArchived() {
 }
 
 function compareEntriesByRecencyThenTitle(a, b) {
-  const aTouch = a.lastUsedAt || a.updatedAt || '';
-  const bTouch = b.lastUsedAt || b.updatedAt || '';
-  if (aTouch !== bTouch) return String(bTouch).localeCompare(String(aTouch));
+  const aTouchMs = parseIsoEpochMs(a.lastUsedAt || a.updatedAt);
+  const bTouchMs = parseIsoEpochMs(b.lastUsedAt || b.updatedAt);
+  if (aTouchMs !== bTouchMs) return bTouchMs - aTouchMs;
   return String(a.title || '').localeCompare(String(b.title || ''), 'zh-CN');
 }
 
@@ -3035,8 +3076,9 @@ function buildEntryRowHtml(item, idx, totalLen, projectNameMap) {
   const tagsHtml = visibleTags.map(t => `<span class="tag-chip">#${escapeHtml(t)}</span>`).join('') +
     (overflowTags > 0 ? `<span class="tag-overflow">+${overflowTags}</span>` : '');
 
+  const safeId = escapeHtml(item.id);
   const leadingHtml = isInboxRow
-    ? `<button class="todo-check-btn ${done ? 'done' : ''}" onclick="event.stopPropagation(); toggleTodoDone('${item.id}')" aria-label="切换完成状态">
+    ? `<button class="todo-check-btn ${done ? 'done' : ''}" data-action="toggle-todo" data-entry-id="${safeId}" aria-label="切换完成状态">
         ${done
           ? '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>'
           : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="9"/></svg>'}
@@ -3048,9 +3090,9 @@ function buildEntryRowHtml(item, idx, totalLen, projectNameMap) {
   const copyIcon = isCopied ? COPY_ICON_COPIED_SVG : COPY_ICON_DEFAULT_SVG;
 
   return `
-    <div class="entry-swipe-wrap" data-entry-id="${item.id}" ontouchstart="onRowTouchStart(event, this)" ontouchmove="onRowTouchMove(event, this)" ontouchend="onRowTouchEnd(event, this)" ontouchcancel="onRowTouchCancel(this)">
+    <div class="entry-swipe-wrap" data-entry-id="${safeId}" ontouchstart="onRowTouchStart(event, this)" ontouchmove="onRowTouchMove(event, this)" ontouchend="onRowTouchEnd(event, this)" ontouchcancel="onRowTouchCancel(this)">
       <div class="swipe-bg"><span class="swipe-hint-text">左滑删除</span></div>
-      <div class="entry-row ${pinned ? 'pinned-row' : ''} ${isJustCreated ? 'just-created-row' : ''}" onclick="if(!window.__suppressNextRowTap)openEditorSheet('${item.id}')">
+      <div class="entry-row ${pinned ? 'pinned-row' : ''} ${isJustCreated ? 'just-created-row' : ''}" data-action="open-editor" data-entry-id="${safeId}">
         ${leadingHtml}
         <div class="entry-main">
           <div class="entry-header">
@@ -3061,16 +3103,21 @@ function buildEntryRowHtml(item, idx, totalLen, projectNameMap) {
           </div>
           <div class="entry-preview ${done ? 'done' : ''}">${escapeHtml(previewLine)}</div>
           <div class="entry-meta">
-            <span>${escapeHtml(lastUsedStr)}</span>
+            <span class="meta-last-used">${escapeHtml(lastUsedStr)}</span>
             <span class="meta-sep">·</span>
             <span class="${currentTab === 0 ? 'meta-proj' : 'meta-mono'}">${escapeHtml(secondMeta)}</span>
             <span class="meta-spacer"></span>
             ${tags.length > 0 ? `<div class="tag-chips">${tagsHtml}</div>` : ''}
           </div>
         </div>
-        <button class="row-copy-btn ${isCopied ? 'copied' : ''}" onclick="event.stopPropagation(); copyEntry('${item.id}')" aria-label="复制内容">
-          ${copyIcon}
-        </button>
+        <div class="row-actions">
+          <button class="row-copy-btn" data-action="share-entry" data-entry-id="${safeId}" aria-label="分享内容">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+          </button>
+          <button class="row-copy-btn ${isCopied ? 'copied' : ''}" data-action="copy-entry" data-entry-id="${safeId}" aria-label="复制内容">
+            ${copyIcon}
+          </button>
+        </div>
       </div>
     </div>
     ${idx < totalLen - 1 ? '<div class="row-divider"></div>' : ''}
@@ -3150,7 +3197,7 @@ function render() {
       const isCurrentBind = g.id === currentScopeProjectId;
       const activeCls = g.id === selectedGroupId ? 'chip active' : 'chip';
       gHtml += `
-        <button class="${activeCls}" onclick="selectGroup('${g.id}')">
+        <button class="${activeCls}" data-action="select-group" data-group-id="${escapeHtml(g.id)}">
           <span>${escapeHtml(g.name)}${archived ? ' (已归档)' : ''}${isCurrentBind ? ' · 当前' : ''}</span>
           <span class="chip-count">${gCount}</span>
         </button>
@@ -3160,13 +3207,13 @@ function render() {
       const archivedTotal = activeProjects.filter(p => (p.groupKindRaw || p.group_kind) === 'project' && (p.isArchived || p.is_archived)).length;
       if (archivedTotal > 0 || showArchived) {
         gHtml += `<div class="chip-divider"></div>`;
-        gHtml += `<button class="chip ${showArchived ? 'active' : ''}" onclick="toggleShowArchived()"><span>已归档</span><span class="chip-count">${archivedTotal}</span></button>`;
+        gHtml += `<button class="chip ${showArchived ? 'active' : ''}" data-action="toggle-archived"><span>已归档</span><span class="chip-count">${archivedTotal}</span></button>`;
       }
     }
     gHtml += `<div class="chip-divider"></div>`;
-    gHtml += `<button class="chip" onclick="openGroupManagerModal(null)"><span>+ 分组</span></button>`;
+    gHtml += `<button class="chip" data-action="new-group"><span>+ 分组</span></button>`;
     if (selectedGroupId) {
-      gHtml += `<button class="chip" onclick="openGroupManagerModal('${selectedGroupId}')"><span>分组设置</span></button>`;
+      gHtml += `<button class="chip" data-action="edit-group" data-group-id="${escapeHtml(selectedGroupId)}"><span>分组设置</span></button>`;
     }
     groupStrip.innerHTML = gHtml;
 
@@ -3219,7 +3266,7 @@ function render() {
     facetStrip.style.display = 'flex';
     const allActive = !entryKindFilter && !entryTagFilter;
     let fHtml = `
-      <button class="chip ${allActive ? 'active' : ''}" onclick="clearEntryFilters()">
+      <button class="chip ${allActive ? 'active' : ''}" data-action="clear-filters">
         <span>全部</span><span class="chip-count">${scopedEntries.length}</span>
       </button>
     `;
@@ -3229,7 +3276,7 @@ function render() {
         const meta = TYPE_META[k] || TYPE_META.prompt;
         const active = entryKindFilter === k;
         fHtml += `
-          <button class="chip ${active ? 'active' : ''}" onclick="toggleEntryKindFilter('${k}')">
+          <button class="chip ${active ? 'active' : ''}" data-action="filter-kind" data-kind="${escapeHtml(k)}">
             ${meta.svg}
             <span>${meta.name}</span>
             <span class="chip-count">${kindCounts[k]}</span>
@@ -3242,7 +3289,7 @@ function render() {
       for (const [tag, cnt] of topTags) {
         const active = entryTagFilter === tag;
         fHtml += `
-          <button class="chip ${active ? 'active' : ''}" onclick="toggleEntryTagFilter('${escapeHtml(tag)}')">
+          <button class="chip ${active ? 'active' : ''}" data-action="filter-tag" data-tag="${escapeHtml(tag)}">
             <span>#${escapeHtml(tag)}</span>
             <span class="chip-count">${cnt}</span>
           </button>
@@ -3522,6 +3569,67 @@ function undoLastDeletedEntry() {
   showToast('已撤销删除：' + item.title);
 }
 
+function patchEntryRowInPlace(entryId) {
+  const item = (store.entries || []).find(e => e.id === entryId);
+  if (!item) return;
+  const listEl = document.getElementById('entryList');
+  if (!listEl) return;
+  const wraps = listEl.querySelectorAll('.entry-swipe-wrap');
+  let wrap = null;
+  for (let i = 0; i < wraps.length; i++) {
+    if (wraps[i].getAttribute('data-entry-id') === entryId) {
+      wrap = wraps[i];
+      break;
+    }
+  }
+  if (!wrap) return;
+
+  const done = !!(item.isCompleted || item.is_completed);
+  const checkBtn = wrap.querySelector('.todo-check-btn');
+  if (checkBtn) {
+    checkBtn.classList.toggle('done', done);
+    checkBtn.innerHTML = done
+      ? '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="9"/></svg>';
+  }
+  const titleEl = wrap.querySelector('.entry-title');
+  if (titleEl) titleEl.classList.toggle('done', done);
+  const previewEl = wrap.querySelector('.entry-preview');
+  if (previewEl) previewEl.classList.toggle('done', done);
+
+  const useCount = item.useCount || 0;
+  const level = resolveEntryLevel(useCount);
+  const headerEl = wrap.querySelector('.entry-header');
+  if (headerEl) {
+    let badge = headerEl.querySelector('.level-badge');
+    if (useCount > 0) {
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'level-badge';
+        const typeBadge = headerEl.querySelector('.type-badge');
+        headerEl.insertBefore(badge, typeBadge || null);
+      }
+      badge.style.color = level.color;
+      badge.style.background = level.bg;
+      badge.textContent = useCount + '次';
+    } else if (badge) {
+      badge.remove();
+    }
+  }
+
+  const metaLastUsed = wrap.querySelector('.meta-last-used');
+  if (metaLastUsed) {
+    metaLastUsed.textContent = formatRelativeTime(item.lastUsedAt || item.last_used_at);
+  }
+
+  const copyBtn = wrap.querySelector('[data-action="copy-entry"]');
+  if (copyBtn) {
+    const isCopied = lastCopiedEntryId === entryId;
+    copyBtn.classList.toggle('copied', isCopied);
+    copyBtn.innerHTML = isCopied ? COPY_ICON_COPIED_SVG : COPY_ICON_DEFAULT_SVG;
+  }
+}
+
 function toggleTodoDone(entryId) {
   const item = (store.entries || []).find(e => e.id === entryId);
   if (!item) return;
@@ -3529,7 +3637,7 @@ function toggleTodoDone(entryId) {
   item.updatedAt = new Date().toISOString();
   triggerHaptic(10);
   persistStore(true);
-  render();
+  patchEntryRowInPlace(entryId);
   showToast(item.isCompleted ? '已标记完成' : '已恢复未完成');
 }
 
@@ -3554,7 +3662,6 @@ function copyEntry(entryId) {
   const now = new Date().toISOString();
   item.useCount = (item.useCount || 0) + 1;
   item.lastUsedAt = now;
-  item.updatedAt = now;
   lastCopiedEntryId = entryId;
   triggerHaptic(10);
   persistStore(true);
@@ -3565,7 +3672,7 @@ function copyEntry(entryId) {
   if (modalCopyBtn && editingEntryId === entryId) {
     modalCopyBtn.textContent = '已复制 ✓';
   }
-  render();
+  patchEntryRowInPlace(entryId);
   clearTimeout(window.__copyFeedbackTimer);
   window.__copyFeedbackTimer = setTimeout(() => {
     lastCopiedEntryId = null;
@@ -3582,6 +3689,29 @@ function copyEntry(entryId) {
 function copyEditingEntry() {
   if (!editingEntryId) return;
   copyEntry(editingEntryId);
+}
+
+function shareEntry(entryId) {
+  const item = (store.entries || []).find(e => e.id === entryId);
+  if (!item) return;
+  const text = String(item.content || '');
+  if (!text) {
+    showToast('正文内容为空，无法分享');
+    return;
+  }
+  if (window.AndroidBridge && AndroidBridge.shareText) {
+    AndroidBridge.shareText(item.title || 'PromptPanel', text);
+  } else if (navigator.share) {
+    navigator.share({ title: item.title || 'PromptPanel', text: text }).catch(() => {});
+  } else {
+    writeSystemClipboard(item.title, text);
+    showToast('当前环境不支持系统分享，已复制到剪贴板');
+  }
+}
+
+function shareEditingEntry() {
+  if (!editingEntryId) return;
+  shareEntry(editingEntryId);
 }
 
 /* PreviewPane Inline Draft & Dirty Detection */
@@ -3666,6 +3796,7 @@ function openEditorSheet(entryId) {
   document.getElementById('editorTitle').textContent = item ? '词条详情' : '新建词条';
   document.getElementById('deleteBtn').style.display = item ? 'inline-flex' : 'none';
   document.getElementById('modalCopyBtn').style.display = item ? 'inline-flex' : 'none';
+  document.getElementById('modalShareBtn').style.display = item ? 'inline-flex' : 'none';
   document.getElementById('modalCloneBtn').style.display = item ? 'inline-flex' : 'none';
   document.getElementById('newEntryActionRow').style.display = item ? 'none' : 'flex';
   document.getElementById('dirtySaveBar').classList.remove('visible');
@@ -3740,10 +3871,10 @@ function renderVersionHistory(entryId, currentContent) {
         </div>
         <div class="version-snippet">${escapeHtml(content)}</div>
         <div class="version-actions">
-          <button class="mini-pill-btn" onclick="copyVersionContent('${v.id}')">复制</button>
+          <button class="mini-pill-btn" data-action="copy-version" data-version-id="${escapeHtml(v.id)}">复制</button>
           ${isSame
             ? `<span style="font-size:10px;color:var(--text-muted);">当前版本</span>`
-            : `<button class="mini-pill-btn primary" onclick="rollbackToVersion('${entryId}', '${v.id}')">恢复此版本</button>`
+            : `<button class="mini-pill-btn primary" data-action="rollback-version" data-entry-id="${escapeHtml(entryId)}" data-version-id="${escapeHtml(v.id)}">恢复此版本</button>`
           }
         </div>
       </div>
@@ -3848,7 +3979,7 @@ function saveCurrentEntry() {
       return;
     }
   } else {
-    const newId = 'mob-' + Date.now();
+    const newId = makeId('mob-');
     store.entries.unshift({
       id: newId,
       projectId: projectId,
@@ -3900,7 +4031,7 @@ function openCloneCurrentEntryModal() {
     listEl.innerHTML = `<div style="color:var(--text-muted);padding:12px 0;">暂无其他可用分组</div>`;
   } else {
     listEl.innerHTML = targets.map(t => `
-      <div class="settings-row" style="cursor:pointer;" onclick="cloneEntryToProject('${item.id}', '${t.id}')">
+      <div class="settings-row" style="cursor:pointer;" data-action="clone-entry" data-entry-id="${escapeHtml(item.id)}" data-project-id="${escapeHtml(t.id)}">
         <span class="settings-row-label">${escapeHtml(t.name)}</span>
         <span class="mini-pill-btn primary">克隆到此分组</span>
       </div>
@@ -3914,7 +4045,7 @@ function cloneEntryToProject(entryId, targetProjectId) {
   const src = (store.entries || []).find(e => e.id === entryId);
   if (!src) return;
   const now = new Date().toISOString();
-  const newId = 'clone-' + Date.now();
+  const newId = makeId('clone-');
   store.entries.unshift({
     id: newId,
     projectId: targetProjectId,
@@ -3974,7 +4105,7 @@ function createEntryFromText(text, targetProjectId, type) {
   }
   const title = trimmed.split('\n')[0].slice(0, 28);
   const now = new Date().toISOString();
-  const newId = 'clip-' + Date.now();
+  const newId = makeId('clip-');
   store.entries.unshift({
     id: newId,
     projectId: targetProjectId,
@@ -4073,8 +4204,8 @@ function renderReferenceWindow() {
           <div style="font-size:11px;color:var(--text-sub);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${escapeHtml(item.content)}</div>
         </div>
         <div style="display:flex;gap:5px;flex-shrink:0;">
-          <button class="mini-pill-btn" onclick="copyEntry('${item.id}')">复制</button>
-          <button class="mini-pill-btn primary" onclick="cloneEntryToProject('${item.id}', '${tgtId}');renderReferenceWindow();">${inTarget ? '再次克隆' : '克隆到「' + escapeHtml(tgtName) + '」'}</button>
+          <button class="mini-pill-btn" data-action="copy-entry" data-entry-id="${escapeHtml(item.id)}">复制</button>
+          <button class="mini-pill-btn primary" data-action="ref-clone-entry" data-entry-id="${escapeHtml(item.id)}" data-project-id="${escapeHtml(tgtId)}">${inTarget ? '再次克隆' : '克隆到「' + escapeHtml(tgtName) + '」'}</button>
         </div>
       </div>
     `;
@@ -4137,7 +4268,7 @@ function saveEditingGroup() {
     }
   } else {
     const newProj = {
-      id: 'grp-' + Date.now(),
+      id: makeId('grp-'),
       name: name,
       isDefault: false,
       groupKindRaw: kind,
@@ -4178,10 +4309,11 @@ function deleteEditingGroup() {
   const now = new Date().toISOString();
   grp.deletedAt = now;
   grp.updatedAt = now;
-  // Migrate active entries to default-general
+  // Migrate active entries to active default project
+  const fallbackDefaultId = ((store.projects || []).find(p => p.isDefault && !p.deletedAt) || {}).id || 'default-general';
   for (const e of (store.entries || [])) {
-    if ((e.projectId || e.project_id) === grp.id) {
-      e.projectId = 'default-general';
+    if (!e.deletedAt && (e.projectId || e.project_id) === grp.id) {
+      e.projectId = fallbackDefaultId;
       e.updatedAt = now;
     }
   }
@@ -4191,6 +4323,27 @@ function deleteEditingGroup() {
   if (mainSegment === 'settings') renderSettingsView();
   render();
   showBanner('已删除分组「' + grp.name + '」，所属词条已迁移至通用项目');
+}
+
+function clearCompletedTodos() {
+  const completed = (store.entries || []).filter(e => !e.deletedAt && (e.isCompleted || e.is_completed));
+  if (completed.length === 0) {
+    showToast('当前没有已完成的待办');
+    return;
+  }
+  if (!window.confirm(`确定清理全部 ${completed.length} 条已完成待办吗？此操作将同步删除云端对应记录。`)) {
+    return;
+  }
+  const now = new Date().toISOString();
+  for (const e of completed) {
+    e.deletedAt = now;
+    e.updatedAt = now;
+  }
+  pendingAllowMassDelete = true;
+  persistStore(true, true);
+  if (mainSegment === 'settings') renderSettingsView();
+  render();
+  showBanner(`已清理 ${completed.length} 条已完成待办`);
 }
 
 /* Settings View & CloudSyncService v2 Parity */
@@ -4244,10 +4397,16 @@ function hydrateSyncInputsFromStorage() {
   syncAutoSyncSwitchUI(isAutoSyncEnabled());
   syncAutoUpdateSwitchUI(isAutoUpdateEnabled());
   refreshAppUpdateCardUI();
+  const newCredKey = ep + '|' + tk;
+  if (newCredKey !== lastSyncedCredKey) {
+    lastSyncedCredKey = newCredKey;
+    lastSyncedRevision = null;
+    lastSyncedMutationSeq = -1;
+  }
   updateTopbarSyncIndicator();
 }
 
-let appUpdatePhase = { state: 'idle', version: '1.7.4', build: 15, message: '' };
+let appUpdatePhase = { state: 'idle', version: '', build: 0, message: '', progress: -1 };
 let lastAutoUpdateCheckMs = 0;
 
 function getInstalledAppVersionLabel() {
@@ -4259,7 +4418,7 @@ function getInstalledAppVersionLabel() {
     }
     if (raw) return 'v' + raw;
   }
-  return 'v1.7.4 (15)';
+  return 'v0.0.0 (0)';
 }
 
 function isAutoUpdateEnabled() {
@@ -4311,10 +4470,13 @@ function refreshAppUpdateCardUI() {
     btnEl.disabled = true;
     statusEl.textContent = '正在连接更新源查询最新版本…';
   } else if (st === 'downloading') {
-    if (badgeEl) badgeEl.textContent = '下载中';
-    btnEl.textContent = `正在下载校验 v${appUpdatePhase.version}…`;
+    const pct = typeof appUpdatePhase.progress === 'number' && appUpdatePhase.progress >= 0 ? appUpdatePhase.progress : -1;
+    if (badgeEl) badgeEl.textContent = pct >= 0 ? `下载中 ${pct}%` : '下载中';
+    btnEl.textContent = pct >= 0 ? `正在下载 v${appUpdatePhase.version} (${pct}%)` : `正在下载校验 v${appUpdatePhase.version}…`;
     btnEl.disabled = true;
-    statusEl.textContent = `正在下载新版本 v${appUpdatePhase.version} 并校验 SHA-256 签名…`;
+    statusEl.textContent = pct >= 0
+      ? `正在下载新版本 v${appUpdatePhase.version}（${pct}%）并校验 SHA-256 签名…`
+      : `正在下载新版本 v${appUpdatePhase.version} 并校验 SHA-256 签名…`;
   } else if (st === 'ready') {
     if (badgeEl) badgeEl.textContent = `新版 v${appUpdatePhase.version}`;
     btnEl.textContent = `立即安装 v${appUpdatePhase.version}`;
@@ -4418,7 +4580,8 @@ window.__onUpdateCheckResult = function(rawJson) {
       state: data.state,
       version: data.version || '',
       build: data.build || 0,
-      message: data.message || ''
+      message: data.message || '',
+      progress: typeof data.progress === 'number' ? data.progress : -1
     };
     refreshAppUpdateCardUI();
     if (data.state === 'up_to_date' && data.manual) {
@@ -4433,6 +4596,14 @@ window.__onUpdateCheckResult = function(rawJson) {
       showBanner('检查更新失败：' + (data.message || '网络不可达'));
     }
   } catch (e) {}
+};
+
+window.__onInstallPermissionDenied = function() {
+  showBanner('尚未授予「允许安装未知应用」权限，请在系统设置开启后再次点击「立即安装」');
+};
+
+window.__onStorageError = function(msg) {
+  showBanner('本地数据库写入失败：' + (msg || '磁盘空间不足或数据库异常'));
 };
 
 function onTapTopbarSync() {
@@ -4533,6 +4704,12 @@ function applyParsedSyncConfig(cfg, sourceLabel) {
     onToggleAutoSync(true);
     syncAutoSyncSwitchUI(true);
   }
+  const newCredKey = ep + '|' + tk;
+  if (newCredKey !== lastSyncedCredKey) {
+    lastSyncedCredKey = newCredKey;
+    lastSyncedRevision = null;
+    lastSyncedMutationSeq = -1;
+  }
   updateTopbarSyncIndicator();
 
   if (cfg.endpoint) {
@@ -4624,6 +4801,12 @@ function toggleAutoSyncSwitch() {
   }
   onToggleAutoSync(next);
   syncAutoSyncSwitchUI(next);
+  const newCredKey = ep + '|' + tk;
+  if (newCredKey !== lastSyncedCredKey) {
+    lastSyncedCredKey = newCredKey;
+    lastSyncedRevision = null;
+    lastSyncedMutationSeq = -1;
+  }
   updateTopbarSyncIndicator();
   if (next) {
     showToast('已开启自动同步，正在执行首次同步…');
@@ -4669,7 +4852,7 @@ function renderSettingsView() {
           <div class="settings-row-label">${escapeHtml(p.name)}</div>
           <div class="settings-row-desc">${kindLabel} · ${cnt} 条词条${arch}</div>
         </div>
-        <button class="mini-pill-btn" onclick="openGroupManagerModal('${p.id}')">编辑</button>
+        <button class="mini-pill-btn" data-action="edit-group" data-group-id="${escapeHtml(p.id)}">编辑</button>
       </div>
     `;
   }).join('');
@@ -4689,6 +4872,12 @@ function saveSyncSettings(silent = false) {
   } else {
     localStorage.setItem('promptpanel_cloud_endpoint', ep);
     localStorage.setItem('promptpanel_cloud_api_key', tk);
+  }
+  const newCredKey = ep + '|' + tk;
+  if (newCredKey !== lastSyncedCredKey) {
+    lastSyncedCredKey = newCredKey;
+    lastSyncedRevision = null;
+    lastSyncedMutationSeq = -1;
   }
   updateTopbarSyncIndicator();
   if (!silent) {
@@ -4771,9 +4960,55 @@ function formatSyncHttpError(code, body) {
   return 'HTTP ' + code + (serverErr ? '：' + serverErr : '');
 }
 
+const nativeHttpPending = new Map();
+let nativeHttpSeq = 0;
+
+window.__resolveNativeHttp = function(rawJson) {
+  try {
+    const res = typeof rawJson === 'string' ? JSON.parse(rawJson) : rawJson;
+    if (!res || !res.reqId) return;
+    const entry = nativeHttpPending.get(res.reqId);
+    if (!entry) return;
+    nativeHttpPending.delete(res.reqId);
+    clearTimeout(entry.timer);
+    entry.resolve({
+      code: Number(res.status) || 0,
+      body: String(res.body || '').trim()
+    });
+  } catch (e) {}
+};
+
+function nativeHttpAsync(method, url, bearerToken, body) {
+  return new Promise((resolve, reject) => {
+    if (window.AndroidBridge && AndroidBridge.httpRequestAsync) {
+      const reqId = 'req-' + (++nativeHttpSeq) + '-' + Date.now();
+      const timer = setTimeout(() => {
+        if (nativeHttpPending.has(reqId)) {
+          nativeHttpPending.delete(reqId);
+          resolve({ code: 0, body: '请求超时，请检查网络连接' });
+        }
+      }, 30000);
+      nativeHttpPending.set(reqId, { resolve, reject, timer });
+      const headersJson = bearerToken ? JSON.stringify({ Authorization: 'Bearer ' + bearerToken }) : '{}';
+      AndroidBridge.httpRequestAsync(reqId, method, url, headersJson, body || '');
+      return;
+    }
+    if (window.AndroidBridge && AndroidBridge.httpRequest) {
+      const res = AndroidBridge.httpRequest(method, url, bearerToken || '', body || '');
+      const nl = res.indexOf('\n');
+      resolve({
+        code: parseInt(res.slice(0, nl), 10) || 0,
+        body: res.slice(nl + 1).trim()
+      });
+      return;
+    }
+    reject(new Error('NO_NATIVE_BRIDGE'));
+  });
+}
+
 let isTestingConnection = false;
 
-function testCloudConnection() {
+async function testCloudConnection() {
   if (isTestingConnection) return;
   saveSyncSettings(true);
   const { ep, tk } = getSyncCredentials();
@@ -4781,47 +5016,42 @@ function testCloudConnection() {
     showToast('请先填写云端同步地址');
     return;
   }
+  if (!(window.AndroidBridge && (AndroidBridge.httpRequestAsync || AndroidBridge.httpRequest))) {
+    showToast('请在 Android 客户端内测试连接');
+    return;
+  }
   const healthUrl = resolveHealthUrl(ep);
   isTestingConnection = true;
   document.getElementById('syncBadgeText').textContent = '检测中…';
   const t0 = Date.now();
-  setTimeout(() => {
-    try {
-      if (window.AndroidBridge && AndroidBridge.httpRequest) {
-        const res = AndroidBridge.httpRequest('GET', healthUrl, tk, '');
-        const nl = res.indexOf('\n');
-        const code = parseInt(res.slice(0, nl), 10);
-        const body = res.slice(nl + 1).trim();
-        const latency = Math.max(1, Date.now() - t0);
-        if (code >= 200 && code < 300) {
-          let info = {};
-          try { info = JSON.parse(body); } catch (e) {}
-          const pCnt = info.projectCount || 0;
-          const eCnt = info.entryCount || 0;
-          const vCnt = info.versionCount || 0;
-          const ns = info.namespace ? `空间 ${info.namespace}` : (tk.length >= 12 ? '已连接' : '未填或过短 Token');
-          document.getElementById('syncBadgeText').textContent = '连接正常';
-          document.getElementById('syncStatusText').textContent = `连接正常 · ${latency} ms · ${ns}（云端 ${pCnt} 组 / ${eCnt} 条 / ${vCnt} 版）`;
-          updateTopbarSyncIndicator('ok');
-          showToast('连接正常 (' + latency + ' ms)');
-        } else {
-          const friendlyErr = formatSyncHttpError(code, body);
-          document.getElementById('syncBadgeText').textContent = code > 0 ? ('HTTP ' + code) : '连接失败';
-          document.getElementById('syncStatusText').textContent = '连接失败：' + friendlyErr;
-          updateTopbarSyncIndicator('err');
-          showToast(friendlyErr);
-        }
-      } else {
-        showToast('请在 Android 客户端内测试连接');
-      }
-    } catch (e) {
-      document.getElementById('syncBadgeText').textContent = '连接异常';
+  try {
+    const { code, body } = await nativeHttpAsync('GET', healthUrl, tk, '');
+    const latency = Math.max(1, Date.now() - t0);
+    if (code >= 200 && code < 300) {
+      let info = {};
+      try { info = JSON.parse(body); } catch (e) {}
+      const pCnt = info.projectCount || 0;
+      const eCnt = info.entryCount || 0;
+      const vCnt = info.versionCount || 0;
+      const ns = info.namespace ? `空间 ${info.namespace}` : (tk.length >= 12 ? '已连接' : '未填或过短 Token');
+      document.getElementById('syncBadgeText').textContent = '连接正常';
+      document.getElementById('syncStatusText').textContent = `连接正常 · ${latency} ms · ${ns}（云端 ${pCnt} 组 / ${eCnt} 条 / ${vCnt} 版）`;
+      updateTopbarSyncIndicator('ok');
+      showToast('连接正常 (' + latency + ' ms)');
+    } else {
+      const friendlyErr = formatSyncHttpError(code, body);
+      document.getElementById('syncBadgeText').textContent = code > 0 ? ('HTTP ' + code) : '连接失败';
+      document.getElementById('syncStatusText').textContent = '连接失败：' + friendlyErr;
       updateTopbarSyncIndicator('err');
-      showToast('检测异常: ' + e.message);
-    } finally {
-      isTestingConnection = false;
+      showToast(friendlyErr);
     }
-  }, 30);
+  } catch (e) {
+    document.getElementById('syncBadgeText').textContent = '连接异常';
+    updateTopbarSyncIndicator('err');
+    showToast('检测异常: ' + e.message);
+  } finally {
+    isTestingConnection = false;
+  }
 }
 
 function mergeRemoteEnvelope(remote) {
@@ -4833,20 +5063,48 @@ function mergeRemoteEnvelope(remote) {
   const remoteEntries = (remote.entries || []).filter(e => e && e.id).map(normalizeEntry);
   const remoteVersions = (remote.versions || []).filter(v => v && v.id).map(normalizeVersion);
 
+  // Build O(1) lookup maps once before iterating remote records
+  const projectById = new Map();
+  for (let i = 0; i < store.projects.length; i++) {
+    projectById.set(store.projects[i].id, store.projects[i]);
+  }
+  const entryById = new Map();
+  const localActiveEntries = [];
+  for (let i = 0; i < store.entries.length; i++) {
+    const e = store.entries[i];
+    entryById.set(e.id, e);
+    if (!e.deletedAt) localActiveEntries.push(e);
+  }
+  const versionsByEntryId = new Map();
+  const versionIdSet = new Set();
+  const versionKeySet = new Set();
+  const maxVerByEntryId = new Map();
+  for (let i = 0; i < store.versions.length; i++) {
+    const v = store.versions[i];
+    versionIdSet.add(v.id);
+    const vNum = Number(v.versionNumber || 1) || 1;
+    versionKeySet.add(v.entryId + ':' + vNum);
+    const prevMax = maxVerByEntryId.get(v.entryId) || 0;
+    if (vNum > prevMax) maxVerByEntryId.set(v.entryId, vNum);
+    let arr = versionsByEntryId.get(v.entryId);
+    if (!arr) {
+      arr = [];
+      versionsByEntryId.set(v.entryId, arr);
+    }
+    arr.push(v);
+  }
+
   const remappedProjectIds = {};
-  const localDefault = (store.projects || []).find(p => p.isDefault);
+  const localDefault = (store.projects || []).find(p => p.isDefault && !p.deletedAt) || (store.projects || []).find(p => p.isDefault);
+  const isSystemProtected = p => !!(p && (p.id === BUILTIN_INBOX_ID || p.isDefault));
 
   // Anti-data-loss circuit breaker: detect abnormal mass-tombstone deletes
-  const localActiveEntries = activeEntriesList();
-  const localActiveById = {};
-  localActiveEntries.forEach(e => { localActiveById[e.id] = e; });
   let remoteDeletingCount = 0;
   for (const re of remoteEntries) {
-    const local = localActiveById[re.id];
-    const rDeleted = !!re.deletedAt;
-    if (local && rDeleted) {
-      const rTime = new Date(re.updatedAt || 0).getTime();
-      const lTime = new Date(local.updatedAt || 0).getTime();
+    const local = entryById.get(re.id);
+    if (local && !local.deletedAt && !!re.deletedAt) {
+      const rTime = parseIsoEpochMs(re.updatedAt);
+      const lTime = parseIsoEpochMs(local.updatedAt);
       if (rTime > lTime) remoteDeletingCount++;
     }
   }
@@ -4856,60 +5114,81 @@ function mergeRemoteEnvelope(remote) {
     (localActiveCount >= 2 && remoteDeletingCount === localActiveCount);
 
   for (const rp of remoteProjects) {
+    if (rp.groupKindRaw === 'inbox' && rp.id !== BUILTIN_INBOX_ID) {
+      remappedProjectIds[rp.id] = BUILTIN_INBOX_ID;
+      continue;
+    }
     const isRemoteDefault = !!rp.isDefault;
-    const idx = store.projects.findIndex(p => p.id === rp.id);
-    if (idx >= 0) {
-      const lp = store.projects[idx];
-      const rTime = new Date(rp.updatedAt || 0).getTime();
-      const lTime = new Date(lp.updatedAt || 0).getTime();
+    const lp = projectById.get(rp.id);
+    if (lp) {
+      const rTime = parseIsoEpochMs(rp.updatedAt);
+      const lTime = parseIsoEpochMs(lp.updatedAt);
       if (rTime > lTime) {
         const lDeleted = !!lp.deletedAt;
         const rDeleted = !!rp.deletedAt;
-        if (!lDeleted && rDeleted && shouldBlockMassDeletions) {
+        if (rDeleted && (isSystemProtected(lp) || (!lDeleted && shouldBlockMassDeletions))) {
           const healedTime = new Date(Math.max(Date.now(), rTime + 2000)).toISOString();
           lp.updatedAt = healedTime;
           lp.deletedAt = null;
           stats.protectedCount++;
         } else {
-          store.projects[idx] = rp;
+          Object.assign(lp, rp);
           stats.pUpd++;
         }
       }
     } else if (isRemoteDefault && localDefault && localDefault.id !== rp.id) {
       remappedProjectIds[rp.id] = localDefault.id;
     } else {
+      if (isSystemProtected(rp) && rp.deletedAt) {
+        rp.deletedAt = null;
+      }
       store.projects.push(rp);
+      projectById.set(rp.id, rp);
       if (!rp.deletedAt) stats.pNew++;
     }
   }
+
+  const activeDefaultProj = (store.projects || []).find(p => p.isDefault && !p.deletedAt)
+    || (store.projects || []).find(p => !p.deletedAt);
+  const fallbackProjectId = activeDefaultProj ? activeDefaultProj.id : 'default-general';
 
   for (const rawRe of remoteEntries) {
     const re = Object.assign({}, rawRe);
     if (re.projectId && remappedProjectIds[re.projectId]) {
       re.projectId = remappedProjectIds[re.projectId];
     }
-    const idx = store.entries.findIndex(e => e.id === re.id);
-    if (idx >= 0) {
-      const local = store.entries[idx];
-      const remoteTime = new Date(re.updatedAt || 0).getTime();
-      const localTime = new Date(local.updatedAt || 0).getTime();
+    if (!re.projectId || !projectById.has(re.projectId)) {
+      re.projectId = fallbackProjectId;
+      re.updatedAt = new Date(Math.max(Date.now(), parseIsoEpochMs(re.updatedAt) + 1)).toISOString();
+    }
+    const local = entryById.get(re.id);
+    if (local) {
+      const remoteTime = parseIsoEpochMs(re.updatedAt);
+      const localTime = parseIsoEpochMs(local.updatedAt);
       const hasTextDiff = (local.content || '') !== (re.content || '') || (local.title || '') !== (re.title || '');
       const isRemoteDeletion = !local.deletedAt && !!re.deletedAt;
       if (remoteTime > localTime) {
+        const vers = versionsByEntryId.get(local.id) || [];
+        let maxVer = maxVerByEntryId.get(local.id) || 0;
         if (hasTextDiff || isRemoteDeletion) {
-          const vers = versionsForEntry(local.id);
-          const maxVer = vers.length > 0 ? (vers[0].versionNumber || 1) : 0;
           const alreadySaved = vers.some(v => (v.content || '') === (local.content || '') && (v.title || '') === (local.title || ''));
           if (!alreadySaved) {
-            store.versions.push({
-              id: local.id + '-conflict-' + Date.now(),
+            maxVer += 1;
+            const conflictVer = {
+              id: makeId(local.id + '-conflict-'),
               entryId: local.id,
-              versionNumber: maxVer + 1,
+              versionNumber: maxVer,
               title: local.title,
               content: local.content,
               changeNote: isRemoteDeletion ? '云端同步删除前手机本地版本自动留存' : '云端同步前本地版本自动留存',
               createdAt: local.updatedAt || new Date().toISOString()
-            });
+            };
+            store.versions.push(conflictVer);
+            vers.push(conflictVer);
+            versionsByEntryId.set(local.id, vers);
+            versionIdSet.add(conflictVer.id);
+            versionKeySet.add(local.id + ':' + maxVer);
+            maxVerByEntryId.set(local.id, maxVer);
             stats.conflicts++;
           }
         }
@@ -4917,7 +5196,7 @@ function mergeRemoteEnvelope(remote) {
         const lUsed = local.lastUsedAt;
         const rUsed = re.lastUsedAt;
         const mergedUsed = (lUsed && rUsed)
-          ? (new Date(lUsed) > new Date(rUsed) ? lUsed : rUsed)
+          ? (parseIsoEpochMs(lUsed) > parseIsoEpochMs(rUsed) ? lUsed : rUsed)
           : (lUsed || rUsed || null);
         if (isRemoteDeletion && shouldBlockMassDeletions) {
           const healedTime = new Date(Math.max(Date.now(), remoteTime + 2000)).toISOString();
@@ -4929,23 +5208,29 @@ function mergeRemoteEnvelope(remote) {
           continue;
         }
         re.lastUsedAt = mergedUsed;
-        store.entries[idx] = re;
+        Object.assign(local, re);
         stats.eUpd++;
       } else {
         if (remoteTime < localTime && hasTextDiff) {
-          const vers = versionsForEntry(local.id);
-          const alreadySaved = vers.some(v => (v.content || '') === (re.content || '') && (v.title || '') === (local.title || ''));
+          const vers = versionsByEntryId.get(local.id) || [];
+          const alreadySaved = vers.some(v => (v.content || '') === (re.content || '') && (v.title || '') === (re.title || ''));
           if (!alreadySaved) {
-            const maxVer = vers.length > 0 ? (vers[0].versionNumber || 1) : 0;
-            store.versions.push({
-              id: local.id + '-remote-conflict-' + Date.now(),
+            const maxVer = (maxVerByEntryId.get(local.id) || 0) + 1;
+            const conflictVer = {
+              id: makeId(local.id + '-remote-conflict-'),
               entryId: local.id,
-              versionNumber: maxVer + 1,
+              versionNumber: maxVer,
               title: re.title,
               content: re.content,
               changeNote: '远端并发历史版本自动留存',
               createdAt: re.updatedAt || new Date().toISOString()
-            });
+            };
+            store.versions.push(conflictVer);
+            vers.push(conflictVer);
+            versionsByEntryId.set(local.id, vers);
+            versionIdSet.add(conflictVer.id);
+            versionKeySet.add(local.id + ':' + maxVer);
+            maxVerByEntryId.set(local.id, maxVer);
             stats.conflicts++;
           }
         }
@@ -4953,25 +5238,24 @@ function mergeRemoteEnvelope(remote) {
         const lUsed = local.lastUsedAt;
         const rUsed = re.lastUsedAt;
         if (lUsed && rUsed) {
-          local.lastUsedAt = new Date(lUsed) > new Date(rUsed) ? lUsed : rUsed;
+          local.lastUsedAt = parseIsoEpochMs(lUsed) > parseIsoEpochMs(rUsed) ? lUsed : rUsed;
         } else if (rUsed && !lUsed) {
           local.lastUsedAt = rUsed;
         }
       }
     } else {
       store.entries.push(re);
+      entryById.set(re.id, re);
       if (!re.deletedAt) stats.eNew++;
     }
   }
 
-  // Revive any soft-deleted project that still contains active entries
-  const neededProjectIds = new Set();
-  for (const e of activeEntriesList()) {
-    if (e.projectId) neededProjectIds.add(e.projectId);
-  }
-  for (const p of (store.projects || [])) {
-    if (neededProjectIds.has(p.id) && p.deletedAt) {
-      const revivedTime = new Date(Math.max(Date.now(), new Date(p.updatedAt || 0).getTime() + 2000)).toISOString();
+  // Revive any soft-deleted project that still contains active entries (O(N) via projectById)
+  for (const e of (store.entries || [])) {
+    if (e.deletedAt) continue;
+    const p = e.projectId ? projectById.get(e.projectId) : null;
+    if (p && p.deletedAt) {
+      const revivedTime = new Date(Math.max(Date.now(), parseIsoEpochMs(p.updatedAt) + 2000)).toISOString();
       p.deletedAt = null;
       p.updatedAt = revivedTime;
       stats.protectedCount++;
@@ -4979,10 +5263,18 @@ function mergeRemoteEnvelope(remote) {
   }
 
   for (const rv of remoteVersions) {
-    const exists = store.versions.some(v =>
-      v.id === rv.id || (v.entryId === rv.entryId && v.versionNumber === rv.versionNumber)
-    );
-    if (!exists) store.versions.push(rv);
+    if (versionIdSet.has(rv.id)) continue;
+    let vNum = Number(rv.versionNumber || 1) || 1;
+    if (versionKeySet.has(rv.entryId + ':' + vNum)) {
+      vNum = (maxVerByEntryId.get(rv.entryId) || 0) + 1;
+      rv.versionNumber = vNum;
+    }
+    store.versions.push(rv);
+    versionIdSet.add(rv.id);
+    versionKeySet.add(rv.entryId + ':' + vNum);
+    if (vNum > (maxVerByEntryId.get(rv.entryId) || 0)) {
+      maxVerByEntryId.set(rv.entryId, vNum);
+    }
   }
   return stats;
 }
@@ -4991,7 +5283,7 @@ let isSyncInFlight = false;
 let pendingFollowUpSync = false;
 let pendingFollowUpSilent = true;
 
-function triggerCloudSync(silent = false) {
+async function triggerCloudSync(silent = false) {
   if (mainSegment === 'settings') saveSyncSettings(true);
   const { ep, tk } = getSyncCredentials();
   if (!ep) {
@@ -5006,6 +5298,12 @@ function triggerCloudSync(silent = false) {
     showBanner('请填写不少于 12 位的访问令牌 (Bearer Token)');
     return;
   }
+  const credKey = ep + '|' + tk;
+  if (credKey !== lastSyncedCredKey) {
+    lastSyncedCredKey = credKey;
+    lastSyncedRevision = null;
+    lastSyncedMutationSeq = -1;
+  }
   if (isSyncInFlight) {
     pendingFollowUpSync = true;
     if (!silent) {
@@ -5014,86 +5312,118 @@ function triggerCloudSync(silent = false) {
     }
     return;
   }
+  if (!(window.AndroidBridge && (AndroidBridge.httpRequestAsync || AndroidBridge.httpRequest))) {
+    if (!silent) showToast('请在 Android 客户端内执行同步');
+    return;
+  }
+
   isSyncInFlight = true;
   flushPendingStoreSave();
+  const allowMassDelete = pendingAllowMassDelete;
+  pendingAllowMassDelete = false;
 
   const syncUrl = resolveSyncUrl(ep);
+  const isAutoPoll = silent && !allowMassDelete;
+  const canFastPoll = isAutoPoll && lastSyncedRevision !== null && localMutationSeq === lastSyncedMutationSeq;
+  const getUrl = canFastPoll
+    ? syncUrl + (syncUrl.includes('?') ? '&' : '?') + 'since_revision=' + encodeURIComponent(lastSyncedRevision)
+    : syncUrl;
+
   if (!silent) showToast('正在同步…');
 
-  setTimeout(() => {
-    try {
-      if (window.AndroidBridge && AndroidBridge.httpRequest) {
-        const getRes = AndroidBridge.httpRequest('GET', syncUrl, tk, '');
-        const nl = getRes.indexOf('\n');
-        const getCode = parseInt(getRes.slice(0, nl), 10);
-        const getBody = getRes.slice(nl + 1).trim();
-        if (getCode === 401 || getCode === 403) {
-          const authMsg = formatSyncHttpError(getCode, getBody);
-          document.getElementById('syncStatusText').textContent = authMsg;
-          document.getElementById('syncBadgeText').textContent = '鉴权失败';
-          updateTopbarSyncIndicator('err');
-          if (!silent) showBanner(authMsg);
-          return;
-        }
-        if ((getCode < 200 || getCode >= 300) && getCode !== 404) {
-          const getErrMsg = formatSyncHttpError(getCode, getBody);
-          document.getElementById('syncStatusText').textContent = '同步失败：' + getErrMsg;
-          document.getElementById('syncBadgeText').textContent = getCode > 0 ? ('HTTP ' + getCode) : '连接失败';
-          updateTopbarSyncIndicator('err');
-          if (!silent) showToast(getErrMsg);
-          return;
-        }
-        let s1 = { pNew: 0, pUpd: 0, eNew: 0, eUpd: 0, conflicts: 0, protectedCount: 0 };
-        if (getCode >= 200 && getCode < 300 && getBody) {
-          s1 = mergeRemoteEnvelope(JSON.parse(getBody));
-        }
-        persistStore(false, true);
-        const postRes = AndroidBridge.httpRequest('POST', syncUrl, tk, JSON.stringify(store));
-        const pnl = postRes.indexOf('\n');
-        const postCode = parseInt(postRes.slice(0, pnl), 10);
-        const postBody = postRes.slice(pnl + 1).trim();
-        if (postCode >= 200 && postCode < 300) {
-          if (postBody) {
-            const s2 = mergeRemoteEnvelope(JSON.parse(postBody));
-            s1.pNew += s2.pNew;
-            s1.pUpd += s2.pUpd;
-            s1.eNew += s2.eNew;
-            s1.eUpd += s2.eUpd;
-            s1.conflicts += s2.conflicts;
-            s1.protectedCount += (s2.protectedCount || 0);
-            persistStore(false, true);
-          }
-          const protSuffix = s1.protectedCount > 0 ? `，防丢熔断保护 ${s1.protectedCount}` : '';
-          const summary = `上次同步：${new Date().toLocaleTimeString()}（项目 +${s1.pNew}/更${s1.pUpd}，词条 +${s1.eNew}/更${s1.eUpd}，冲突版本保护 ${s1.conflicts}${protSuffix}）`;
-          document.getElementById('syncStatusText').textContent = summary;
-          document.getElementById('syncBadgeText').textContent = '已同步';
-          updateTopbarSyncIndicator('ok');
-          if (!silent) showBanner(summary);
-          render();
-          if (mainSegment === 'settings') renderSettingsView();
-        } else {
-          const postErrMsg = formatSyncHttpError(postCode, postBody);
-          document.getElementById('syncStatusText').textContent = '同步失败：' + postErrMsg;
-          document.getElementById('syncBadgeText').textContent = postCode > 0 ? ('HTTP ' + postCode) : '同步失败';
-          updateTopbarSyncIndicator('err');
-          if (!silent) showToast(postErrMsg);
-        }
-      } else if (!silent) {
-        showToast('请在 Android 客户端内执行同步');
-      }
-    } catch (e) {
+  try {
+    const getRes = await nativeHttpAsync('GET', getUrl, tk, '');
+    const getCode = getRes.code;
+    const getBody = getRes.body;
+    if (getCode === 401 || getCode === 403) {
+      const authMsg = formatSyncHttpError(getCode, getBody);
+      document.getElementById('syncStatusText').textContent = authMsg;
+      document.getElementById('syncBadgeText').textContent = '鉴权失败';
       updateTopbarSyncIndicator('err');
-      if (!silent) showToast('同步数据解析异常：' + e.message);
-    } finally {
-      isSyncInFlight = false;
-      if (pendingFollowUpSync) {
-        const nextSilent = pendingFollowUpSilent;
-        pendingFollowUpSync = false;
-        pendingFollowUpSilent = true;
-        setTimeout(() => { triggerCloudSync(nextSilent); }, 150);
+      if (!silent) showBanner(authMsg);
+      return;
+    }
+    if ((getCode < 200 || getCode >= 300) && getCode !== 404) {
+      const getErrMsg = formatSyncHttpError(getCode, getBody);
+      document.getElementById('syncStatusText').textContent = '同步失败：' + getErrMsg;
+      document.getElementById('syncBadgeText').textContent = getCode > 0 ? ('HTTP ' + getCode) : '连接失败';
+      updateTopbarSyncIndicator('err');
+      if (!silent) showToast(getErrMsg);
+      return;
+    }
+
+    let getEnvelope = null;
+    if (getCode >= 200 && getCode < 300 && getBody) {
+      getEnvelope = JSON.parse(getBody);
+      if (canFastPoll && getEnvelope && getEnvelope.unchanged === true) {
+        if (getEnvelope.revision != null) lastSyncedRevision = getEnvelope.revision;
+        document.getElementById('syncStatusText').textContent = `上次同步：${new Date().toLocaleTimeString()}（无变更）`;
+        document.getElementById('syncBadgeText').textContent = '已同步';
+        updateTopbarSyncIndicator('ok');
+        return;
       }
     }
-  }, 40);
+
+    let s1 = { pNew: 0, pUpd: 0, eNew: 0, eUpd: 0, conflicts: 0, protectedCount: 0 };
+    if (getEnvelope) {
+      s1 = mergeRemoteEnvelope(getEnvelope);
+      if (getEnvelope.revision != null) lastSyncedRevision = getEnvelope.revision;
+    }
+    persistStore(false, true);
+
+    const seqBeforePost = localMutationSeq;
+    const postPayload = Object.assign({}, store);
+    if (allowMassDelete) {
+      postPayload.allowMassDelete = true;
+    }
+    const postRes = await nativeHttpAsync('POST', syncUrl, tk, JSON.stringify(postPayload));
+    const postCode = postRes.code;
+    const postBody = postRes.body;
+    if (postCode >= 200 && postCode < 300) {
+      if (postBody) {
+        const postEnvelope = JSON.parse(postBody);
+        if (postEnvelope && postEnvelope.revision != null) {
+          lastSyncedRevision = postEnvelope.revision;
+        }
+        const s2 = mergeRemoteEnvelope(postEnvelope);
+        s1.pNew += s2.pNew;
+        s1.pUpd += s2.pUpd;
+        s1.eNew += s2.eNew;
+        s1.eUpd += s2.eUpd;
+        s1.conflicts += s2.conflicts;
+        s1.protectedCount += (s2.protectedCount || 0);
+        persistStore(false, true);
+      }
+      if (localMutationSeq === seqBeforePost) {
+        lastSyncedMutationSeq = seqBeforePost;
+      }
+      const protSuffix = s1.protectedCount > 0 ? `，防丢熔断保护 ${s1.protectedCount}` : '';
+      const summary = `上次同步：${new Date().toLocaleTimeString()}（项目 +${s1.pNew}/更${s1.pUpd}，词条 +${s1.eNew}/更${s1.eUpd}，冲突版本保护 ${s1.conflicts}${protSuffix}）`;
+      document.getElementById('syncStatusText').textContent = summary;
+      document.getElementById('syncBadgeText').textContent = '已同步';
+      updateTopbarSyncIndicator('ok');
+      if (!silent) showBanner(summary);
+      render();
+      if (mainSegment === 'settings') renderSettingsView();
+    } else {
+      const postErrMsg = formatSyncHttpError(postCode, postBody);
+      document.getElementById('syncStatusText').textContent = '同步失败：' + postErrMsg;
+      document.getElementById('syncBadgeText').textContent = postCode > 0 ? ('HTTP ' + postCode) : '同步失败';
+      updateTopbarSyncIndicator('err');
+      if (!silent) showToast(postErrMsg);
+    }
+  } catch (e) {
+    updateTopbarSyncIndicator('err');
+    if (!silent) showToast('同步数据解析异常：' + e.message);
+  } finally {
+    isSyncInFlight = false;
+    if (pendingFollowUpSync) {
+      const nextSilent = pendingFollowUpSilent;
+      pendingFollowUpSync = false;
+      pendingFollowUpSilent = true;
+      setTimeout(() => { triggerCloudSync(nextSilent); }, 150);
+    }
+  }
 }
 
 /* JSON Export & Import */
@@ -5202,11 +5532,72 @@ function escapeHtml(str) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/`/g, '&#96;');
 }
 
+function hydrateSafeAreaInsets() {
+  try {
+    if (window.AndroidBridge && AndroidBridge.getSafeAreaInsets) {
+      const insets = JSON.parse(AndroidBridge.getSafeAreaInsets());
+      const st = document.documentElement.style;
+      if (typeof insets.top === 'number') st.setProperty('--safe-top', insets.top + 'px');
+      if (typeof insets.bottom === 'number') st.setProperty('--safe-bottom', insets.bottom + 'px');
+      if (typeof insets.ime === 'number') st.setProperty('--ime-bottom', insets.ime + 'px');
+    }
+  } catch (e) {}
+}
+
+document.addEventListener('click', function(event) {
+  const el = event.target && event.target.closest ? event.target.closest('[data-action]') : null;
+  if (!el) return;
+  const action = el.dataset.action;
+  if (!action) return;
+
+  if (action === 'toggle-todo') {
+    event.stopPropagation();
+    toggleTodoDone(el.dataset.entryId);
+  } else if (action === 'copy-entry') {
+    event.stopPropagation();
+    copyEntry(el.dataset.entryId);
+  } else if (action === 'share-entry') {
+    event.stopPropagation();
+    shareEntry(el.dataset.entryId);
+  } else if (action === 'open-editor') {
+    if (!window.__suppressNextRowTap) {
+      openEditorSheet(el.dataset.entryId);
+    }
+  } else if (action === 'select-group') {
+    selectGroup(el.dataset.groupId);
+  } else if (action === 'toggle-archived') {
+    toggleShowArchived();
+  } else if (action === 'new-group') {
+    openGroupManagerModal(null);
+  } else if (action === 'edit-group') {
+    openGroupManagerModal(el.dataset.groupId);
+  } else if (action === 'clear-filters') {
+    clearEntryFilters();
+  } else if (action === 'filter-kind') {
+    toggleEntryKindFilter(el.dataset.kind);
+  } else if (action === 'filter-tag') {
+    toggleEntryTagFilter(el.dataset.tag);
+  } else if (action === 'copy-version') {
+    copyVersionContent(el.dataset.versionId);
+  } else if (action === 'rollback-version') {
+    rollbackToVersion(el.dataset.entryId, el.dataset.versionId);
+  } else if (action === 'clone-entry') {
+    cloneEntryToProject(el.dataset.entryId, el.dataset.projectId);
+  } else if (action === 'ref-clone-entry') {
+    cloneEntryToProject(el.dataset.entryId, el.dataset.projectId);
+    renderReferenceWindow();
+  }
+});
+
+hydrateSafeAreaInsets();
 loadPreferencesAndStore();
 hydrateSyncInputsFromStorage();
+refreshAppUpdateCardUI();
 render();
 if (isAutoSyncEnabled() && getSyncCredentials().ep) {
   setTimeout(function() { triggerCloudSync(true); }, 900);

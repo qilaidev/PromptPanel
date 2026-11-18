@@ -17,11 +17,17 @@ export PATH="${JAVA_HOME}/bin:${BUILD_TOOLS}:${PATH}"
 SHORT_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${REPO_ROOT}/Sources/PromptPanel/Resources/Info.plist")"
 BUILD_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${REPO_ROOT}/Sources/PromptPanel/Resources/Info.plist")"
 
+EPHEMERAL_KEYSTORE="false"
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --output-dir)
             OUTPUT_DIR="$2"
             shift 2
+            ;;
+        --ephemeral-keystore)
+            EPHEMERAL_KEYSTORE="true"
+            shift
             ;;
         *)
             echo "Unknown option: $1" >&2
@@ -176,6 +182,13 @@ network_security_xml = """<?xml version="1.0" encoding="utf-8"?>
 </network-security-config>
 """
 (xml_dir / "network_security_config.xml").write_text(network_security_xml, encoding="utf-8")
+
+apk_paths_xml = """<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <files-path name="updates" path="updates/" />
+</paths>
+"""
+(xml_dir / "apk_provider_paths.xml").write_text(apk_paths_xml, encoding="utf-8")
 PY
 
 echo "[android-build] Compiling resources with aapt2..."
@@ -230,10 +243,10 @@ if [[ -n "${ANDROID_KEYSTORE_PATH:-}" ]]; then
         exit 1
     fi
     KEY_PASS="$ANDROID_KEY_PASS"
-else
+elif [[ "${CI:-}" == "true" || "$EPHEMERAL_KEYSTORE" == "true" ]]; then
     KEYSTORE_PATH="${WORK_DIR}/ephemeral-dev.p12"
     KEY_PASS="$(openssl rand -hex 24)"
-    echo "[android-build] ANDROID_KEYSTORE_PATH not set; generating ephemeral local keystore for verification build..."
+    echo "[android-build] Generating ephemeral local keystore for verification build..."
     keytool -genkeypair \
         -v \
         -keystore "$KEYSTORE_PATH" \
@@ -246,6 +259,35 @@ else
         -storepass "$KEY_PASS" \
         -keypass "$KEY_PASS" \
         -dname "CN=PromptPanel Dev Build, OU=Mobile, O=qilaidev, C=CN" >/dev/null 2>&1
+else
+    SIGNING_DIR="${HOME}/.config/promptpanel/android-signing"
+    KEYSTORE_PATH="${SIGNING_DIR}/promptpanel-release.p12"
+    KEYPASS_FILE="${SIGNING_DIR}/keystore.pass"
+    if [[ ! -f "$KEYSTORE_PATH" || ! -f "$KEYPASS_FILE" ]]; then
+        mkdir -p "$SIGNING_DIR"
+        chmod 700 "$SIGNING_DIR"
+        KEY_PASS="$(openssl rand -hex 24)"
+        umask 077
+        printf '%s' "$KEY_PASS" > "$KEYPASS_FILE"
+        chmod 600 "$KEYPASS_FILE"
+        echo "[android-build] Creating persistent local release keystore at ${KEYSTORE_PATH}..."
+        keytool -genkeypair \
+            -v \
+            -keystore "$KEYSTORE_PATH" \
+            -storetype PKCS12 \
+            -alias "$KEY_ALIAS" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -sigalg SHA256withRSA \
+            -validity 10950 \
+            -storepass "$KEY_PASS" \
+            -keypass "$KEY_PASS" \
+            -dname "CN=PromptPanel Local Release, OU=Mobile, O=qilaidev, C=CN" >/dev/null 2>&1
+        chmod 600 "$KEYSTORE_PATH"
+    else
+        KEY_PASS="$(<"$KEYPASS_FILE")"
+        echo "[android-build] Reusing persistent local release keystore at ${KEYSTORE_PATH}"
+    fi
 fi
 
 FINAL_APK="${OUTPUT_DIR}/PromptPanel-${SHORT_VERSION}+${BUILD_VERSION}-android.apk"
