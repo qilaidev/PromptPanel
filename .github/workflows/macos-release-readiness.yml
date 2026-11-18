@@ -42,7 +42,7 @@ jobs:
           sqlite3 "$valid_backup" '
             CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, is_default INTEGER NOT NULL, created_at TEXT, updated_at TEXT);
             CREATE TABLE entries (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT, content TEXT);
-            CREATE VIRTUAL TABLE entries_fts USING fts5(title, content);
+            CREATE TABLE entries_fts (title TEXT, content TEXT);
             CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT);
             CREATE TABLE execution_logs (id TEXT PRIMARY KEY);
             CREATE TABLE grdb_migrations (identifier TEXT PRIMARY KEY);
