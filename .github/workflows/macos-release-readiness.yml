@@ -6,13 +6,14 @@ on:
       - main
       - 'linyi/**'
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   verify:
-    runs-on: macos-14
+    runs-on: macos-15
 
     steps:
       - name: Checkout
@@ -60,6 +61,7 @@ jobs:
       - name: Validate self-hosted cloud sync server
         run: |
           python3 -m py_compile server/promptpanel_sync_server.py
+          python3 -m unittest discover -s server -p 'test_*.py' -v
 
       - name: Run formal release-readiness gate on macOS runner
         run: zsh scripts/release-readiness.sh --output-dir "$RUNNER_TEMP/promptpanel-release"
