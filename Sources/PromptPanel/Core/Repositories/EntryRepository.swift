@@ -19,6 +19,17 @@ final class EntryRepository: @unchecked Sendable {
         return decoded.contains { $0.caseInsensitiveCompare(target) == .orderedSame }
     }
 
+    static let icontainsDatabaseFunction = DatabaseFunction("pp_icontains", argumentCount: 2, pure: true) { dbValues in
+        guard let haystack = String.fromDatabaseValue(dbValues[0]),
+              let needle = String.fromDatabaseValue(dbValues[1]) else {
+            return false
+        }
+        if needle.isEmpty {
+            return true
+        }
+        return haystack.localizedStandardContains(needle)
+    }
+
     private let dbQueue: DatabaseQueue
 
     init(dbQueue: DatabaseQueue) {
@@ -33,7 +44,7 @@ final class EntryRepository: @unchecked Sendable {
     }
 
     /// Fetch entries across one or more projects with the standard ordering.
-    func fetchByProjects(_ projectIds: [String]) throws -> [Entry] {
+    func fetchByProjects(_ projectIds: [String], limit: Int? = nil) throws -> [Entry] {
         let ids = projectIds.uniqued()
         guard !ids.isEmpty else {
             return []
@@ -41,51 +52,65 @@ final class EntryRepository: @unchecked Sendable {
 
         return try dbQueue.read { db in
             let placeholders = ids.map { _ in "?" }.joined(separator: ", ")
+            let limitClause = (limit.map { $0 > 0 } == true) ? "\nLIMIT ?" : ""
             let sql = """
                 SELECT entries.*
                 FROM entries
                 WHERE entries.deleted_at IS NULL
                   AND entries.project_id IN (\(placeholders))
-                \(EntryRanking.sqlOrderByClause(includeProjectPriority: false))
+                \(EntryRanking.sqlOrderByClause(includeProjectPriority: false))\(limitClause)
                 """
             var arguments = StatementArguments(ids)
             arguments += [Date()] // pp_frecency's `now`, appended after the WHERE binds
+            if let limit, limit > 0 {
+                arguments += [limit]
+            }
             return try Entry.fetchAll(db, sql: sql, arguments: arguments)
         }
     }
 
     /// Fetch all non-deleted entries for management and all-projects views.
-    func fetchAll(excludeArchivedProjects: Bool = false) throws -> [Entry] {
+    func fetchAll(excludeArchivedProjects: Bool = false, limit: Int? = nil) throws -> [Entry] {
         try dbQueue.read { db in
             let archiveClause = excludeArchivedProjects
                 ? "\n  AND entries.project_id IN (SELECT id FROM projects WHERE deleted_at IS NULL AND is_archived = 0)"
                 : ""
+            let limitClause = (limit.map { $0 > 0 } == true) ? "\nLIMIT ?" : ""
             let sql = """
                 SELECT entries.*
                 FROM entries
                 WHERE entries.deleted_at IS NULL\(archiveClause)
-                \(EntryRanking.sqlOrderByClause(includeProjectPriority: false))
+                \(EntryRanking.sqlOrderByClause(includeProjectPriority: false))\(limitClause)
                 """
-            return try Entry.fetchAll(db, sql: sql, arguments: [Date()])
+            var arguments: StatementArguments = [Date()]
+            if let limit, limit > 0 {
+                arguments += [limit]
+            }
+            return try Entry.fetchAll(db, sql: sql, arguments: arguments)
         }
     }
 
     /// Fetch entries for the current project + default project, mixed and sorted per PRD.
     /// Current project entries rank above default project entries when all other sort keys are equal.
-    func fetchMixed(currentProjectId: String, defaultProjectId: String) throws -> [Entry] {
+    func fetchMixed(currentProjectId: String, defaultProjectId: String, limit: Int? = nil) throws -> [Entry] {
         try dbQueue.read { db in
+            let limitClause = (limit.map { $0 > 0 } == true) ? "\nLIMIT ?" : ""
             let sql = """
                 SELECT entries.*,
                        CASE WHEN entries.project_id = ? THEN 0 ELSE 1 END AS project_priority
                 FROM entries
                 WHERE entries.deleted_at IS NULL
                   AND entries.project_id IN (?, ?)
-                \(EntryRanking.sqlOrderByClause(includeProjectPriority: true))
+                \(EntryRanking.sqlOrderByClause(includeProjectPriority: true))\(limitClause)
                 """
+            var arguments: StatementArguments = [currentProjectId, currentProjectId, defaultProjectId, Date()]
+            if let limit, limit > 0 {
+                arguments += [limit]
+            }
             return try Entry.fetchAll(
                 db,
                 sql: sql,
-                arguments: [currentProjectId, currentProjectId, defaultProjectId, Date()]
+                arguments: arguments
             )
         }
     }
@@ -153,6 +178,7 @@ final class EntryRepository: @unchecked Sendable {
         }
 
         return try dbQueue.read { db in
+            db.add(function: Self.icontainsDatabaseFunction)
             let queryPredicate = Self.makeSearchPredicate(from: trimmed)
             let tagClause = normalizedTag != nil ? "\n  AND pp_has_tag(entries.tags, ?)" : ""
             let sql = """
@@ -214,6 +240,7 @@ final class EntryRepository: @unchecked Sendable {
         }
 
         return try dbQueue.read { db in
+            db.add(function: Self.icontainsDatabaseFunction)
             let queryPredicate = Self.makeSearchPredicate(from: trimmed)
             let placeholders = ids.map { _ in "?" }.joined(separator: ", ")
             let tagClause = normalizedTag != nil ? "\n  AND pp_has_tag(entries.tags, ?)" : ""
@@ -286,7 +313,7 @@ final class EntryRepository: @unchecked Sendable {
 
         if !shortTokens.isEmpty {
             let shortClauses = Array(
-                repeating: "(INSTR(LOWER(entries.title), LOWER(?)) > 0 OR INSTR(LOWER(entries.content), LOWER(?)) > 0 OR INSTR(LOWER(entries.tags), LOWER(?)) > 0)",
+                repeating: "(pp_icontains(entries.title, ?) OR pp_icontains(entries.content, ?) OR pp_icontains(entries.tags, ?))",
                 count: shortTokens.count
             ).joined(separator: " AND ")
             clauses.append("(\(shortClauses))")
@@ -549,7 +576,14 @@ final class EntryRepository: @unchecked Sendable {
                     arguments: [now, now]
                 )
             }
-            return db.changesCount
+            let count = db.changesCount
+            if count >= 3 {
+                try db.execute(
+                    sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('pending_allow_mass_delete', '1', ?)",
+                    arguments: [now]
+                )
+            }
+            return count
         }
         PPLogger.entry.debug("Soft-deleted \(deletedCount) completed entries (projectId=\(projectId ?? "all"), excludeArchived=\(excludeArchivedProjects))")
         return deletedCount

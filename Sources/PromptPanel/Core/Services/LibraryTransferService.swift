@@ -65,9 +65,7 @@ final class LibraryTransferService: @unchecked Sendable {
     @discardableResult
     func exportJSON(to destinationURL: URL) throws -> URL {
         let payload = try exportPayload()
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
+        let encoder = CloudSyncService.makeEncoder()
         let data = try encoder.encode(payload)
         try data.write(to: destinationURL, options: .atomic)
         return destinationURL

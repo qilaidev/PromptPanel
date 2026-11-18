@@ -34,7 +34,10 @@ let package = Package(
                 "PromptPanel",
                 .product(name: "GRDB", package: "GRDB.swift"),
             ],
-            path: "Tests/PromptPanelTests"
+            path: "Tests/PromptPanelTests",
+            swiftSettings: [
+                .define("PROMPTPANEL_SWIFT_TESTING")
+            ]
         ),
     ]
 )

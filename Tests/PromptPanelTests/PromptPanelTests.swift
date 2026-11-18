@@ -2302,6 +2302,286 @@ public enum CoreTestSuite {
             try check(targetsExcludingDefault.contains(where: { $0.id == projectBeta.id }))
         }
     }
+
+    // MARK: - Data, Sync & Security Regression Suites
+
+    static func verifyCloudSyncFastPollAndMutationInvalidationAsync() async throws {
+        final class MockSyncProtocol: URLProtocol, @unchecked Sendable {
+            static let lock = NSLock()
+            nonisolated(unsafe) static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+            static func setHandler(_ newHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?) {
+                lock.lock()
+                handler = newHandler
+                lock.unlock()
+            }
+
+            override class func canInit(with request: URLRequest) -> Bool { true }
+            override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+            override func startLoading() {
+                Self.lock.lock()
+                let currentHandler = Self.handler
+                Self.lock.unlock()
+                guard let currentHandler else {
+                    client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+                    return
+                }
+                do {
+                    let (response, data) = try currentHandler(request)
+                    client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                    client?.urlProtocol(self, didLoad: data)
+                    client?.urlProtocolDidFinishLoading(self)
+                } catch {
+                    client?.urlProtocol(self, didFailWithError: error)
+                }
+            }
+
+            override func stopLoading() {}
+        }
+
+        try await withTempDatabaseAsync { manager, _ in
+            let projectRepo = ProjectRepository(dbQueue: manager.dbQueue)
+            let entryRepo = EntryRepository(dbQueue: manager.dbQueue)
+            let defaultProject = try unwrap(projectRepo.fetchDefault())
+
+            let config = URLSessionConfiguration.ephemeral
+            config.protocolClasses = [MockSyncProtocol.self]
+            let mockSession = URLSession(configuration: config)
+            let syncService = CloudSyncService(dbQueue: manager.dbQueue, urlSession: mockSession)
+
+            var recordedRequests: [(method: String, url: String, body: Data?)] = []
+            let nextRevision = 1
+            let returnUnchangedOnMatchingRevision = true
+
+            MockSyncProtocol.setHandler { request in
+                let method = request.httpMethod ?? "GET"
+                let url = request.url ?? URL(string: "https://sync.example.com/v1/sync")!
+                var bodyData = request.httpBody
+                if bodyData == nil, let stream = request.httpBodyStream {
+                    stream.open()
+                    defer { stream.close() }
+                    var buffer = [UInt8](repeating: 0, count: 4096)
+                    var data = Data()
+                    while stream.hasBytesAvailable {
+                        let read = stream.read(&buffer, maxLength: buffer.count)
+                        if read > 0 { data.append(buffer, count: read) } else { break }
+                    }
+                    bodyData = data
+                }
+                recordedRequests.append((method: method, url: url.absoluteString, body: bodyData))
+
+                let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+                if method == "GET" {
+                    let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                    let sinceRev = comps?.queryItems?.first(where: { $0.name == "since_revision" })?.value.flatMap(Int.init)
+                    if returnUnchangedOnMatchingRevision, let sinceRev, sinceRev == nextRevision {
+                        let json = """
+                        {"schemaVersion":2,"unchanged":true,"revision":\(nextRevision),"projects":[],"entries":[],"versions":[]}
+                        """
+                        return (response, Data(json.utf8))
+                    }
+                    let json = """
+                    {"schemaVersion":2,"deviceId":"srv","exportedAt":"2026-11-18T00:00:00.000Z","revision":\(nextRevision),"projects":[],"entries":[],"versions":[]}
+                    """
+                    return (response, Data(json.utf8))
+                } else {
+                    let json = """
+                    {"schemaVersion":2,"deviceId":"srv","exportedAt":"2026-11-18T00:00:00.000Z","revision":\(nextRevision),"projects":[],"entries":[],"versions":[]}
+                    """
+                    return (response, Data(json.utf8))
+                }
+            }
+            defer {
+                MockSyncProtocol.setHandler(nil)
+            }
+
+            let endpoint = "https://sync.example.com/v1/sync"
+            let token = "test-sync-token-123456"
+
+            // 1. Initial sync: full GET + POST
+            _ = try await syncService.syncNow(endpoint: endpoint, apiKey: token)
+            try check(recordedRequests.count == 2)
+            try check(recordedRequests[0].method == "GET" && !recordedRequests[0].url.contains("since_revision"))
+            try check(recordedRequests[1].method == "POST")
+
+            // 2. Idle poll: sends since_revision=1, server returns unchanged=true -> skips POST
+            recordedRequests.removeAll()
+            let idleSummary = try await syncService.syncNow(endpoint: endpoint, apiKey: token)
+            try check(!idleSummary.hasAnyLocalMutation)
+            try check(recordedRequests.count == 1, "Unchanged fast-poll must skip POST /v1/sync")
+            try check(recordedRequests[0].method == "GET" && recordedRequests[0].url.contains("since_revision=1"))
+
+            // 3. Local mutation invalidates fingerprint -> full GET without since_revision + POST
+            recordedRequests.removeAll()
+            try entryRepo.create(Entry(projectId: defaultProject.id, title: "New Prompt", content: "Hello"))
+            _ = try await syncService.syncNow(endpoint: endpoint, apiKey: token)
+            try check(recordedRequests.count == 2)
+            try check(!recordedRequests[0].url.contains("since_revision"), "Local mutation must invalidate fast-poll fingerprint")
+
+            // 4. Bulk delete >= 3 completed todos arms allowMassDelete on next POST
+            for idx in 1...3 {
+                let todo = Entry(projectId: defaultProject.id, title: "Todo \(idx)", content: "Done \(idx)", type: Constants.EntryType.todo.rawValue)
+                try entryRepo.create(todo)
+                try entryRepo.setCompleted(id: todo.id, isCompleted: true)
+            }
+            let deletedTodos = try entryRepo.deleteCompleted()
+            try check(deletedTodos == 3)
+            recordedRequests.removeAll()
+            _ = try await syncService.syncNow(endpoint: endpoint, apiKey: token)
+            try check(recordedRequests.count == 2)
+            if let postBody = recordedRequests[1].body {
+                let opened = try CloudSyncCrypto.openEnvelopeData(postBody, apiKey: token)
+                let obj = try JSONSerialization.jsonObject(with: opened) as? [String: Any]
+                try check((obj?["allowMassDelete"] as? Bool) == true, "Deleting >=3 completed todos must arm allowMassDelete: true on next sync")
+            } else {
+                try check(false, "Expected POST body")
+            }
+        }
+    }
+
+    static func verifyOrphanProjectIdHealingTimestampBump() throws {
+        try withTempDatabase { manager, _ in
+            let projectRepo = ProjectRepository(dbQueue: manager.dbQueue)
+            let entryRepo = EntryRepository(dbQueue: manager.dbQueue)
+            let defaultProject = try unwrap(projectRepo.fetchDefault())
+            let syncService = CloudSyncService(dbQueue: manager.dbQueue)
+
+            let remoteTime = Date(timeIntervalSince1970: 1_700_000_000)
+            let healTime = Date(timeIntervalSince1970: 1_700_000_100)
+            let orphanEntry = Entry(
+                id: "orphan-entry-1",
+                projectId: "non-existent-project-xyz",
+                title: "Orphan",
+                content: "Needs healing",
+                type: Constants.EntryType.prompt.rawValue,
+                createdAt: remoteTime,
+                updatedAt: remoteTime
+            )
+            let envelope = CloudSyncEnvelope(
+                deviceId: "remote-device",
+                exportedAt: remoteTime,
+                projects: [],
+                entries: [orphanEntry],
+                versions: []
+            )
+            _ = try syncService.mergeRemoteEnvelope(envelope, syncedAt: healTime)
+            let healed = try unwrap(try entryRepo.fetchById(orphanEntry.id))
+            try check(healed.projectId == defaultProject.id)
+            try check(healed.updatedAt > remoteTime, "Healed orphan entry must bump updatedAt so it pushes back to server")
+        }
+    }
+
+    static func verifyLibraryTransferFractionalSecondsRoundTrip() throws {
+        let subSecondDate = Date(timeIntervalSince1970: 1_700_000_123.456)
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("pp-transfer-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let exportURL = tempDir.appendingPathComponent("library.json")
+
+        try withTempDatabase { manager, dbURL in
+            let projectRepo = ProjectRepository(dbQueue: manager.dbQueue)
+            let entryRepo = EntryRepository(dbQueue: manager.dbQueue)
+            let maintenance = StorageMaintenanceService(dbQueue: manager.dbQueue, logRepository: LogRepository(dbQueue: manager.dbQueue), databaseURL: dbURL)
+            let transfer = LibraryTransferService(projectRepository: projectRepo, entryRepository: entryRepo, storageMaintenanceService: maintenance)
+            let defaultProj = try unwrap(projectRepo.fetchDefault())
+            let entry = Entry(projectId: defaultProj.id, title: "Precise", content: "Timestamp")
+            try entryRepo.create(entry)
+            try manager.dbQueue.write { db in
+                try db.execute(sql: "UPDATE entries SET updated_at = ? WHERE id = ?", arguments: [subSecondDate, entry.id])
+            }
+            try transfer.exportJSON(to: exportURL)
+            let exportedText = try String(contentsOf: exportURL, encoding: .utf8)
+            try check(exportedText.contains(".456Z"), "LibraryTransferService must emit fractional-second ISO8601 timestamps")
+        }
+
+        try withTempDatabase { manager2, dbURL2 in
+            let projectRepo2 = ProjectRepository(dbQueue: manager2.dbQueue)
+            let entryRepo2 = EntryRepository(dbQueue: manager2.dbQueue)
+            let maintenance2 = StorageMaintenanceService(dbQueue: manager2.dbQueue, logRepository: LogRepository(dbQueue: manager2.dbQueue), databaseURL: dbURL2)
+            let transfer2 = LibraryTransferService(projectRepository: projectRepo2, entryRepository: entryRepo2, storageMaintenanceService: maintenance2)
+            _ = try unwrap(projectRepo2.fetchDefault())
+            let summary = try transfer2.importJSON(from: exportURL)
+            try check(summary.entriesCreated == 1)
+            let imported = try unwrap(try entryRepo2.fetchAll().first(where: { $0.title == "Precise" }))
+            try check(abs(imported.updatedAt.timeIntervalSince(subSecondDate)) < 0.002)
+        }
+    }
+
+    static func verifyEntryRepositoryLimitAndUnicodeShortTokenSearch() throws {
+        try withTempDatabase { manager, _ in
+            let projectRepo = ProjectRepository(dbQueue: manager.dbQueue)
+            let entryRepo = EntryRepository(dbQueue: manager.dbQueue)
+            let defaultProj = try unwrap(projectRepo.fetchDefault())
+
+            try entryRepo.create(Entry(projectId: defaultProj.id, title: "Prompt 1", content: "Body 1"))
+            try entryRepo.create(Entry(projectId: defaultProj.id, title: "Prompt 2", content: "Body 2"))
+            try entryRepo.create(Entry(projectId: defaultProj.id, title: "Café Menu", content: "Espresso"))
+            try entryRepo.create(Entry(projectId: defaultProj.id, title: "Übung", content: "Deutsch"))
+            try entryRepo.create(Entry(projectId: defaultProj.id, title: "中文提示词", content: "测试内容"))
+
+            try check(try entryRepo.fetchByProjects([defaultProj.id], limit: 2).count == 2)
+            try check(try entryRepo.fetchAll(limit: 3).count == 3)
+            try check(try entryRepo.fetchMixed(currentProjectId: defaultProj.id, defaultProjectId: defaultProj.id, limit: 2).count == 2)
+
+            let umlautMatches = try entryRepo.searchAll(query: "ü")
+            try check(umlautMatches.contains(where: { $0.title == "Übung" }))
+            let accentMatches = try entryRepo.searchAll(query: "É")
+            try check(accentMatches.contains(where: { $0.title == "Café Menu" }))
+            let cjkMatches = try entryRepo.search(query: "中", projectIds: [defaultProj.id])
+            try check(cjkMatches.contains(where: { $0.title == "中文提示词" }))
+        }
+    }
+
+    static func verifyUpdaterRedirectDowngradeRejectionAsync() async throws {
+        final class MockRedirectProtocol: URLProtocol, @unchecked Sendable {
+            override class func canInit(with request: URLRequest) -> Bool { true }
+            override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+            override func startLoading() {
+                let url = request.url ?? URL(string: "https://updates.example.com/latest")!
+                let redirectResponse = HTTPURLResponse(
+                    url: url,
+                    statusCode: 302,
+                    httpVersion: nil,
+                    headerFields: ["Location": "http://localhost:18787/evil.zip"]
+                )!
+                let targetRequest = URLRequest(url: URL(string: "http://localhost:18787/evil.zip")!)
+                client?.urlProtocol(self, wasRedirectedTo: targetRequest, redirectResponse: redirectResponse)
+                client?.urlProtocolDidFinishLoading(self)
+            }
+
+            override func stopLoading() {}
+        }
+
+        try check(!UpdaterService.shouldAllowHTTPRedirect(
+            from: URL(string: "https://github.com/qilaidev/PromptPanel/releases"),
+            to: URL(string: "http://localhost:8080/update.zip")
+        ))
+        try check(!UpdaterService.shouldAllowHTTPRedirect(
+            from: URL(string: "https://github.com/qilaidev/PromptPanel/releases"),
+            to: URL(string: "http://evil.example.com/update.zip")
+        ))
+        try check(UpdaterService.shouldAllowHTTPRedirect(
+            from: URL(string: "https://github.com/qilaidev/PromptPanel/releases"),
+            to: URL(string: "https://objects.githubusercontent.com/update.zip")
+        ))
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockRedirectProtocol.self]
+        let session = UpdaterService.makeSecureURLSession(configuration: config)
+        var rejected = false
+        do {
+            _ = try await UpdaterService.performGET(
+                url: URL(string: "https://updates.example.com/latest")!,
+                timeout: 5.0,
+                session: session
+            )
+        } catch {
+            rejected = true
+        }
+        try check(rejected, "HTTPS->HTTP redirect downgrade to localhost must be rejected")
+    }
 }
 
 #if canImport(XCTest)
@@ -2454,6 +2734,26 @@ struct PromptPanelSwiftTestingSuite {
 
     @Test func performanceAndStabilityRegressions() async throws {
         try await CoreTestSuite.verifyPerformanceAndStabilityRegressionsAsync()
+    }
+
+    @Test func cloudSyncFastPollAndMutationInvalidation() async throws {
+        try await CoreTestSuite.verifyCloudSyncFastPollAndMutationInvalidationAsync()
+    }
+
+    @Test func orphanProjectIdHealingTimestampBump() throws {
+        try CoreTestSuite.verifyOrphanProjectIdHealingTimestampBump()
+    }
+
+    @Test func libraryTransferFractionalSecondsRoundTrip() throws {
+        try CoreTestSuite.verifyLibraryTransferFractionalSecondsRoundTrip()
+    }
+
+    @Test func entryRepositoryLimitAndUnicodeShortTokenSearch() throws {
+        try CoreTestSuite.verifyEntryRepositoryLimitAndUnicodeShortTokenSearch()
+    }
+
+    @Test func updaterRedirectDowngradeRejection() async throws {
+        try await CoreTestSuite.verifyUpdaterRedirectDowngradeRejectionAsync()
     }
 }
 #endif

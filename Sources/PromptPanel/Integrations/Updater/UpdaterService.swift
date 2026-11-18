@@ -646,6 +646,9 @@ final class UpdaterService: NSObject, ObservableObject {
 
     nonisolated private static func fetchFromMirror(mirrorURL: URL) async throws -> ReleaseCandidate {
         let data = try await performGET(url: mirrorURL, timeout: 8.0)
+        if CloudSyncService.looksLikeHTMLPayload(data) {
+            throw NSError(domain: "UpdaterService", code: 10, userInfo: [NSLocalizedDescriptionKey: "镜像返回了网页而非版本信息，请检查网络或同步服务配置"])
+        }
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let version = (json["version"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
               !version.isEmpty,
@@ -769,12 +772,14 @@ final class UpdaterService: NSObject, ObservableObject {
         }
 
         let zipData: Data
-        if let primaryData = try? await performGET(url: candidate.primaryZipURL, timeout: 60.0) {
-            zipData = primaryData
-        } else if let fallback = candidate.fallbackZipURL {
-            zipData = try await performGET(url: fallback, timeout: 90.0)
-        } else {
-            throw NSError(domain: "UpdaterService", code: 31, userInfo: [NSLocalizedDescriptionKey: "下载更新包失败，请检查网络连接"])
+        do {
+            zipData = try await performGET(url: candidate.primaryZipURL, timeout: 60.0)
+        } catch {
+            if let fallback = candidate.fallbackZipURL {
+                zipData = try await performGET(url: fallback, timeout: 90.0)
+            } else {
+                throw error
+            }
         }
 
         let actualHash = SHA256.hash(data: zipData).map { String(format: "%02x", $0) }.joined()
@@ -836,10 +841,55 @@ final class UpdaterService: NSObject, ObservableObject {
         return unpackResult
     }
 
-    nonisolated private static func performGET(
+    nonisolated private final class RedirectProtectionDelegate: NSObject, URLSessionTaskDelegate {
+        func urlSession(
+            _ session: URLSession,
+            task: URLSessionTask,
+            willPerformHTTPRedirection response: HTTPURLResponse,
+            newRequest request: URLRequest,
+            completionHandler: @escaping (URLRequest?) -> Void
+        ) {
+            guard UpdaterService.shouldAllowHTTPRedirect(
+                from: task.originalRequest?.url,
+                to: request.url
+            ) else {
+                completionHandler(nil)
+                task.cancel()
+                return
+            }
+            completionHandler(request)
+        }
+    }
+
+    nonisolated private static let redirectDelegate = RedirectProtectionDelegate()
+    nonisolated private static let secureURLSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        return URLSession(configuration: configuration, delegate: redirectDelegate, delegateQueue: nil)
+    }()
+
+    nonisolated static func makeSecureURLSession(
+        configuration: URLSessionConfiguration = .ephemeral
+    ) -> URLSession {
+        URLSession(configuration: configuration, delegate: redirectDelegate, delegateQueue: nil)
+    }
+
+    nonisolated static func shouldAllowHTTPRedirect(from originalURL: URL?, to targetURL: URL?) -> Bool {
+        guard let targetURL,
+              let targetScheme = targetURL.scheme?.lowercased() else {
+            return false
+        }
+        let originalScheme = originalURL?.scheme?.lowercased()
+        if originalScheme == "https" && targetScheme != "https" {
+            return false
+        }
+        return isAllowedUpdateURL(targetURL)
+    }
+
+    nonisolated static func performGET(
         url: URL,
         timeout: TimeInterval,
-        accept: String = "*/*"
+        accept: String = "*/*",
+        session: URLSession? = nil
     ) async throws -> Data {
         guard isAllowedUpdateURL(url) else {
             throw NSError(
@@ -854,11 +904,20 @@ final class UpdaterService: NSObject, ObservableObject {
         req.setValue("PromptPanel-macOS-Updater", forHTTPHeaderField: "User-Agent")
         req.setValue(accept, forHTTPHeaderField: "Accept")
 
+        let activeSession = session ?? secureURLSession
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: req)
+            (data, response) = try await activeSession.data(for: req)
         } catch {
+            let nsError = error as NSError
+            if nsError.domain == NSURLErrorDomain && nsError.code == URLError.cancelled.rawValue {
+                throw NSError(
+                    domain: "UpdaterService",
+                    code: 43,
+                    userInfo: [NSLocalizedDescriptionKey: "安全策略拦截了不安全的 HTTP 重定向"]
+                )
+            }
             throw NSError(
                 domain: "UpdaterService",
                 code: 41,

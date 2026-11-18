@@ -172,6 +172,9 @@ struct CloudSyncEnvelope: Codable, Equatable {
     let projects: [Project]
     let entries: [Entry]
     let versions: [EntryVersion]
+    let revision: Int?
+    let unchanged: Bool?
+    let allowMassDelete: Bool?
 
     init(
         schemaVersion: Int = CloudSyncEnvelope.currentSchemaVersion,
@@ -179,7 +182,10 @@ struct CloudSyncEnvelope: Codable, Equatable {
         exportedAt: Date = Date(),
         projects: [Project],
         entries: [Entry],
-        versions: [EntryVersion]
+        versions: [EntryVersion],
+        revision: Int? = nil,
+        unchanged: Bool? = nil,
+        allowMassDelete: Bool? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.deviceId = deviceId
@@ -187,6 +193,9 @@ struct CloudSyncEnvelope: Codable, Equatable {
         self.projects = projects
         self.entries = entries
         self.versions = versions
+        self.revision = revision
+        self.unchanged = unchanged
+        self.allowMassDelete = allowMassDelete
     }
 
     enum CodingKeys: String, CodingKey {
@@ -196,12 +205,16 @@ struct CloudSyncEnvelope: Codable, Equatable {
         case projects
         case entries
         case versions
+        case revision
+        case unchanged
+        case allowMassDelete
     }
 
     private enum SnakeCodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
         case deviceId = "device_id"
         case exportedAt = "exported_at"
+        case allowMassDelete = "allow_mass_delete"
     }
 
     init(from decoder: Decoder) throws {
@@ -216,6 +229,8 @@ struct CloudSyncEnvelope: Codable, Equatable {
             || container.contains(.projects)
             || container.contains(.entries)
             || container.contains(.versions)
+            || container.contains(.revision)
+            || container.contains(.unchanged)
         guard hasRecognizedEnvelopeKey else {
             throw DecodingError.dataCorrupted(
                 DecodingError.Context(
@@ -240,6 +255,23 @@ struct CloudSyncEnvelope: Codable, Equatable {
         self.projects = try container.decodeIfPresent([Project].self, forKey: .projects) ?? []
         self.entries = try container.decodeIfPresent([Entry].self, forKey: .entries) ?? []
         self.versions = try container.decodeIfPresent([EntryVersion].self, forKey: .versions) ?? []
+        self.revision = try? container.decodeIfPresent(Int.self, forKey: .revision)
+        self.unchanged = try? container.decodeIfPresent(Bool.self, forKey: .unchanged)
+        self.allowMassDelete = (try? container.decodeIfPresent(Bool.self, forKey: .allowMassDelete))
+            ?? (try? snakeContainer.decodeIfPresent(Bool.self, forKey: .allowMassDelete))
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encode(deviceId, forKey: .deviceId)
+        try container.encode(exportedAt, forKey: .exportedAt)
+        try container.encode(projects, forKey: .projects)
+        try container.encode(entries, forKey: .entries)
+        try container.encode(versions, forKey: .versions)
+        if allowMassDelete == true {
+            try container.encode(true, forKey: .allowMassDelete)
+        }
     }
 }
 
@@ -248,6 +280,8 @@ struct CloudSyncSummary: Equatable, Sendable {
     let projectsUpdated: Int
     let entriesCreated: Int
     let entriesUpdated: Int
+    let mergedUsageUpdates: Int
+    let mergedVersions: Int
     let conflictsPreservedInVersions: Int
     let protectedEntriesCount: Int
     let protectedProjectsCount: Int
@@ -258,6 +292,8 @@ struct CloudSyncSummary: Equatable, Sendable {
         projectsUpdated: Int,
         entriesCreated: Int,
         entriesUpdated: Int,
+        mergedUsageUpdates: Int = 0,
+        mergedVersions: Int = 0,
         conflictsPreservedInVersions: Int,
         protectedEntriesCount: Int = 0,
         protectedProjectsCount: Int = 0,
@@ -267,6 +303,8 @@ struct CloudSyncSummary: Equatable, Sendable {
         self.projectsUpdated = projectsUpdated
         self.entriesCreated = entriesCreated
         self.entriesUpdated = entriesUpdated
+        self.mergedUsageUpdates = mergedUsageUpdates
+        self.mergedVersions = mergedVersions
         self.conflictsPreservedInVersions = conflictsPreservedInVersions
         self.protectedEntriesCount = protectedEntriesCount
         self.protectedProjectsCount = protectedProjectsCount
@@ -275,6 +313,17 @@ struct CloudSyncSummary: Equatable, Sendable {
 
     var totalProtectedCount: Int {
         protectedEntriesCount + protectedProjectsCount
+    }
+
+    var hasAnyLocalMutation: Bool {
+        projectsCreated > 0
+            || projectsUpdated > 0
+            || entriesCreated > 0
+            || entriesUpdated > 0
+            || mergedUsageUpdates > 0
+            || mergedVersions > 0
+            || conflictsPreservedInVersions > 0
+            || totalProtectedCount > 0
     }
 }
 
@@ -315,12 +364,33 @@ enum CloudSyncError: LocalizedError, Equatable {
 final class CloudSyncService: @unchecked Sendable {
     private let dbQueue: DatabaseQueue
     private let storageMaintenanceService: StorageMaintenanceService?
+    private let urlSession: URLSession
     private let syncLock = NSLock()
     private var isSyncOperationInFlight = false
+    private var armedAllowMassDelete = false
 
-    init(dbQueue: DatabaseQueue, storageMaintenanceService: StorageMaintenanceService? = nil) {
+    init(
+        dbQueue: DatabaseQueue,
+        storageMaintenanceService: StorageMaintenanceService? = nil,
+        urlSession: URLSession = .shared
+    ) {
         self.dbQueue = dbQueue
         self.storageMaintenanceService = storageMaintenanceService
+        self.urlSession = urlSession
+    }
+
+    func armAllowMassDeleteForNextSync() {
+        syncLock.lock()
+        armedAllowMassDelete = true
+        syncLock.unlock()
+    }
+
+    private func consumeArmedAllowMassDelete() -> Bool {
+        syncLock.lock()
+        defer { syncLock.unlock() }
+        let wasArmed = armedAllowMassDelete
+        armedAllowMassDelete = false
+        return wasArmed
     }
 
     private func acquireSyncSlot() throws {
@@ -368,7 +438,10 @@ final class CloudSyncService: @unchecked Sendable {
 
     // MARK: - Envelope Export & Merge
 
-    func buildLocalEnvelope(exportedAt: Date = Date()) throws -> CloudSyncEnvelope {
+    func buildLocalEnvelope(
+        exportedAt: Date = Date(),
+        allowMassDelete: Bool = false
+    ) throws -> CloudSyncEnvelope {
         let currentDeviceId = try deviceId()
         return try dbQueue.read { db in
             let projects = try Project
@@ -385,8 +458,38 @@ final class CloudSyncService: @unchecked Sendable {
                 exportedAt: exportedAt,
                 projects: projects,
                 entries: entries,
-                versions: versions
+                versions: versions,
+                allowMassDelete: allowMassDelete ? true : nil
             )
+        }
+    }
+
+    func computeLocalStateFingerprint() throws -> String {
+        try dbQueue.read { db in
+            let row = try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT
+                        (SELECT COUNT(*) FROM projects) AS p_count,
+                        (SELECT COALESCE(MAX(updated_at), '') FROM projects) AS p_max_upd,
+                        (SELECT COUNT(*) FROM entries) AS e_count,
+                        (SELECT COALESCE(MAX(updated_at), '') FROM entries) AS e_max_upd,
+                        (SELECT COALESCE(MAX(last_used_at), '') FROM entries) AS e_max_used,
+                        (SELECT COALESCE(SUM(use_count), 0) FROM entries) AS e_sum_use,
+                        (SELECT COUNT(*) FROM entry_versions) AS v_count,
+                        (SELECT COALESCE(MAX(created_at), '') FROM entry_versions) AS v_max_created
+                    """
+            )
+            guard let row else { return "empty" }
+            let pCount: Int = row["p_count"]
+            let pMaxUpd: String = row["p_max_upd"]
+            let eCount: Int = row["e_count"]
+            let eMaxUpd: String = row["e_max_upd"]
+            let eMaxUsed: String = row["e_max_used"]
+            let eSumUse: Int = row["e_sum_use"]
+            let vCount: Int = row["v_count"]
+            let vMaxCreated: String = row["v_max_created"]
+            return "\(pCount)|\(pMaxUpd)|\(eCount)|\(eMaxUpd)|\(eMaxUsed)|\(eSumUse)|\(vCount)|\(vMaxCreated)"
         }
     }
 
@@ -494,6 +597,8 @@ final class CloudSyncService: @unchecked Sendable {
         var projectsUpdated = 0
         var entriesCreated = 0
         var entriesUpdated = 0
+        var mergedUsageUpdates = 0
+        var mergedVersions = 0
         var conflictsPreserved = 0
         var protectedEntriesCount = 0
         var protectedProjectsCount = 0
@@ -550,6 +655,7 @@ final class CloudSyncService: @unchecked Sendable {
                     remoteEntry.projectId = mappedId
                 } else if !allProjectIds.contains(remoteEntry.projectId) {
                     remoteEntry.projectId = fallbackProjectId
+                    remoteEntry.updatedAt = max(syncedAt, remoteEntry.updatedAt.addingTimeInterval(0.001))
                 }
 
                 if let localEntry = try Entry.fetchOne(db, key: remoteEntry.id) {
@@ -675,6 +781,7 @@ final class CloudSyncService: @unchecked Sendable {
                         }
                         if didUpdateUsage {
                             try updatedLocal.update(db)
+                            mergedUsageUpdates += 1
                         }
                     }
                 } else {
@@ -736,6 +843,7 @@ final class CloudSyncService: @unchecked Sendable {
                     let existsByNumber = existingVersions.contains { $0.versionNumber == remoteVersion.versionNumber }
                     if !existsByNumber {
                         try remoteVersion.insert(db)
+                        mergedVersions += 1
                     } else {
                         let alreadyHasSameText = existingVersions.contains {
                             $0.content == remoteVersion.content && $0.title == remoteVersion.title
@@ -745,6 +853,7 @@ final class CloudSyncService: @unchecked Sendable {
                             var renumbered = remoteVersion
                             renumbered.versionNumber = maxVer + 1
                             try renumbered.insert(db)
+                            mergedVersions += 1
                         }
                     }
                 }
@@ -752,7 +861,7 @@ final class CloudSyncService: @unchecked Sendable {
 
             // 5. Persist High-Water Mark & Sync Metadata
             let currentActiveEntries = try Entry.filter(Entry.Columns.deletedAt == nil).fetchCount(db)
-            let currentActiveProjects = try Project.filter(Entry.Columns.deletedAt == nil).fetchCount(db)
+            let currentActiveProjects = try Project.filter(Project.Columns.deletedAt == nil).fetchCount(db)
             let updatedHighWater = max(preflight.highWaterEntries, currentActiveEntries)
             try db.execute(
                 sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('high_water_active_entries', ?, ?)",
@@ -782,6 +891,8 @@ final class CloudSyncService: @unchecked Sendable {
             projectsUpdated: projectsUpdated,
             entriesCreated: entriesCreated,
             entriesUpdated: entriesUpdated,
+            mergedUsageUpdates: mergedUsageUpdates,
+            mergedVersions: mergedVersions,
             conflictsPreservedInVersions: conflictsPreserved,
             protectedEntriesCount: protectedEntriesCount,
             protectedProjectsCount: protectedProjectsCount,
@@ -1012,17 +1123,36 @@ final class CloudSyncService: @unchecked Sendable {
         }
     }
 
-    func syncNow(endpoint: String, apiKey: String) async throws -> CloudSyncSummary {
+    func syncNow(
+        endpoint: String,
+        apiKey: String,
+        allowMassDelete: Bool = false,
+        forceFullSync: Bool = false
+    ) async throws -> CloudSyncSummary {
         try acquireSyncSlot()
         defer { releaseSyncSlot() }
-        return try await syncNowUnlocked(endpoint: endpoint, apiKey: apiKey)
+        return try await syncNowUnlocked(
+            endpoint: endpoint,
+            apiKey: apiKey,
+            allowMassDelete: allowMassDelete,
+            forceFullSync: forceFullSync
+        )
     }
 
-    private func syncNowUnlocked(endpoint: String, apiKey: String) async throws -> CloudSyncSummary {
+    private func syncNowUnlocked(
+        endpoint: String,
+        apiKey: String,
+        allowMassDelete: Bool = false,
+        forceFullSync: Bool = false
+    ) async throws -> CloudSyncSummary {
         let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw CloudSyncError.endpointNotConfigured
         }
+
+        let armedMassDelete = consumeArmedAllowMassDelete()
+        let pendingMassDelete = try hasPendingAllowMassDelete()
+        let effectiveAllowMassDelete = allowMassDelete || armedMassDelete || pendingMassDelete
 
         if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") {
             guard var components = URLComponents(string: trimmed) else {
@@ -1037,7 +1167,12 @@ final class CloudSyncService: @unchecked Sendable {
             guard Self.isAllowedRemoteHTTPURL(url) else {
                 throw CloudSyncError.invalidEndpoint("为保护同步数据与 Token 安全，远程同步仅允许 https:// 地址（仅本机回环允许 http://localhost 或 http://127.0.0.1）")
             }
-            return try await syncViaHTTP(url: url, apiKey: apiKey)
+            return try await syncViaHTTP(
+                url: url,
+                apiKey: apiKey,
+                allowMassDelete: effectiveAllowMassDelete,
+                forceFullSync: forceFullSync
+            )
         } else {
             let fileURL: URL
             if trimmed.hasPrefix("file://"), let parsed = URL(string: trimmed) {
@@ -1046,11 +1181,34 @@ final class CloudSyncService: @unchecked Sendable {
                 let expanded = NSString(string: trimmed).expandingTildeInPath
                 fileURL = URL(fileURLWithPath: expanded)
             }
-            return try syncViaFile(fileURL: fileURL, apiKey: apiKey)
+            return try syncViaFile(
+                fileURL: fileURL,
+                apiKey: apiKey,
+                allowMassDelete: effectiveAllowMassDelete
+            )
         }
     }
 
-    private func syncViaFile(fileURL: URL, apiKey: String = "") throws -> CloudSyncSummary {
+    private func hasPendingAllowMassDelete() throws -> Bool {
+        try dbQueue.read { db in
+            let raw = try String.fetchOne(
+                db,
+                sql: "SELECT value FROM sync_metadata WHERE key = 'pending_allow_mass_delete'"
+            )
+            return raw == "1"
+        }
+    }
+
+    private static func syncTargetKey(url: URL, apiKey: String) -> String {
+        let digest = SHA256.hash(data: Data("\(url.absoluteString)|\(apiKey)".utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func syncViaFile(
+        fileURL: URL,
+        apiKey: String = "",
+        allowMassDelete: Bool = false
+    ) throws -> CloudSyncSummary {
         let encoder = Self.makeEncoder()
         let decoder = Self.makeDecoder()
         let summary: CloudSyncSummary
@@ -1061,7 +1219,7 @@ final class CloudSyncService: @unchecked Sendable {
                 do {
                     let openedData = try CloudSyncCrypto.openEnvelopeData(rawData, apiKey: apiKey)
                     let remoteEnvelope = try decoder.decode(CloudSyncEnvelope.self, from: openedData)
-                    summary = try mergeRemoteEnvelope(remoteEnvelope)
+                    summary = try mergeRemoteEnvelope(remoteEnvelope, allowMassDeletions: allowMassDelete)
                 } catch let syncErr as CloudSyncError {
                     throw syncErr
                 } catch {
@@ -1070,27 +1228,76 @@ final class CloudSyncService: @unchecked Sendable {
                     )
                 }
             } else {
-                summary = try mergeRemoteEnvelope(buildLocalEnvelope())
+                summary = try mergeRemoteEnvelope(buildLocalEnvelope(), allowMassDeletions: allowMassDelete)
             }
         } else {
             let parentDir = fileURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
-            summary = try mergeRemoteEnvelope(buildLocalEnvelope())
+            summary = try mergeRemoteEnvelope(buildLocalEnvelope(), allowMassDeletions: allowMassDelete)
         }
 
-        let mergedEnvelope = try buildLocalEnvelope()
+        let mergedEnvelope = try buildLocalEnvelope(allowMassDelete: allowMassDelete)
         let encoded = try encoder.encode(mergedEnvelope)
         let sealed = try CloudSyncCrypto.sealEnvelopeData(encoded, apiKey: apiKey)
         try sealed.write(to: fileURL, options: .atomic)
+        if allowMassDelete {
+            try dbQueue.write { db in
+                try db.execute(sql: "DELETE FROM sync_metadata WHERE key = 'pending_allow_mass_delete'")
+            }
+        }
         return summary
     }
 
-    private func syncViaHTTP(url: URL, apiKey: String) async throws -> CloudSyncSummary {
+    private func syncViaHTTP(
+        url: URL,
+        apiKey: String,
+        allowMassDelete: Bool = false,
+        forceFullSync: Bool = false
+    ) async throws -> CloudSyncSummary {
         let encoder = Self.makeEncoder()
         let decoder = Self.makeDecoder()
+        let targetKey = Self.syncTargetKey(url: url, apiKey: apiKey)
+        let currentFingerprint = try computeLocalStateFingerprint()
+
+        let storedPollState = try await dbQueue.read { db -> (revision: Int?, fingerprint: String?) in
+            let storedTarget = try String.fetchOne(
+                db,
+                sql: "SELECT value FROM sync_metadata WHERE key = 'last_synced_target_key'"
+            )
+            guard storedTarget == targetKey else {
+                return (nil, nil)
+            }
+            let revRaw = try String.fetchOne(
+                db,
+                sql: "SELECT value FROM sync_metadata WHERE key = 'last_synced_revision'"
+            )
+            let fp = try String.fetchOne(
+                db,
+                sql: "SELECT value FROM sync_metadata WHERE key = 'last_synced_fingerprint'"
+            )
+            return (revRaw.flatMap(Int.init), fp)
+        }
+
+        let canUseFastPoll = !forceFullSync
+            && !allowMassDelete
+            && storedPollState.revision != nil
+            && storedPollState.fingerprint == currentFingerprint
+
+        let getURL: URL = {
+            guard canUseFastPoll,
+                  let rev = storedPollState.revision,
+                  var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+                return url
+            }
+            var items = comps.queryItems ?? []
+            items.removeAll { $0.name == "since_revision" }
+            items.append(URLQueryItem(name: "since_revision", value: String(rev)))
+            comps.queryItems = items
+            return comps.url ?? url
+        }()
 
         // 1. Pull remote envelope (GET)
-        var getRequest = URLRequest(url: url, timeoutInterval: 15)
+        var getRequest = URLRequest(url: getURL, timeoutInterval: 15)
         getRequest.httpMethod = "GET"
         getRequest.setValue("application/json", forHTTPHeaderField: "Accept")
         if !apiKey.isEmpty {
@@ -1111,13 +1318,27 @@ final class CloudSyncService: @unchecked Sendable {
         }
 
         var summary: CloudSyncSummary
+        var remoteRevision: Int?
         if let httpResponse = getResponse as? HTTPURLResponse,
            (200..<300).contains(httpResponse.statusCode),
            !getData.isEmpty {
             do {
                 let openedGetData = try CloudSyncCrypto.openEnvelopeData(getData, apiKey: apiKey)
                 let remoteEnvelope = try decoder.decode(CloudSyncEnvelope.self, from: openedGetData)
-                summary = try mergeRemoteEnvelope(remoteEnvelope)
+                remoteRevision = remoteEnvelope.revision
+                if canUseFastPoll && remoteEnvelope.unchanged == true {
+                    return CloudSyncSummary(
+                        projectsCreated: 0,
+                        projectsUpdated: 0,
+                        entriesCreated: 0,
+                        entriesUpdated: 0,
+                        mergedUsageUpdates: 0,
+                        mergedVersions: 0,
+                        conflictsPreservedInVersions: 0,
+                        syncedAt: Date()
+                    )
+                }
+                summary = try mergeRemoteEnvelope(remoteEnvelope, allowMassDeletions: allowMassDelete)
             } catch let syncErr as CloudSyncError {
                 throw syncErr
             } catch {
@@ -1126,11 +1347,11 @@ final class CloudSyncService: @unchecked Sendable {
                 )
             }
         } else {
-            summary = try mergeRemoteEnvelope(buildLocalEnvelope())
+            summary = try mergeRemoteEnvelope(buildLocalEnvelope(), allowMassDeletions: allowMassDelete)
         }
 
         // 2. Push merged envelope (POST) and reconcile any concurrent server-merged delta
-        let mergedEnvelope = try buildLocalEnvelope()
+        let mergedEnvelope = try buildLocalEnvelope(allowMassDelete: allowMassDelete)
         var postRequest = URLRequest(url: url, timeoutInterval: 15)
         postRequest.httpMethod = "POST"
         postRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -1153,34 +1374,59 @@ final class CloudSyncService: @unchecked Sendable {
             do {
                 let openedPostData = try CloudSyncCrypto.openEnvelopeData(postData, apiKey: apiKey)
                 let serverMergedEnvelope = try decoder.decode(CloudSyncEnvelope.self, from: openedPostData)
-                let secondPass = try mergeRemoteEnvelope(serverMergedEnvelope)
+                if let rev = serverMergedEnvelope.revision {
+                    remoteRevision = rev
+                }
+                let secondPass = try mergeRemoteEnvelope(serverMergedEnvelope, allowMassDeletions: allowMassDelete)
                 summary = CloudSyncSummary(
                     projectsCreated: summary.projectsCreated + secondPass.projectsCreated,
                     projectsUpdated: summary.projectsUpdated + secondPass.projectsUpdated,
                     entriesCreated: summary.entriesCreated + secondPass.entriesCreated,
                     entriesUpdated: summary.entriesUpdated + secondPass.entriesUpdated,
+                    mergedUsageUpdates: summary.mergedUsageUpdates + secondPass.mergedUsageUpdates,
+                    mergedVersions: summary.mergedVersions + secondPass.mergedVersions,
                     conflictsPreservedInVersions: summary.conflictsPreservedInVersions + secondPass.conflictsPreservedInVersions,
                     protectedEntriesCount: summary.protectedEntriesCount + secondPass.protectedEntriesCount,
                     protectedProjectsCount: summary.protectedProjectsCount + secondPass.protectedProjectsCount,
                     syncedAt: secondPass.syncedAt
                 )
-                let finalSummary = summary
-                try await dbQueue.write { db in
-                    let protectionSuffix = finalSummary.totalProtectedCount > 0
-                        ? "，防丢拦截保护 \(finalSummary.protectedEntriesCount) 条/\(finalSummary.protectedProjectsCount) 组"
-                        : ""
-                    let summaryText = "上次同步：\(Self.summaryFormatter.string(from: finalSummary.syncedAt))（项目 +\(finalSummary.projectsCreated)/更\(finalSummary.projectsUpdated)，词条 +\(finalSummary.entriesCreated)/更\(finalSummary.entriesUpdated)，冲突版本保护 \(finalSummary.conflictsPreservedInVersions)\(protectionSuffix)）"
-                    try db.execute(
-                        sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('last_sync_summary', ?, ?)",
-                        arguments: [summaryText, finalSummary.syncedAt]
-                    )
-                }
             } catch let syncErr as CloudSyncError {
                 throw syncErr
             } catch {
                 throw CloudSyncError.invalidPayload(
                     Self.friendlyPayloadErrorMessage(for: postData, underlyingError: error)
                 )
+            }
+        }
+
+        let finalSummary = summary
+        let finalRemoteRevision = remoteRevision
+        let postMergeFingerprint = try computeLocalStateFingerprint()
+        try await dbQueue.write { db in
+            let protectionSuffix = finalSummary.totalProtectedCount > 0
+                ? "，防丢拦截保护 \(finalSummary.protectedEntriesCount) 条/\(finalSummary.protectedProjectsCount) 组"
+                : ""
+            let summaryText = "上次同步：\(Self.summaryFormatter.string(from: finalSummary.syncedAt))（项目 +\(finalSummary.projectsCreated)/更\(finalSummary.projectsUpdated)，词条 +\(finalSummary.entriesCreated)/更\(finalSummary.entriesUpdated)，冲突版本保护 \(finalSummary.conflictsPreservedInVersions)\(protectionSuffix)）"
+            try db.execute(
+                sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('last_sync_summary', ?, ?)",
+                arguments: [summaryText, finalSummary.syncedAt]
+            )
+            try db.execute(
+                sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('last_synced_target_key', ?, ?)",
+                arguments: [targetKey, finalSummary.syncedAt]
+            )
+            try db.execute(
+                sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('last_synced_fingerprint', ?, ?)",
+                arguments: [postMergeFingerprint, finalSummary.syncedAt]
+            )
+            if let finalRemoteRevision {
+                try db.execute(
+                    sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('last_synced_revision', ?, ?)",
+                    arguments: [String(finalRemoteRevision), finalSummary.syncedAt]
+                )
+            }
+            if allowMassDelete {
+                try db.execute(sql: "DELETE FROM sync_metadata WHERE key = 'pending_allow_mass_delete'")
             }
         }
 
@@ -1194,7 +1440,7 @@ final class CloudSyncService: @unchecked Sendable {
         for attempt in 1...attempts {
             try Task.checkCancellation()
             do {
-                let (responseData, urlResponse) = try await URLSession.shared.data(for: request)
+                let (responseData, urlResponse) = try await urlSession.data(for: request)
                 if let httpResponse = urlResponse as? HTTPURLResponse,
                    [429, 502, 503, 504].contains(httpResponse.statusCode),
                    attempt < attempts {
