@@ -489,9 +489,12 @@ def load_envelope_from_db(
                     (enc_val, kind, rec_id),
                 )
 
+    rev = get_sync_revision(conn)
     return {
         "schemaVersion": SCHEMA_VERSION,
-        "revision": get_sync_revision(conn),
+        "revision": rev,
+        "serverRevision": rev,
+        "serverTime": utc_now_iso(),
         "deviceId": device_id,
         "exportedAt": utc_now_iso(),
         "projects": projects,
@@ -1091,9 +1094,20 @@ def merge_envelope_into_db(
         "conflictsPreserved": 0,
         "protectedEntries": 0,
         "protectedProjects": 0,
+        "orphansMigrated": 0,
     }
     remote_device = str(_get_field(incoming, "deviceId", "device_id") or "remote-client")
-    allow_mass_delete = _safe_bool(_get_field(incoming, "allowMassDelete", "allow_mass_delete", False), False)
+    allow_mass_delete = _safe_bool(
+        _get_field(incoming, "allowMassDelete", "allow_mass_delete", False),
+        False,
+    ) or _safe_bool(
+        _get_field(incoming, "massDeleteConfirmed", "mass_delete_confirmed", False),
+        False,
+    )
+    force_overwrite = _safe_bool(
+        _get_field(incoming, "forceOverwrite", "force_overwrite", False),
+        False,
+    )
 
     # Single-pass load of existing records to avoid repeated SQLite scans & AES-GCM decryptions
     srv_projects: dict[str, tuple[str, dict[str, Any]]] = {}
@@ -1163,7 +1177,7 @@ def merge_envelope_into_db(
         ) or (srv_active_count >= 2 and incoming_deleting_count == srv_active_count):
             should_block_mass_delete = True
 
-    if (should_block_mass_delete or incoming_deleting_count > 0) and db_path is not None and namespace is not None:
+    if (should_block_mass_delete or incoming_deleting_count > 0 or force_overwrite) and db_path is not None and namespace is not None:
         try:
             rotate_namespace_backup(db_path, namespace, is_guard=True)
         except Exception:
@@ -1175,304 +1189,457 @@ def merge_envelope_into_db(
     with conn:
         remapped_project_ids: dict[str, str] = {}
 
-        # 1. Merge Projects
-        for proj in incoming.get("projects") or []:
-            if not isinstance(proj, dict) or not proj.get("id"):
-                continue
-            proj = _normalize_project_payload(proj)
-            pid = str(proj["id"])
-            is_default_proj = bool(proj.get("isDefault", False))
-            proj_kind = str(proj.get("groupKindRaw") or "")
-            inc_updated = str(proj.get("updatedAt") or "")
-            existing_proj_pair = srv_projects.get(pid)
-            if existing_proj_pair is None:
-                if is_default_proj and existing_default_id and existing_default_id != pid:
-                    remapped_project_ids[pid] = existing_default_id
+        if force_overwrite:
+            inc_proj_ids: set[str] = set()
+            for proj in incoming.get("projects") or []:
+                if not isinstance(proj, dict) or not proj.get("id"):
                     continue
-                if is_default_proj and existing_default_id is None:
-                    existing_default_id = pid
+                proj = _normalize_project_payload(proj)
+                pid = str(proj["id"])
+                is_default_proj = bool(proj.get("isDefault", False))
+                proj_kind = str(proj.get("groupKindRaw") or "")
+                inc_updated = str(proj.get("updatedAt") or "")
                 if (is_default_proj or proj_kind == "builtin-inbox") and proj.get("deletedAt") is not None:
                     proj["deletedAt"] = None
                     proj["deleted_at"] = None
-                conn.execute(
-                    "INSERT INTO kv_records (kind, id, updated_at, payload_json) VALUES ('project', ?, ?, ?)",
-                    (pid, inc_updated, encrypt_db_record(proj, aead_key, "project", pid)),
-                )
-                srv_projects[pid] = (inc_updated, proj)
-                updated_record_keys.add(("project", pid))
-                db_mutated = True
-                if _get_field(proj, "deletedAt", "deleted_at") is None:
-                    stats["projectsCreated"] += 1
-            elif _is_iso_newer(inc_updated, existing_proj_pair[0]):
-                srv_proj = existing_proj_pair[1]
-                srv_deleted = _get_field(srv_proj, "deletedAt", "deleted_at")
-                inc_deleted = _get_field(proj, "deletedAt", "deleted_at")
-                srv_kind = str(srv_proj.get("groupKindRaw") or srv_proj.get("group_kind") or "")
-                is_system_protected = (srv_kind == "builtin-inbox") or bool(srv_proj.get("isDefault", False))
-                if srv_deleted is None and inc_deleted is not None and (is_system_protected or should_block_mass_delete):
-                    healed_proj = dict(srv_proj)
-                    healed_proj["deletedAt"] = None
-                    healed_proj["deleted_at"] = None
-                    healed_upd = _bump_iso_timestamp(inc_updated)
-                    healed_proj["updated_at"] = healed_upd
-                    healed_proj["updatedAt"] = healed_upd
+                inc_proj_ids.add(pid)
+                existing_proj_pair = srv_projects.get(pid)
+                if existing_proj_pair is None:
+                    conn.execute(
+                        "INSERT INTO kv_records (kind, id, updated_at, payload_json) VALUES ('project', ?, ?, ?)",
+                        (pid, inc_updated, encrypt_db_record(proj, aead_key, "project", pid)),
+                    )
+                    if proj.get("deletedAt") is None:
+                        stats["projectsCreated"] += 1
+                else:
                     conn.execute(
                         "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'project' AND id = ?",
-                        (healed_upd, encrypt_db_record(healed_proj, aead_key, "project", pid), pid),
+                        (inc_updated, encrypt_db_record(proj, aead_key, "project", pid), pid),
                     )
-                    srv_projects[pid] = (healed_upd, healed_proj)
-                    updated_record_keys.add(("project", pid))
-                    db_mutated = True
-                    stats["protectedProjects"] += 1
-                    continue
-                conn.execute(
-                    "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'project' AND id = ?",
-                    (inc_updated, encrypt_db_record(proj, aead_key, "project", pid), pid),
-                )
+                    stats["projectsUpdated"] += 1
                 srv_projects[pid] = (inc_updated, proj)
                 updated_record_keys.add(("project", pid))
                 db_mutated = True
-                stats["projectsUpdated"] += 1
 
-        def insert_version_obj(v_obj: dict[str, Any]) -> None:
-            nonlocal db_mutated
-            vid = str(v_obj.get("id") or uuid.uuid4())
-            v_obj["id"] = vid
-            norm_v = _normalize_version_payload(v_obj)
-            eid_val = norm_v["entryId"]
-            v_created = norm_v["createdAt"]
-            cur = conn.execute(
-                "INSERT OR IGNORE INTO kv_records (kind, id, updated_at, payload_json) VALUES ('version', ?, ?, ?)",
-                (vid, v_created, encrypt_db_record(norm_v, aead_key, "version", vid)),
-            )
-            if cur.rowcount > 0:
-                db_mutated = True
-                updated_record_keys.add(("version", vid))
-            if vid not in existing_version_ids:
-                existing_versions_by_entry.setdefault(eid_val, []).append(norm_v)
-                existing_version_ids.add(vid)
-
-        # 2. Merge Entries with automatic Conflict-to-Version-History preservation
-        for entry in incoming.get("entries") or []:
-            if not isinstance(entry, dict) or not entry.get("id"):
-                continue
-            entry = _normalize_entry_payload(entry)
-            raw_pid = str(entry.get("projectId") or "")
-            if raw_pid in remapped_project_ids:
-                mapped_pid = remapped_project_ids[raw_pid]
-                entry["project_id"] = mapped_pid
-                entry["projectId"] = mapped_pid
-            eid = str(entry["id"])
-            inc_updated = str(entry.get("updatedAt") or "")
-            inc_created = str(entry.get("createdAt") or inc_updated or utc_now_iso())
-            existing_entry_pair = srv_entries.get(eid)
-
-            if existing_entry_pair is None:
-                conn.execute(
-                    "INSERT INTO kv_records (kind, id, updated_at, payload_json) VALUES ('entry', ?, ?, ?)",
-                    (eid, inc_updated, encrypt_db_record(entry, aead_key, "entry", eid)),
-                )
-                srv_entries[eid] = (inc_updated, entry)
-                updated_record_keys.add(("entry", eid))
-                db_mutated = True
-                stats["entriesCreated"] += 1
-                if not existing_versions_by_entry.get(eid):
-                    insert_version_obj(
-                        {
-                            "id": f"{eid}-v1",
-                            "entryId": eid,
-                            "versionNumber": 1,
-                            "title": entry.get("title", ""),
-                            "content": entry.get("content", ""),
-                            "changeNote": f"初始同步 ({remote_device})",
-                            "createdAt": inc_created,
-                        }
+            now_iso = utc_now_iso()
+            for pid, (_, srv_proj) in list(srv_projects.items()):
+                if pid in inc_proj_ids:
+                    continue
+                srv_kind = str(srv_proj.get("groupKindRaw") or srv_proj.get("group_kind") or "")
+                is_system_protected = (srv_kind == "builtin-inbox") or bool(srv_proj.get("isDefault", False))
+                if not is_system_protected and srv_proj.get("deletedAt") is None:
+                    tomb = dict(srv_proj)
+                    tomb["deletedAt"] = now_iso
+                    tomb["deleted_at"] = now_iso
+                    tomb["updatedAt"] = now_iso
+                    tomb["updated_at"] = now_iso
+                    conn.execute(
+                        "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'project' AND id = ?",
+                        (now_iso, encrypt_db_record(tomb, aead_key, "project", pid), pid),
                     )
-            else:
-                srv_updated, server_entry = existing_entry_pair
-                has_diff = (
-                    server_entry.get("content") != entry.get("content")
-                    or server_entry.get("title") != entry.get("title")
-                )
+                    srv_projects[pid] = (now_iso, tomb)
+                    updated_record_keys.add(("project", pid))
+                    db_mutated = True
 
-                if _is_iso_newer(inc_updated, srv_updated):
-                    srv_deleted = _get_field(server_entry, "deletedAt", "deleted_at")
-                    inc_deleted = _get_field(entry, "deletedAt", "deleted_at")
-                    is_incoming_deletion = srv_deleted is None and inc_deleted is not None
-                    is_completed_todo = bool(server_entry.get("isCompleted", False)) or bool(entry.get("isCompleted", False))
-
-                    if has_diff or is_incoming_deletion:
-                        vers = existing_versions_by_entry.get(eid, [])
-                        max_ver = max((_safe_int(_get_field(v, "versionNumber", "version_number", 0)) for v in vers), default=0)
-                        latest_snap = max(vers, key=lambda v: _safe_int(_get_field(v, "versionNumber", "version_number", 0)), default=None)
-                        if (
-                            latest_snap is None
-                            or latest_snap.get("content") != server_entry.get("content")
-                            or latest_snap.get("title") != server_entry.get("title")
-                        ):
-                            max_ver += 1
-                            insert_version_obj(
-                                {
-                                    "id": str(uuid.uuid4()),
-                                    "entryId": eid,
-                                    "versionNumber": max_ver,
-                                    "title": server_entry.get("title", ""),
-                                    "content": server_entry.get("content", ""),
-                                    "changeNote": "服务端删除前版本自动留存" if is_incoming_deletion else "服务端合并前版本自动留存",
-                                    "createdAt": srv_updated or utc_now_iso(),
-                                }
-                            )
-                            stats["conflictsPreserved"] += 1
-
-                    # Preserve max useCount and latest lastUsedAt across snake_case and camelCase
-                    srv_use_count = _safe_int(_get_field(server_entry, "useCount", "use_count", 0))
-                    inc_use_count = _safe_int(_get_field(entry, "useCount", "use_count", 0))
-                    merged_use_count = max(srv_use_count, inc_use_count)
-                    srv_used = _get_field(server_entry, "lastUsedAt", "last_used_at")
-                    inc_used = _get_field(entry, "lastUsedAt", "last_used_at")
-                    merged_used = _pick_newer_iso(srv_used, inc_used)
-
-                    if is_incoming_deletion and should_block_mass_delete and not is_completed_todo:
-                        healed_entry = dict(server_entry)
-                        healed_entry["deletedAt"] = None
-                        healed_entry["deleted_at"] = None
-                        healed_upd = _bump_iso_timestamp(inc_updated)
-                        healed_entry["updated_at"] = healed_upd
-                        healed_entry["updatedAt"] = healed_upd
-                        healed_entry["use_count"] = merged_use_count
-                        healed_entry["useCount"] = merged_use_count
-                        if merged_used is not None:
-                            healed_entry["last_used_at"] = merged_used
-                            healed_entry["lastUsedAt"] = merged_used
-                        conn.execute(
-                            "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'entry' AND id = ?",
-                            (healed_upd, encrypt_db_record(healed_entry, aead_key, "entry", eid), eid),
-                        )
-                        srv_entries[eid] = (healed_upd, healed_entry)
-                        updated_record_keys.add(("entry", eid))
-                        db_mutated = True
-                        stats["protectedEntries"] += 1
-                        continue
-
-                    entry["use_count"] = merged_use_count
-                    entry["useCount"] = merged_use_count
-                    if merged_used is not None:
-                        entry["last_used_at"] = merged_used
-                        entry["lastUsedAt"] = merged_used
-
+            inc_entry_ids: set[str] = set()
+            for entry in incoming.get("entries") or []:
+                if not isinstance(entry, dict) or not entry.get("id"):
+                    continue
+                entry = _normalize_entry_payload(entry)
+                eid = str(entry["id"])
+                inc_updated = str(entry.get("updatedAt") or "")
+                inc_entry_ids.add(eid)
+                if eid not in srv_entries:
+                    conn.execute(
+                        "INSERT INTO kv_records (kind, id, updated_at, payload_json) VALUES ('entry', ?, ?, ?)",
+                        (eid, inc_updated, encrypt_db_record(entry, aead_key, "entry", eid)),
+                    )
+                    if entry.get("deletedAt") is None:
+                        stats["entriesCreated"] += 1
+                else:
                     conn.execute(
                         "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'entry' AND id = ?",
                         (inc_updated, encrypt_db_record(entry, aead_key, "entry", eid), eid),
                     )
+                    stats["entriesUpdated"] += 1
+                srv_entries[eid] = (inc_updated, entry)
+                updated_record_keys.add(("entry", eid))
+                db_mutated = True
+
+            for eid, (_, srv_entry) in list(srv_entries.items()):
+                if eid in inc_entry_ids:
+                    continue
+                if srv_entry.get("deletedAt") is None:
+                    tomb = dict(srv_entry)
+                    tomb["deletedAt"] = now_iso
+                    tomb["deleted_at"] = now_iso
+                    tomb["updatedAt"] = now_iso
+                    tomb["updated_at"] = now_iso
+                    conn.execute(
+                        "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'entry' AND id = ?",
+                        (now_iso, encrypt_db_record(tomb, aead_key, "entry", eid), eid),
+                    )
+                    srv_entries[eid] = (now_iso, tomb)
+                    updated_record_keys.add(("entry", eid))
+                    db_mutated = True
+
+            for ver in incoming.get("versions") or []:
+                if not isinstance(ver, dict) or not ver.get("id"):
+                    continue
+                vid_str = str(ver["id"])
+                if vid_str in existing_version_ids:
+                    continue
+                norm_v = _normalize_version_payload(ver)
+                norm_v["id"] = vid_str
+                conn.execute(
+                    "INSERT OR IGNORE INTO kv_records (kind, id, updated_at, payload_json) VALUES ('version', ?, ?, ?)",
+                    (vid_str, norm_v["createdAt"], encrypt_db_record(norm_v, aead_key, "version", vid_str)),
+                )
+                existing_versions_by_entry.setdefault(norm_v["entryId"], []).append(norm_v)
+                existing_version_ids.add(vid_str)
+                updated_record_keys.add(("version", vid_str))
+                db_mutated = True
+        else:
+            # 1. Merge Projects
+            for proj in incoming.get("projects") or []:
+                if not isinstance(proj, dict) or not proj.get("id"):
+                    continue
+                proj = _normalize_project_payload(proj)
+                pid = str(proj["id"])
+                is_default_proj = bool(proj.get("isDefault", False))
+                proj_kind = str(proj.get("groupKindRaw") or "")
+                inc_updated = str(proj.get("updatedAt") or "")
+                existing_proj_pair = srv_projects.get(pid)
+                if existing_proj_pair is None:
+                    if is_default_proj and existing_default_id and existing_default_id != pid:
+                        remapped_project_ids[pid] = existing_default_id
+                        continue
+                    if is_default_proj and existing_default_id is None:
+                        existing_default_id = pid
+                    if (is_default_proj or proj_kind == "builtin-inbox") and proj.get("deletedAt") is not None:
+                        proj["deletedAt"] = None
+                        proj["deleted_at"] = None
+                    conn.execute(
+                        "INSERT INTO kv_records (kind, id, updated_at, payload_json) VALUES ('project', ?, ?, ?)",
+                        (pid, inc_updated, encrypt_db_record(proj, aead_key, "project", pid)),
+                    )
+                    srv_projects[pid] = (inc_updated, proj)
+                    updated_record_keys.add(("project", pid))
+                    db_mutated = True
+                    if _get_field(proj, "deletedAt", "deleted_at") is None:
+                        stats["projectsCreated"] += 1
+                elif _is_iso_newer(inc_updated, existing_proj_pair[0]):
+                    srv_proj = existing_proj_pair[1]
+                    srv_deleted = _get_field(srv_proj, "deletedAt", "deleted_at")
+                    inc_deleted = _get_field(proj, "deletedAt", "deleted_at")
+                    srv_kind = str(srv_proj.get("groupKindRaw") or srv_proj.get("group_kind") or "")
+                    is_system_protected = (srv_kind == "builtin-inbox") or bool(srv_proj.get("isDefault", False))
+                    if srv_deleted is None and inc_deleted is not None and (is_system_protected or should_block_mass_delete):
+                        healed_proj = dict(srv_proj)
+                        healed_proj["deletedAt"] = None
+                        healed_proj["deleted_at"] = None
+                        healed_upd = _bump_iso_timestamp(inc_updated)
+                        healed_proj["updated_at"] = healed_upd
+                        healed_proj["updatedAt"] = healed_upd
+                        conn.execute(
+                            "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'project' AND id = ?",
+                            (healed_upd, encrypt_db_record(healed_proj, aead_key, "project", pid), pid),
+                        )
+                        srv_projects[pid] = (healed_upd, healed_proj)
+                        updated_record_keys.add(("project", pid))
+                        db_mutated = True
+                        stats["protectedProjects"] += 1
+                        continue
+                    conn.execute(
+                        "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'project' AND id = ?",
+                        (inc_updated, encrypt_db_record(proj, aead_key, "project", pid), pid),
+                    )
+                    srv_projects[pid] = (inc_updated, proj)
+                    updated_record_keys.add(("project", pid))
+                    db_mutated = True
+                    stats["projectsUpdated"] += 1
+
+            def insert_version_obj(v_obj: dict[str, Any]) -> None:
+                nonlocal db_mutated
+                vid = str(v_obj.get("id") or uuid.uuid4())
+                v_obj["id"] = vid
+                norm_v = _normalize_version_payload(v_obj)
+                eid_val = norm_v["entryId"]
+                v_created = norm_v["createdAt"]
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO kv_records (kind, id, updated_at, payload_json) VALUES ('version', ?, ?, ?)",
+                    (vid, v_created, encrypt_db_record(norm_v, aead_key, "version", vid)),
+                )
+                if cur.rowcount > 0:
+                    db_mutated = True
+                    updated_record_keys.add(("version", vid))
+                if vid not in existing_version_ids:
+                    existing_versions_by_entry.setdefault(eid_val, []).append(norm_v)
+                    existing_version_ids.add(vid)
+
+            # 2. Merge Entries with automatic Conflict-to-Version-History preservation
+            for entry in incoming.get("entries") or []:
+                if not isinstance(entry, dict) or not entry.get("id"):
+                    continue
+                entry = _normalize_entry_payload(entry)
+                raw_pid = str(entry.get("projectId") or "")
+                if raw_pid in remapped_project_ids:
+                    mapped_pid = remapped_project_ids[raw_pid]
+                    entry["project_id"] = mapped_pid
+                    entry["projectId"] = mapped_pid
+                eid = str(entry["id"])
+                inc_updated = str(entry.get("updatedAt") or "")
+                inc_created = str(entry.get("createdAt") or inc_updated or utc_now_iso())
+                existing_entry_pair = srv_entries.get(eid)
+
+                if existing_entry_pair is None:
+                    conn.execute(
+                        "INSERT INTO kv_records (kind, id, updated_at, payload_json) VALUES ('entry', ?, ?, ?)",
+                        (eid, inc_updated, encrypt_db_record(entry, aead_key, "entry", eid)),
+                    )
                     srv_entries[eid] = (inc_updated, entry)
                     updated_record_keys.add(("entry", eid))
                     db_mutated = True
-                    stats["entriesUpdated"] += 1
+                    stats["entriesCreated"] += 1
+                    if not existing_versions_by_entry.get(eid):
+                        insert_version_obj(
+                            {
+                                "id": f"{eid}-v1",
+                                "entryId": eid,
+                                "versionNumber": 1,
+                                "title": entry.get("title", ""),
+                                "content": entry.get("content", ""),
+                                "changeNote": f"初始同步 ({remote_device})",
+                                "createdAt": inc_created,
+                            }
+                        )
                 else:
-                    if _is_iso_older(inc_updated, srv_updated) and has_diff:
-                        # Incoming is older than server state, but has different text -> save incoming as historical version
-                        vers = existing_versions_by_entry.get(eid, [])
-                        already_recorded = any(
-                            v.get("content") == entry.get("content") and v.get("title") == entry.get("title")
-                            for v in vers
-                        )
-                        if not already_recorded:
-                            max_ver = max((_safe_int(_get_field(v, "versionNumber", "version_number", 0)) for v in vers), default=0) + 1
-                            insert_version_obj(
-                                {
-                                    "id": str(uuid.uuid4()),
-                                    "entryId": eid,
-                                    "versionNumber": max_ver,
-                                    "title": entry.get("title", ""),
-                                    "content": entry.get("content", ""),
-                                    "changeNote": f"并发历史版本自动留存 ({remote_device})",
-                                    "createdAt": inc_updated or utc_now_iso(),
-                                }
-                            )
-                            stats["conflictsPreserved"] += 1
-
-                    # Monotonically converge useCount and lastUsedAt even when incoming updatedAt <= server updatedAt
-                    srv_use_count = _safe_int(_get_field(server_entry, "useCount", "use_count", 0))
-                    inc_use_count = _safe_int(_get_field(entry, "useCount", "use_count", 0))
-                    srv_used = _get_field(server_entry, "lastUsedAt", "last_used_at")
-                    inc_used = _get_field(entry, "lastUsedAt", "last_used_at")
-                    merged_use_count = max(srv_use_count, inc_use_count)
-                    merged_used = _pick_newer_iso(srv_used, inc_used)
-                    usage_changed = (merged_use_count > srv_use_count) or (
-                        merged_used is not None and _is_iso_newer(merged_used, srv_used)
+                    srv_updated, server_entry = existing_entry_pair
+                    has_diff = (
+                        server_entry.get("content") != entry.get("content")
+                        or server_entry.get("title") != entry.get("title")
                     )
-                    if usage_changed:
-                        updated_srv_entry = dict(server_entry)
-                        updated_srv_entry["use_count"] = merged_use_count
-                        updated_srv_entry["useCount"] = merged_use_count
+
+                    if _is_iso_newer(inc_updated, srv_updated):
+                        srv_deleted = _get_field(server_entry, "deletedAt", "deleted_at")
+                        inc_deleted = _get_field(entry, "deletedAt", "deleted_at")
+                        is_incoming_deletion = srv_deleted is None and inc_deleted is not None
+                        is_completed_todo = bool(server_entry.get("isCompleted", False)) or bool(entry.get("isCompleted", False))
+
+                        if has_diff or is_incoming_deletion:
+                            vers = existing_versions_by_entry.get(eid, [])
+                            max_ver = max((_safe_int(_get_field(v, "versionNumber", "version_number", 0)) for v in vers), default=0)
+                            latest_snap = max(vers, key=lambda v: _safe_int(_get_field(v, "versionNumber", "version_number", 0)), default=None)
+                            if (
+                                latest_snap is None
+                                or latest_snap.get("content") != server_entry.get("content")
+                                or latest_snap.get("title") != server_entry.get("title")
+                            ):
+                                max_ver += 1
+                                insert_version_obj(
+                                    {
+                                        "id": str(uuid.uuid4()),
+                                        "entryId": eid,
+                                        "versionNumber": max_ver,
+                                        "title": server_entry.get("title", ""),
+                                        "content": server_entry.get("content", ""),
+                                        "changeNote": "服务端删除前版本自动留存" if is_incoming_deletion else "服务端合并前版本自动留存",
+                                        "createdAt": srv_updated or utc_now_iso(),
+                                    }
+                                )
+                                stats["conflictsPreserved"] += 1
+
+                        # Preserve max useCount and latest lastUsedAt across snake_case and camelCase
+                        srv_use_count = _safe_int(_get_field(server_entry, "useCount", "use_count", 0))
+                        inc_use_count = _safe_int(_get_field(entry, "useCount", "use_count", 0))
+                        merged_use_count = max(srv_use_count, inc_use_count)
+                        srv_used = _get_field(server_entry, "lastUsedAt", "last_used_at")
+                        inc_used = _get_field(entry, "lastUsedAt", "last_used_at")
+                        merged_used = _pick_newer_iso(srv_used, inc_used)
+
+                        if is_incoming_deletion and should_block_mass_delete and not is_completed_todo:
+                            healed_entry = dict(server_entry)
+                            healed_entry["deletedAt"] = None
+                            healed_entry["deleted_at"] = None
+                            healed_upd = _bump_iso_timestamp(inc_updated)
+                            healed_entry["updated_at"] = healed_upd
+                            healed_entry["updatedAt"] = healed_upd
+                            healed_entry["use_count"] = merged_use_count
+                            healed_entry["useCount"] = merged_use_count
+                            if merged_used is not None:
+                                healed_entry["last_used_at"] = merged_used
+                                healed_entry["lastUsedAt"] = merged_used
+                            conn.execute(
+                                "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'entry' AND id = ?",
+                                (healed_upd, encrypt_db_record(healed_entry, aead_key, "entry", eid), eid),
+                            )
+                            srv_entries[eid] = (healed_upd, healed_entry)
+                            updated_record_keys.add(("entry", eid))
+                            db_mutated = True
+                            stats["protectedEntries"] += 1
+                            continue
+
+                        entry["use_count"] = merged_use_count
+                        entry["useCount"] = merged_use_count
                         if merged_used is not None:
-                            updated_srv_entry["last_used_at"] = merged_used
-                            updated_srv_entry["lastUsedAt"] = merged_used
+                            entry["last_used_at"] = merged_used
+                            entry["lastUsedAt"] = merged_used
+
                         conn.execute(
-                            "UPDATE kv_records SET payload_json = ? WHERE kind = 'entry' AND id = ?",
-                            (encrypt_db_record(updated_srv_entry, aead_key, "entry", eid), eid),
+                            "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'entry' AND id = ?",
+                            (inc_updated, encrypt_db_record(entry, aead_key, "entry", eid), eid),
                         )
-                        srv_entries[eid] = (srv_updated, updated_srv_entry)
+                        srv_entries[eid] = (inc_updated, entry)
                         updated_record_keys.add(("entry", eid))
                         db_mutated = True
+                        stats["entriesUpdated"] += 1
+                    else:
+                        if _is_iso_older(inc_updated, srv_updated) and has_diff:
+                            # Incoming is older than server state, but has different text -> save incoming as historical version
+                            vers = existing_versions_by_entry.get(eid, [])
+                            already_recorded = any(
+                                v.get("content") == entry.get("content") and v.get("title") == entry.get("title")
+                                for v in vers
+                            )
+                            if not already_recorded:
+                                max_ver = max((_safe_int(_get_field(v, "versionNumber", "version_number", 0)) for v in vers), default=0) + 1
+                                insert_version_obj(
+                                    {
+                                        "id": str(uuid.uuid4()),
+                                        "entryId": eid,
+                                        "versionNumber": max_ver,
+                                        "title": entry.get("title", ""),
+                                        "content": entry.get("content", ""),
+                                        "changeNote": f"并发历史版本自动留存 ({remote_device})",
+                                        "createdAt": inc_updated or utc_now_iso(),
+                                    }
+                                )
+                                stats["conflictsPreserved"] += 1
 
-        # 3. Revive any soft-deleted project that still contains active entries
-        active_project_ids_needed: set[str] = set()
-        for _, e_obj in srv_entries.values():
-            if _get_field(e_obj, "deletedAt", "deleted_at") is None:
+                        # Monotonically converge useCount and lastUsedAt even when incoming updatedAt <= server updatedAt
+                        srv_use_count = _safe_int(_get_field(server_entry, "useCount", "use_count", 0))
+                        inc_use_count = _safe_int(_get_field(entry, "useCount", "use_count", 0))
+                        srv_used = _get_field(server_entry, "lastUsedAt", "last_used_at")
+                        inc_used = _get_field(entry, "lastUsedAt", "last_used_at")
+                        merged_use_count = max(srv_use_count, inc_use_count)
+                        merged_used = _pick_newer_iso(srv_used, inc_used)
+                        usage_changed = (merged_use_count > srv_use_count) or (
+                            merged_used is not None and _is_iso_newer(merged_used, srv_used)
+                        )
+                        if usage_changed:
+                            updated_srv_entry = dict(server_entry)
+                            updated_srv_entry["use_count"] = merged_use_count
+                            updated_srv_entry["useCount"] = merged_use_count
+                            if merged_used is not None:
+                                updated_srv_entry["last_used_at"] = merged_used
+                                updated_srv_entry["lastUsedAt"] = merged_used
+                            conn.execute(
+                                "UPDATE kv_records SET payload_json = ? WHERE kind = 'entry' AND id = ?",
+                                (encrypt_db_record(updated_srv_entry, aead_key, "entry", eid), eid),
+                            )
+                            srv_entries[eid] = (srv_updated, updated_srv_entry)
+                            updated_record_keys.add(("entry", eid))
+                            db_mutated = True
+
+            # 3. Reconcile active entries whose parent project is soft-deleted or missing:
+            # System-protected groups are healed; non-builtin soft-deleted groups stay deleted
+            # and their orphaned active entries are migrated to the active default group.
+            fallback_pid: str | None = None
+            for pid_cand, (_, p_cand) in srv_projects.items():
+                if _get_field(p_cand, "deletedAt", "deleted_at") is None and bool(p_cand.get("isDefault", False)):
+                    fallback_pid = pid_cand
+                    break
+            if fallback_pid is None:
+                for pid_cand, (_, p_cand) in srv_projects.items():
+                    if _get_field(p_cand, "deletedAt", "deleted_at") is None:
+                        fallback_pid = pid_cand
+                        break
+
+            for eid_k, (e_upd, e_obj) in list(srv_entries.items()):
+                if _get_field(e_obj, "deletedAt", "deleted_at") is not None:
+                    continue
                 pid_val = str(_get_field(e_obj, "projectId", "project_id") or "")
-                if pid_val:
-                    active_project_ids_needed.add(pid_val)
-
-        for needed_pid in active_project_ids_needed:
-            proj_pair = srv_projects.get(needed_pid)
-            if proj_pair is not None:
-                p_upd, p_obj = proj_pair
-                if _get_field(p_obj, "deletedAt", "deleted_at") is not None:
-                    revived = dict(p_obj)
-                    revived["deletedAt"] = None
-                    revived["deleted_at"] = None
-                    revived_upd = _bump_iso_timestamp(p_upd)
-                    revived["updated_at"] = revived_upd
-                    revived["updatedAt"] = revived_upd
+                proj_pair = srv_projects.get(pid_val) if pid_val else None
+                if proj_pair is not None:
+                    p_upd, p_obj = proj_pair
+                    if _get_field(p_obj, "deletedAt", "deleted_at") is not None:
+                        p_kind = str(p_obj.get("groupKindRaw") or p_obj.get("group_kind") or "")
+                        is_sys = (p_kind == "builtin-inbox") or bool(p_obj.get("isDefault", False))
+                        if is_sys:
+                            revived = dict(p_obj)
+                            revived["deletedAt"] = None
+                            revived["deleted_at"] = None
+                            revived_upd = _bump_iso_timestamp(p_upd)
+                            revived["updated_at"] = revived_upd
+                            revived["updatedAt"] = revived_upd
+                            conn.execute(
+                                "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'project' AND id = ?",
+                                (revived_upd, encrypt_db_record(revived, aead_key, "project", pid_val), pid_val),
+                            )
+                            srv_projects[pid_val] = (revived_upd, revived)
+                            updated_record_keys.add(("project", pid_val))
+                            db_mutated = True
+                            stats["protectedProjects"] += 1
+                        elif fallback_pid and fallback_pid != pid_val:
+                            migrated_entry = dict(e_obj)
+                            migrated_entry["projectId"] = fallback_pid
+                            migrated_entry["project_id"] = fallback_pid
+                            migrated_upd = _bump_iso_timestamp(e_upd)
+                            migrated_entry["updatedAt"] = migrated_upd
+                            migrated_entry["updated_at"] = migrated_upd
+                            conn.execute(
+                                "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'entry' AND id = ?",
+                                (migrated_upd, encrypt_db_record(migrated_entry, aead_key, "entry", eid_k), eid_k),
+                            )
+                            srv_entries[eid_k] = (migrated_upd, migrated_entry)
+                            updated_record_keys.add(("entry", eid_k))
+                            db_mutated = True
+                            stats["orphansMigrated"] += 1
+                elif fallback_pid and pid_val != fallback_pid:
+                    migrated_entry = dict(e_obj)
+                    migrated_entry["projectId"] = fallback_pid
+                    migrated_entry["project_id"] = fallback_pid
+                    migrated_upd = _bump_iso_timestamp(e_upd)
+                    migrated_entry["updatedAt"] = migrated_upd
+                    migrated_entry["updated_at"] = migrated_upd
                     conn.execute(
-                        "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'project' AND id = ?",
-                        (revived_upd, encrypt_db_record(revived, aead_key, "project", needed_pid), needed_pid),
+                        "UPDATE kv_records SET updated_at = ?, payload_json = ? WHERE kind = 'entry' AND id = ?",
+                        (migrated_upd, encrypt_db_record(migrated_entry, aead_key, "entry", eid_k), eid_k),
                     )
-                    srv_projects[needed_pid] = (revived_upd, revived)
-                    updated_record_keys.add(("project", needed_pid))
+                    srv_entries[eid_k] = (migrated_upd, migrated_entry)
+                    updated_record_keys.add(("entry", eid_k))
                     db_mutated = True
-                    stats["protectedProjects"] += 1
+                    stats["orphansMigrated"] += 1
 
-        # 4. Merge Explicit Incoming Versions
-        for ver in incoming.get("versions") or []:
-            if not isinstance(ver, dict) or not ver.get("id"):
-                continue
-            vid_str = str(ver["id"])
-            if vid_str in existing_version_ids:
-                continue
-            norm_inc_ver = _normalize_version_payload(ver)
-            eid = norm_inc_ver["entryId"]
-            if not eid:
-                continue
-            vnum = norm_inc_ver["versionNumber"]
-            vers = existing_versions_by_entry.get(eid, [])
-            if any(v.get("id") == vid_str for v in vers):
-                continue
-            has_num_collision = any(_safe_int(_get_field(v, "versionNumber", "version_number", 0)) == vnum for v in vers)
-            if not has_num_collision:
-                insert_version_obj(norm_inc_ver)
-            else:
-                already_has_same_text = any(
-                    v.get("content") == norm_inc_ver.get("content") and v.get("title") == norm_inc_ver.get("title")
-                    for v in vers
-                )
-                if not already_has_same_text:
-                    max_ver = max((_safe_int(_get_field(v, "versionNumber", "version_number", 0)) for v in vers), default=0)
-                    renumbered = dict(norm_inc_ver)
-                    renumbered["versionNumber"] = max_ver + 1
-                    renumbered["version_number"] = max_ver + 1
-                    insert_version_obj(renumbered)
+            # 4. Merge Explicit Incoming Versions
+            for ver in incoming.get("versions") or []:
+                if not isinstance(ver, dict) or not ver.get("id"):
+                    continue
+                vid_str = str(ver["id"])
+                if vid_str in existing_version_ids:
+                    continue
+                norm_inc_ver = _normalize_version_payload(ver)
+                eid = norm_inc_ver["entryId"]
+                if not eid:
+                    continue
+                vnum = norm_inc_ver["versionNumber"]
+                vers = existing_versions_by_entry.get(eid, [])
+                if any(v.get("id") == vid_str for v in vers):
+                    continue
+                has_num_collision = any(_safe_int(_get_field(v, "versionNumber", "version_number", 0)) == vnum for v in vers)
+                if not has_num_collision:
+                    insert_version_obj(norm_inc_ver)
+                else:
+                    already_has_same_text = any(
+                        v.get("content") == norm_inc_ver.get("content") and v.get("title") == norm_inc_ver.get("title")
+                        for v in vers
+                    )
+                    if not already_has_same_text:
+                        max_ver = max((_safe_int(_get_field(v, "versionNumber", "version_number", 0)) for v in vers), default=0)
+                        renumbered = dict(norm_inc_ver)
+                        renumbered["versionNumber"] = max_ver + 1
+                        renumbered["version_number"] = max_ver + 1
+                        insert_version_obj(renumbered)
 
         # Upgrade any untouched legacy plaintext rows to enc:v2
         if legacy_rows_to_upgrade and aead_key is not None:
@@ -1511,11 +1678,14 @@ def merge_envelope_into_db(
         key=lambda v: (parse_iso_epoch_ms(v.get("createdAt")) or 0, str(v.get("id") or "")),
     )
 
+    now_iso = utc_now_iso()
     envelope = {
         "schemaVersion": SCHEMA_VERSION,
         "revision": current_rev,
+        "serverRevision": current_rev,
+        "serverTime": now_iso,
         "deviceId": "promptpanel-sync-server",
-        "exportedAt": utc_now_iso(),
+        "exportedAt": now_iso,
         "projects": sorted_projects,
         "entries": sorted_entries,
         "versions": sorted_versions,
@@ -1598,8 +1768,9 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
                 self.send_header(
                     "Access-Control-Allow-Headers",
-                    "Authorization, Content-Type, Content-Encoding, X-PromptPanel-Cipher",
+                    "Authorization, Content-Type, Content-Encoding, If-Match, X-PromptPanel-Cipher",
                 )
+                self.send_header("Access-Control-Expose-Headers", "ETag, X-PromptPanel-Revision")
                 self.send_header("Access-Control-Max-Age", "86400")
             self.end_headers()
         except (BrokenPipeError, ConnectionResetError):
@@ -1727,22 +1898,23 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                 return
             conn = init_namespace_db(db_path)
             try:
-                if since_rev is not None:
-                    current_rev = get_sync_revision(conn)
-                    if since_rev == current_rev:
-                        envelope = {
-                            "schemaVersion": SCHEMA_VERSION,
-                            "unchanged": True,
-                            "revision": current_rev,
-                            "generatedAt": utc_now_iso(),
-                            "projects": [],
-                            "entries": [],
-                            "versions": [],
-                        }
-                    else:
-                        envelope = load_envelope_from_db(conn, aead_key=aead_key)
+                current_rev = get_sync_revision(conn)
+                if since_rev is not None and since_rev == current_rev:
+                    now_iso = utc_now_iso()
+                    envelope = {
+                        "schemaVersion": SCHEMA_VERSION,
+                        "unchanged": True,
+                        "revision": current_rev,
+                        "serverRevision": current_rev,
+                        "serverTime": now_iso,
+                        "generatedAt": now_iso,
+                        "projects": [],
+                        "entries": [],
+                        "versions": [],
+                    }
                 else:
                     envelope = load_envelope_from_db(conn, aead_key=aead_key)
+                    current_rev = int(envelope.get("revision", current_rev))
             except Exception as exc:
                 _record_metric("syncErrorsTotal")
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": f"Decryption or database error: {exc}"})
@@ -1752,7 +1924,11 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
 
         wants_wire_cipher = "aes-256-gcm" in self.headers.get("X-PromptPanel-Cipher", "").lower()
         response_payload = encrypt_wire_envelope(envelope, aead_key) if wants_wire_cipher else envelope
-        extra_hdrs = {"X-PromptPanel-Namespace": namespace[:12]}
+        extra_hdrs = {
+            "X-PromptPanel-Namespace": namespace[:12],
+            "X-PromptPanel-Revision": str(current_rev),
+            "ETag": f'"rev-{current_rev}"',
+        }
         if wants_wire_cipher and AESGCM is not None:
             extra_hdrs["X-PromptPanel-Cipher"] = "aes-256-gcm+gzip"
 
@@ -1837,8 +2013,31 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return
 
+        raw_expected_rev = _get_field(incoming, "expectedRevision", "expected_revision")
+        if raw_expected_rev is None:
+            if_match_hdr = (self.headers.get("If-Match") or "").strip()
+            if if_match_hdr and if_match_hdr != "*":
+                cleaned_etag = if_match_hdr.strip('"').strip("'")
+                if cleaned_etag.startswith("rev-"):
+                    cleaned_etag = cleaned_etag[4:]
+                raw_expected_rev = cleaned_etag
+        expected_revision: int | None = None
+        if raw_expected_rev is not None and str(raw_expected_rev).strip() != "":
+            try:
+                expected_revision = int(str(raw_expected_rev).strip())
+            except ValueError:
+                _record_metric("syncErrorsTotal")
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid expectedRevision / If-Match revision"})
+                return
+
+        strict_conflict = _safe_bool(_get_field(incoming, "strictConflict", "strict_conflict", False), False)
+        force_overwrite = _safe_bool(_get_field(incoming, "forceOverwrite", "force_overwrite", False), False)
+        wants_wire_cipher = was_wire_encrypted or ("aes-256-gcm" in self.headers.get("X-PromptPanel-Cipher", "").lower())
+
         _record_metric("syncPostTotal")
         lock = get_namespace_lock(namespace)
+        conflict_envelope: dict[str, Any] | None = None
+        rebased = False
         with lock:
             db_path = DATA_DIR / "namespaces" / f"{namespace}.db"
             if not _check_tenant_capacity(db_path):
@@ -1847,13 +2046,33 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                 return
             conn = init_namespace_db(db_path)
             try:
-                stats, merged_envelope = merge_envelope_into_db(
-                    conn,
-                    incoming,
-                    aead_key=aead_key,
-                    db_path=db_path,
-                    namespace=namespace,
-                )
+                pre_rev = get_sync_revision(conn)
+                if (
+                    strict_conflict
+                    and not force_overwrite
+                    and expected_revision is not None
+                    and expected_revision != pre_rev
+                ):
+                    conflict_envelope = load_envelope_from_db(conn, aead_key=aead_key)
+                    conflict_envelope["conflict"] = True
+                    conflict_envelope["expectedRevision"] = expected_revision
+                    conflict_envelope["serverRevision"] = pre_rev
+                    conflict_envelope["serverTime"] = utc_now_iso()
+                    conflict_envelope["error"] = (
+                        f"Revision conflict: expected {expected_revision}, server is at {pre_rev}"
+                    )
+                else:
+                    if expected_revision is not None and expected_revision != pre_rev:
+                        rebased = True
+                    stats, merged_envelope = merge_envelope_into_db(
+                        conn,
+                        incoming,
+                        aead_key=aead_key,
+                        db_path=db_path,
+                        namespace=namespace,
+                    )
+                    if rebased:
+                        merged_envelope["rebased"] = True
             except (ValueError, TypeError) as exc:
                 _record_metric("syncErrorsTotal")
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -1864,6 +2083,28 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                 return
             finally:
                 conn.close()
+
+            if conflict_envelope is not None:
+                rev_str = str(conflict_envelope.get("serverRevision", 0))
+                conflict_payload = (
+                    encrypt_wire_envelope(conflict_envelope, aead_key)
+                    if wants_wire_cipher
+                    else conflict_envelope
+                )
+                conflict_hdrs = {
+                    "X-PromptPanel-Namespace": namespace[:12],
+                    "X-PromptPanel-Revision": rev_str,
+                    "ETag": f'"rev-{rev_str}"',
+                }
+                if wants_wire_cipher and AESGCM is not None:
+                    conflict_hdrs["X-PromptPanel-Cipher"] = "aes-256-gcm+gzip"
+                self._send_json(
+                    HTTPStatus.CONFLICT,
+                    conflict_payload,
+                    extra_headers=conflict_hdrs,
+                )
+                return
+
             try:
                 rotate_namespace_backup(db_path, namespace)
             except Exception:
@@ -1874,10 +2115,12 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             "massDeletionsProtectedTotal",
             stats.get("protectedEntries", 0) + stats.get("protectedProjects", 0),
         )
-        wants_wire_cipher = was_wire_encrypted or ("aes-256-gcm" in self.headers.get("X-PromptPanel-Cipher", "").lower())
+        new_rev = int(merged_envelope.get("revision", 0))
         response_payload = encrypt_wire_envelope(merged_envelope, aead_key) if wants_wire_cipher else merged_envelope
         extra_hdrs = {
             "X-PromptPanel-Namespace": namespace[:12],
+            "X-PromptPanel-Revision": str(new_rev),
+            "ETag": f'"rev-{new_rev}"',
             "X-PromptPanel-Merge-Stats": json.dumps(stats),
         }
         if wants_wire_cipher and AESGCM is not None:

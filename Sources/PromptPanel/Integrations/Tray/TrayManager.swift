@@ -36,7 +36,9 @@ final class TrayManager {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         if let button = statusItem?.button {
-            if let image = NSImage(systemSymbolName: "text.page.badge.magnifyingglass", accessibilityDescription: "PromptPanel") {
+            let symbol = NSImage(systemSymbolName: "text.page.badge.magnifyingglass", accessibilityDescription: "PromptPanel")
+                ?? NSImage(systemSymbolName: "doc.text.magnifyingglass", accessibilityDescription: "PromptPanel")
+            if let image = symbol {
                 image.isTemplate = true
                 button.image = image
             } else {

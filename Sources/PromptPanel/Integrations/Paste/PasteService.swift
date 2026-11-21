@@ -27,6 +27,10 @@ final class PasteService: PasteDispatching {
             return .eventCreationFailed
         }
 
+        // Wait briefly if a physical modifier (Ctrl/Option/Shift) from the triggering hotkey
+        // is still held down, so the synthetic Cmd+V is not mangled into Ctrl+Cmd+V / Opt+Cmd+V.
+        waitForPhysicalModifiersRelease()
+
         // Create a Cmd+V key down event
         guard let keyDownEvent = CGEvent(keyboardEventSource: eventSource, virtualKey: 0x09, keyDown: true) else {
             PPLogger.paste.error("Failed to create key down event")
@@ -57,5 +61,27 @@ final class PasteService: PasteDispatching {
         let trusted = AXIsProcessTrusted()
         PPLogger.paste.debug("Accessibility check: \(trusted)")
         return trusted
+    }
+
+    /// Poll briefly up to `timeoutMs` while Ctrl / Option / Shift are physically held down
+    /// so leftover trigger modifiers do not turn synthetic Cmd+V into Ctrl+Cmd+V / Opt+Cmd+V.
+    private func waitForPhysicalModifiersRelease(timeoutMs: Int = 150) {
+        let modifierKeyCodes: [CGKeyCode] = [
+            0x3B, // Left Control
+            0x3E, // Right Control
+            0x3A, // Left Option
+            0x3D, // Right Option
+            0x38, // Left Shift
+            0x3C, // Right Shift
+        ]
+        let stepMicros: useconds_t = 10_000
+        let maxIterations = max(1, timeoutMs / 10)
+        for _ in 0..<maxIterations {
+            let anyHeld = modifierKeyCodes.contains { CGEventSource.keyState(.hidSystemState, key: $0) }
+            if !anyHeld {
+                return
+            }
+            usleep(stepMicros)
+        }
     }
 }

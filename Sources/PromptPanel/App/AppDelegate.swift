@@ -248,8 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        mainWindowViewModel?.commitPendingInlineChangesIfNeeded()
-        mainWindowViewModel?.cancelPendingBackgroundTasks()
+        mainWindowViewModel?.flushPendingChangesBeforeTermination()
         if let mainWindowKeyMonitor {
             NSEvent.removeMonitor(mainWindowKeyMonitor)
             self.mainWindowKeyMonitor = nil
@@ -838,6 +837,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    private static func makeWindowChromeColor() -> NSColor {
+        NSColor(name: nil) { appearance in
+            appearance.isDark
+                ? NSColor(srgbRed: 23 / 255, green: 24 / 255, blue: 28 / 255, alpha: 1)   // Constants.VisualStyle.surface (#17181c)
+                : NSColor(srgbRed: 248 / 255, green: 249 / 255, blue: 251 / 255, alpha: 1) // Constants.VisualStyle.surface (#f8f9fb)
+        }
+    }
+
     private func openMainWindow(targetTab: MainWindowViewModel.Tab? = nil) {
         if let targetTab {
             mainWindowViewModel.selectedTab = targetTab
@@ -845,11 +852,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if mainWindow == nil {
             let contentView = MainWindowView(viewModel: mainWindowViewModel)
             let defaultSize = Self.fittedMainWindowContentSize()
-            let windowChromeColor = NSColor(name: nil) { appearance in
-                appearance.isDark
-                    ? NSColor(srgbRed: 30 / 255, green: 31 / 255, blue: 35 / 255, alpha: 1)
-                    : NSColor(srgbRed: 246 / 255, green: 247 / 255, blue: 249 / 255, alpha: 1)
-            }
+            let windowChromeColor = Self.makeWindowChromeColor()
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: defaultSize.width, height: defaultSize.height),
                 styleMask: [.titled, .closable, .resizable, .miniaturizable],
@@ -857,6 +860,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 defer: false
             )
             window.title = Constants.appName
+            window.appearance = appState.appTheme.nsAppearance
             window.contentMinSize = NSSize(
                 width: min(Constants.MainWindowLayout.minContentSize.width, defaultSize.width),
                 height: min(Constants.MainWindowLayout.minContentSize.height, defaultSize.height)
@@ -866,13 +870,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.isReleasedWhenClosed = false
             window.isRestorable = false
             window.animationBehavior = .none
-            window.titlebarAppearsTransparent = false
+            window.titlebarAppearsTransparent = true
+            window.titlebarSeparatorStyle = .none
             window.isMovableByWindowBackground = true
             window.backgroundColor = windowChromeColor
             window.isOpaque = true
             window.delegate = self
             mainWindow = window
             installMainWindowKeyMonitorIfNeeded()
+        } else {
+            mainWindow?.appearance = appState.appTheme.nsAppearance
         }
 
         mainWindowViewModel.load()
@@ -892,6 +899,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 defer: false
             )
             window.title = "\(Constants.appName) · 参考词库"
+            window.appearance = appState.appTheme.nsAppearance
+            window.titlebarAppearsTransparent = true
+            window.titlebarSeparatorStyle = .none
+            window.backgroundColor = Self.makeWindowChromeColor()
+            window.isOpaque = true
             window.contentMinSize = NSSize(width: 500, height: 520)
             if let mainFrame = mainWindow?.frame {
                 let candidateOrigin = NSPoint(x: mainFrame.maxX + 16, y: mainFrame.minY + 40)
@@ -916,9 +928,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.isRestorable = false
             window.delegate = self
             referenceWindow = window
+            installMainWindowKeyMonitorIfNeeded()
+        } else {
+            referenceWindow?.appearance = appState.appTheme.nsAppearance
         }
         mainWindowViewModel.refreshClipboardPreview()
-        mainWindowViewModel.refreshReferenceEntries()
+        mainWindowViewModel.refreshReferenceEntries(immediate: true)
         appState.isMainWindowVisible = true
         updateAppActivationPolicy()
         referenceWindow?.makeKeyAndOrderFront(nil)
@@ -952,6 +967,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func shouldSwallowMainWindowKeyDown(_ event: NSEvent) -> Bool {
+        if let referenceWindow, referenceWindow.isVisible, referenceWindow.isKeyWindow, event.window === referenceWindow {
+            return shouldSwallowReferenceWindowKeyDown(event, window: referenceWindow)
+        }
         guard let mainWindow, mainWindow.isVisible, mainWindow.isKeyWindow else {
             return false
         }
@@ -973,6 +991,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return mainWindowViewModel.handleMainWindowKeyCommand(command)
     }
 
+    private func shouldSwallowReferenceWindowKeyDown(_ event: NSEvent, window: NSWindow) -> Bool {
+        let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        if event.keyCode == 53, flags.isEmpty, !Self.hasActiveMarkedText(firstResponder: window.firstResponder) {
+            window.performClose(nil)
+            return true
+        }
+        if flags == [.command], event.keyCode == 13 || event.charactersIgnoringModifiers?.lowercased() == "w" {
+            window.performClose(nil)
+            return true
+        }
+        if flags == [.command], event.keyCode == 43 || event.charactersIgnoringModifiers == "," {
+            openMainWindow(targetTab: .settings)
+            return true
+        }
+        return false
+    }
+
     private func refreshPermissionState() {
         permissionService.refresh()
         appState.hasAccessibilityPermission = permissionService.isAccessibilityGranted
@@ -985,13 +1020,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// need an explicit `appearance` so that dynamic `NSColor` providers
     /// resolve consistently.
     private func applyAppearance(_ theme: AppTheme) {
-        let appearance: NSAppearance? = {
-            switch theme {
-            case .system: return nil
-            case .light:  return NSAppearance(named: .aqua)
-            case .dark:   return NSAppearance(named: .darkAqua)
-            }
-        }()
+        let appearance = theme.nsAppearance
         NSApp.appearance = appearance
         mainWindow?.appearance = appearance
         referenceWindow?.appearance = appearance

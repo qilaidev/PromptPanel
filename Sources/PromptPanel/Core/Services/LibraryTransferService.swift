@@ -97,7 +97,7 @@ final class LibraryTransferService: @unchecked Sendable {
             formatVersion: PromptPanelLibraryExport.currentFormatVersion,
             exportedAt: Date(),
             projects: try projectRepository.fetchAll(),
-            entries: try entryRepository.fetchAll()
+            entries: try entryRepository.fetchAll(excludeArchivedProjects: false)
         )
     }
 
@@ -120,6 +120,7 @@ final class LibraryTransferService: @unchecked Sendable {
             let localInboxProject = localProjects.first(where: { $0.groupKind == .inbox })
             var projectById = Dictionary(uniqueKeysWithValues: localProjects.map { ($0.id, $0) })
             var projectIdMap: [String: String] = [:]
+            var didMutate = false
 
             for importedProject in payload.projects {
                 let name = normalizedName(importedProject.name, fallback: Constants.defaultProjectName)
@@ -145,6 +146,22 @@ final class LibraryTransferService: @unchecked Sendable {
                     try updated.update(db)
                     projectById[updated.id] = updated
                     summary.projectsUpdated += 1
+                    didMutate = true
+                } else if let tombstoned = try Project.fetchOne(db, key: importedProject.id) {
+                    projectIdMap[importedProject.id] = tombstoned.id
+                    projectById[tombstoned.id] = tombstoned
+                    guard !tombstoned.isSystemProtected else {
+                        continue
+                    }
+                    var updated = importedProject
+                    updated.name = name
+                    updated.isDefault = false
+                    updated.deletedAt = nil
+                    updated.updatedAt = Date()
+                    try updated.update(db)
+                    projectById[updated.id] = updated
+                    summary.projectsUpdated += 1
+                    didMutate = true
                 } else {
                     var created = importedProject
                     created.name = name
@@ -154,11 +171,15 @@ final class LibraryTransferService: @unchecked Sendable {
                     projectById[created.id] = created
                     projectIdMap[importedProject.id] = created.id
                     summary.projectsCreated += 1
+                    didMutate = true
                 }
             }
 
             let fallbackProjectId = localDefaultProject?.id ?? projectById.values.sorted { $0.name < $1.name }.first?.id
             for importedEntry in payload.entries {
+                guard !importedEntry.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    continue
+                }
                 guard let targetProjectId = projectIdMap[importedEntry.projectId] ?? projectById[importedEntry.projectId]?.id ?? fallbackProjectId else {
                     continue
                 }
@@ -166,11 +187,14 @@ final class LibraryTransferService: @unchecked Sendable {
                 var entry = importedEntry
                 entry.projectId = targetProjectId
                 entry.title = normalizedName(entry.title, fallback: "Untitled Prompt")
+                entry.type = Constants.EntryType.resolve(importedEntry.type).rawValue
                 entry.tags = Entry.normalizeTags(entry.tags)
+                entry.deletedAt = nil
 
                 if let existing = try Entry.fetchOne(db, key: entry.id) {
                     entry.updatedAt = Date()
                     try entry.update(db)
+                    try EntryRepository.syncTagsIndex(entryId: entry.id, tags: entry.tags, in: db)
                     if existing.content != entry.content || existing.title != entry.title {
                         let maxVer = try Int.fetchOne(
                             db,
@@ -188,8 +212,10 @@ final class LibraryTransferService: @unchecked Sendable {
                         try version.insert(db)
                     }
                     summary.entriesUpdated += 1
+                    didMutate = true
                 } else {
                     try entry.insert(db)
+                    try EntryRepository.syncTagsIndex(entryId: entry.id, tags: entry.tags, in: db)
                     let existingVerCount = try EntryVersion
                         .filter(EntryVersion.Columns.entryId == entry.id)
                         .fetchCount(db)
@@ -205,7 +231,12 @@ final class LibraryTransferService: @unchecked Sendable {
                         try initialVersion.insert(db)
                     }
                     summary.entriesCreated += 1
+                    didMutate = true
                 }
+            }
+
+            if didMutate {
+                try EntryRepository.incrementLocalMutationSeq(in: db)
             }
         }
 

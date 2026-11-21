@@ -11,72 +11,70 @@ struct QuickPanelView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            VStack(spacing: 0) {
-                header
-                    .overlay(dividerBottom, alignment: .bottom)
+        VStack(spacing: 0) {
+            header
+                .overlay(dividerBottom, alignment: .bottom)
 
-                ZStack(alignment: .topLeading) {
-                    VStack(spacing: 0) {
-                        if viewModel.quickCaptureDraft == nil {
-                            kindFilterStrip
-                                .overlay(dividerBottom, alignment: .bottom)
+            ZStack(alignment: .topLeading) {
+                VStack(spacing: 0) {
+                    if viewModel.quickCaptureDraft == nil {
+                        kindFilterStrip
+                            .overlay(dividerBottom, alignment: .bottom)
+                            .allowsHitTesting(!isContentInteractionBlocked)
+                    }
+
+                    if let statusMessage = viewModel.statusMessage {
+                        statusBanner(statusMessage, tone: viewModel.statusTone)
+                            .overlay(dividerBottom, alignment: .bottom)
+                    }
+
+                    ZStack {
+                        if let draft = viewModel.quickCaptureDraft {
+                            quickCapturePreviewBody(draft)
+                        } else {
+                            resultsList
                                 .allowsHitTesting(!isContentInteractionBlocked)
                         }
 
-                        if let statusMessage = viewModel.statusMessage {
-                            statusBanner(statusMessage, tone: viewModel.statusTone)
-                                .overlay(dividerBottom, alignment: .bottom)
-                        }
-
-                        ZStack {
-                            if let draft = viewModel.quickCaptureDraft {
-                                quickCapturePreviewBody(draft)
-                            } else {
-                                resultsList
-                                    .allowsHitTesting(!isContentInteractionBlocked)
-                            }
-
-                            if viewModel.isPreviewPresented,
-                               viewModel.quickCaptureDraft == nil,
-                               let previewEntry = viewModel.selectedEntry {
-                                entryPreviewOverlay(previewEntry)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                        if appState.panelShowFooter {
-                            footerHints
-                                .overlay(dividerTop, alignment: .top)
+                        if viewModel.isPreviewPresented,
+                           viewModel.quickCaptureDraft == nil,
+                           let previewEntry = viewModel.selectedEntry {
+                            entryPreviewOverlay(previewEntry)
+                                .transition(.opacity.combined(with: .scale(scale: 0.985)))
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    if viewModel.isScopeDropdownOpen {
-                        Color.black.opacity(0.001)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                closeScopeDropdownImmediately()
-                            }
-                            .zIndex(15)
+                    if appState.panelShowFooter {
+                        footerHints
+                            .overlay(dividerTop, alignment: .top)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                if viewModel.isScopeDropdownOpen {
+                    Color.black.opacity(0.001)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            closeScopeDropdownImmediately()
+                        }
+                        .zIndex(15)
+
+                    scopeDropdownCard
+                        .padding(.leading, Design.Space.lg)
+                        .padding(.top, Design.Space.xs)
+                        .zIndex(20)
+                        .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .topLeading)))
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            if viewModel.isScopeDropdownOpen {
-                scopeDropdownCard
-                    .padding(.leading, Design.Space.lg)
-                    .padding(.top, 38)
-                    .zIndex(20)
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(panelSurface)
         .preferredColorScheme(appState.appTheme.preferredColorScheme)
-        .transaction { $0.animation = nil }
+        .animation(.easeOut(duration: 0.14), value: viewModel.isScopeDropdownOpen)
+        .animation(.easeOut(duration: 0.14), value: viewModel.isPreviewPresented)
     }
 
     private var dividerBottom: some View {
@@ -109,34 +107,22 @@ struct QuickPanelView: View {
                     .foregroundStyle(Constants.VisualStyle.textTertiary)
             }
 
-            ZStack(alignment: .leading) {
-                if viewModel.query.isEmpty {
-                    Text(searchPlaceholder)
-                        .font(.ui(.title))
-                        .foregroundStyle(Constants.VisualStyle.textTertiary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .padding(.leading, 6)
-                        .allowsHitTesting(false)
-                }
-
-                KeyAwareSearchField(
-                    text: Binding(
-                        get: { viewModel.query },
-                        set: { viewModel.query = $0 }
-                    ),
-                    placeholder: "",
-                    focusToken: viewModel.focusToken,
-                    onMoveSelection: viewModel.moveSelection,
-                    onSubmit: { viewModel.executeSelection(triggerSource: .keyboardSubmit) },
-                    onQuickCreateNote: { viewModel.quickCreateEntryFromPanel(type: .note) },
-                    onQuickCreateTodo: { viewModel.quickCreateEntryFromPanel(type: .todo) },
-                    onCycleScope: viewModel.cycleScope,
-                    onEscape: viewModel.handleEscape,
-                    onFocusResolved: viewModel.handleSearchFieldFocus
-                )
-            }
-            .frame(minWidth: 72, maxWidth: .infinity)
+            KeyAwareSearchField(
+                text: Binding(
+                    get: { viewModel.query },
+                    set: { viewModel.query = $0 }
+                ),
+                placeholder: searchPlaceholder,
+                focusToken: viewModel.focusToken,
+                onMoveSelection: viewModel.moveSelection,
+                onSubmit: { viewModel.executeSelection(triggerSource: .keyboardSubmit) },
+                onQuickCreateNote: { viewModel.quickCreateEntryFromPanel(type: .note) },
+                onQuickCreateTodo: { viewModel.quickCreateEntryFromPanel(type: .todo) },
+                onCycleScope: viewModel.cycleScope,
+                onEscape: viewModel.handleEscape,
+                onFocusResolved: viewModel.handleSearchFieldFocus
+            )
+            .frame(minWidth: 132, maxWidth: .infinity)
 
             headerQuickCaptureControls
 
@@ -173,12 +159,12 @@ struct QuickPanelView: View {
             }
         } else {
             if viewModel.quickCaptureDraft == nil {
-                HeaderGhostButton(systemImage: "note.text", title: "便签", shortcut: "⇧↩") {
+                HeaderGhostButton(systemImage: "note.text", title: nil, shortcut: "⇧↩") {
                     viewModel.quickCreateEntryFromPanel(type: .note)
                 }
                 .help("把当前输入存为便签（⇧Enter）")
 
-                HeaderGhostButton(systemImage: "checklist", title: "待办", shortcut: "⌥↩") {
+                HeaderGhostButton(systemImage: "checklist", title: nil, shortcut: "⌥↩") {
                     viewModel.quickCreateEntryFromPanel(type: .todo)
                 }
                 .help("把当前输入存为待办（⌥Enter）")
@@ -261,15 +247,15 @@ struct QuickPanelView: View {
                     .foregroundStyle(Constants.VisualStyle.text)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .frame(maxWidth: 96, alignment: .leading)
+                    .frame(maxWidth: 88, alignment: .leading)
                 Image(systemName: viewModel.isScopeDropdownOpen ? "chevron.up" : "chevron.down")
                     .font(.icon(.micro, weight: .semibold))
                     .foregroundStyle(Constants.VisualStyle.textTertiary)
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 8)
             .frame(height: Constants.Layout.compactControlHeight)
             .background(
-                RoundedRectangle(cornerRadius: Design.pillCornerRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: Design.rowCornerRadius, style: .continuous)
                     .fill(
                         viewModel.isScopeDropdownOpen
                             ? Constants.VisualStyle.surfaceHover
@@ -277,16 +263,16 @@ struct QuickPanelView: View {
                     )
             )
             .overlay(
-                RoundedRectangle(cornerRadius: Design.pillCornerRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: Design.rowCornerRadius, style: .continuous)
                     .strokeBorder(
                         viewModel.isScopeDropdownOpen ? Constants.VisualStyle.accentBorder : Constants.VisualStyle.border,
                         lineWidth: Constants.Layout.hairline
                     )
             )
-            .hoverHighlight(cornerRadius: Design.pillCornerRadius, isEnabled: !viewModel.isScopeDropdownOpen)
-            .roundedHitTarget(cornerRadius: Design.pillCornerRadius)
+            .hoverHighlight(cornerRadius: Design.rowCornerRadius, isEnabled: !viewModel.isScopeDropdownOpen)
+            .roundedHitTarget(cornerRadius: Design.rowCornerRadius)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PPInteractiveButtonStyle(cornerRadius: Design.rowCornerRadius))
         .fixedSize()
         .help("点击切换分组 · Tab 键快速轮换")
     }
@@ -363,11 +349,7 @@ struct QuickPanelView: View {
             RoundedRectangle(cornerRadius: Design.cardCornerRadius, style: .continuous)
                 .fill(Constants.VisualStyle.surfaceRaised)
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: Design.cardCornerRadius, style: .continuous)
-                .strokeBorder(Constants.VisualStyle.borderStrong, lineWidth: Constants.Layout.hairline)
-        )
-        .shadow(color: Color.black.opacity(0.26), radius: 16, x: 0, y: 8)
+        .themedShadow(.popover, cornerRadius: Design.cardCornerRadius)
     }
 
     private func scopeDropdownSectionHeader(_ title: String) -> some View {
@@ -649,11 +631,8 @@ struct QuickPanelView: View {
                                 globalFallbackHeader
                             }
                             let selectedEntryId = viewModel.selectedEntry?.id
-                            let indexById = Dictionary(
-                                uniqueKeysWithValues: viewModel.entries.enumerated().map { ($1.id, $0) }
-                            )
                             ForEach(viewModel.entries) { entry in
-                                let index = indexById[entry.id] ?? 0
+                                let index = viewModel.displayIndex(forEntryId: entry.id) ?? 0
                                 PanelRow(
                                     entry: entry,
                                     index: index,
@@ -710,9 +689,10 @@ struct QuickPanelView: View {
     private func entryPreviewOverlay(_ entry: Entry) -> some View {
         let resolvedType = Constants.EntryType.resolve(entry.type)
         let projectLabel = viewModel.projectName(for: entry.projectId) ?? "通用"
+        let supportsCompletion = resolvedType == .todo || resolvedType == .note || entry.isCompleted
 
         return ZStack {
-            Color.black.opacity(0.18)
+            Color.black.opacity(0.28)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     viewModel.dismissPreview()
@@ -737,6 +717,8 @@ struct QuickPanelView: View {
                     Text(projectLabel)
                         .font(.ui(.caption, weight: .medium))
                         .foregroundStyle(Constants.VisualStyle.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(
@@ -763,9 +745,10 @@ struct QuickPanelView: View {
                         .foregroundStyle(Constants.VisualStyle.textSecondary)
                         .padding(.horizontal, 6)
                         .frame(height: 22)
+                        .hoverHighlight(cornerRadius: 5)
                         .roundedHitTarget(cornerRadius: 5)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(PPInteractiveButtonStyle(cornerRadius: 5))
                 }
                 .padding(.horizontal, Design.Space.xl)
                 .padding(.vertical, Design.Space.md)
@@ -781,17 +764,20 @@ struct QuickPanelView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                         if !entry.tags.isEmpty {
-                            HStack(spacing: Design.Space.xs) {
-                                ForEach(entry.tags, id: \.self) { tag in
-                                    Text("#\(tag)")
-                                        .font(.ui(.micro, weight: .medium))
-                                        .foregroundStyle(Constants.VisualStyle.accent)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                                .fill(Constants.VisualStyle.accentDim)
-                                        )
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: Design.Space.xs) {
+                                    ForEach(entry.tags, id: \.self) { tag in
+                                        Text("#\(tag)")
+                                            .font(.ui(.micro, weight: .medium))
+                                            .foregroundStyle(Constants.VisualStyle.accent)
+                                            .fixedSize()
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                                    .fill(Constants.VisualStyle.accentDim)
+                                            )
+                                    }
                                 }
                             }
                         }
@@ -807,11 +793,13 @@ struct QuickPanelView: View {
                 }
 
                 HStack(spacing: Design.Space.sm) {
-                    GhostActionButton(
-                        title: entry.isCompleted ? "标记未完成" : "标记已完成",
-                        systemImage: entry.isCompleted ? "checkmark.circle.fill" : "circle"
-                    ) {
-                        viewModel.toggleEntryCompleted(entry)
+                    if supportsCompletion {
+                        GhostActionButton(
+                            title: entry.isCompleted ? "标记未完成" : "标记已完成",
+                            systemImage: entry.isCompleted ? "checkmark.circle.fill" : "circle"
+                        ) {
+                            viewModel.toggleEntryCompleted(entry)
+                        }
                     }
 
                     Spacer(minLength: 0)
@@ -841,11 +829,7 @@ struct QuickPanelView: View {
                 RoundedRectangle(cornerRadius: Design.cardCornerRadius, style: .continuous)
                     .fill(Constants.VisualStyle.surfaceRaised)
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: Design.cardCornerRadius, style: .continuous)
-                    .strokeBorder(Constants.VisualStyle.borderStrong, lineWidth: Constants.Layout.hairline)
-            )
-            .shadow(color: Color.black.opacity(0.24), radius: 18, x: 0, y: 8)
+            .themedShadow(.modal, cornerRadius: Design.cardCornerRadius)
             .padding(Design.Space.md)
         }
     }
@@ -1162,28 +1146,18 @@ struct QuickPanelView: View {
             HStack(spacing: Design.Space.md) {
                 hint(keys: "↑↓", label: "选择")
                 hint(keys: "Enter", label: "执行")
-                hint(keys: "⇧↩", label: "记便签")
-                if showsShortcutNumbers {
-                    hint(keys: "⌘1-9", label: "直达")
-                } else {
-                    hint(keys: "⌘P", label: appState.isPanelPinned ? "取消固定" : "固定")
-                }
+                hint(keys: showsShortcutNumbers ? "⌘1-9" : "⇧↩", label: showsShortcutNumbers ? "直达" : "记便签")
                 hint(keys: "⌘Y", label: "预览")
-                hint(keys: "⌘C", label: "复制")
+                hint(keys: "⌘P", label: appState.isPanelPinned ? "取消固定" : "固定")
                 Spacer(minLength: 0)
                 footerCountLabel
             }
 
             HStack(spacing: Design.Space.sm) {
-                hint(keys: "↑↓", label: "选择")
                 hint(keys: "Enter", label: "执行")
-                hint(keys: "⇧↩", label: "记便签")
-                if showsShortcutNumbers {
-                    hint(keys: "⌘1-9", label: "直达")
-                } else {
-                    hint(keys: "⌘P", label: appState.isPanelPinned ? "取消固定" : "固定")
-                }
+                hint(keys: showsShortcutNumbers ? "⌘1-9" : "⇧↩", label: showsShortcutNumbers ? "直达" : "记便签")
                 hint(keys: "⌘Y", label: "预览")
+                hint(keys: "⌘P", label: appState.isPanelPinned ? "取消固定" : "固定")
                 Spacer(minLength: 0)
                 footerCountLabel
             }
@@ -1211,11 +1185,14 @@ struct QuickPanelView: View {
     }
 
     private var panelSurface: some View {
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(Constants.VisualStyle.surface)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Constants.VisualStyle.borderStrong, lineWidth: Constants.Layout.hairline)
+        Color.clear
+            .materialSurface(
+                material: .hudWindow,
+                blendingMode: .behindWindow,
+                state: .active,
+                tint: Constants.VisualStyle.surface.opacity(0.76),
+                cornerRadius: Design.windowCornerRadius,
+                borderColor: Constants.VisualStyle.borderStrong
             )
     }
 }
@@ -1284,13 +1261,13 @@ private struct PanelRow: View {
     }
 
     private var showsQuickActions: Bool {
-        effectiveHovered || isSelected
+        effectiveHovered
     }
 
     var body: some View {
         let type = Constants.EntryType.resolve(entry.type)
         let level = Constants.EntryLevel.resolve(useCount: entry.useCount)
-        let rowHeight = isCompact ? Constants.Layout.compactRowHeight : Constants.Layout.regularRowHeight
+        let rowHeight: CGFloat = isCompact ? 28 : 32
         let metrics = RowMetrics(totalWidth: availableWidth)
 
         // Fixed leading columns — number, then one 16pt glyph slot — so titles line
@@ -1298,12 +1275,33 @@ private struct PanelRow: View {
         // used to sit in front of the number and shove the whole row 4pt right.
         HStack(spacing: Design.Space.md) {
             if showNumber {
-                Text("\(index + 1)")
-                    .font(.ui(.micro, weight: .medium, mono: true))
-                    .foregroundStyle(isSelected ? Constants.VisualStyle.accent : Constants.VisualStyle.textQuaternary)
-                    .frame(width: 18, height: rowHeight, alignment: .center)
-                    .contentShape(Rectangle())
-                    .onTapGesture(perform: onTap)
+                Group {
+                    if index < 9 {
+                        Text("\(index + 1)")
+                            .font(.ui(.micro, weight: isSelected ? .semibold : .medium, mono: true))
+                            .foregroundStyle(isSelected ? Constants.VisualStyle.accent : Constants.VisualStyle.textTertiary)
+                            .frame(width: 18, height: 18)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                    .fill(isSelected ? Constants.VisualStyle.accentDim : Constants.VisualStyle.tintSubtle)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                    .strokeBorder(
+                                        isSelected ? Constants.VisualStyle.accentBorder : Constants.VisualStyle.border,
+                                        lineWidth: Constants.Layout.hairline
+                                    )
+                            )
+                    } else {
+                        Text("\(index + 1)")
+                            .font(.ui(.micro, weight: .medium, mono: true))
+                            .foregroundStyle(isSelected ? Constants.VisualStyle.accent : Constants.VisualStyle.textQuaternary)
+                            .frame(width: 18, height: 18, alignment: .center)
+                    }
+                }
+                .frame(width: 18, height: rowHeight, alignment: .center)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: onTap)
             }
 
             if isInteractiveTodo {
@@ -1409,7 +1407,7 @@ private struct PanelRow: View {
             RoundedRectangle(cornerRadius: Design.rowCornerRadius, style: .continuous)
                 .fill(
                     isSelected
-                        ? Constants.VisualStyle.tintMedium
+                        ? Constants.VisualStyle.accentDim
                         : (effectiveHovered ? Constants.VisualStyle.surfaceHover : Color.clear)
                 )
         )
@@ -1527,24 +1525,7 @@ private struct PanelRow: View {
     }
 
     private var recencyLabel: String {
-        guard let lastUsedAt = entry.lastUsedAt else {
-            return "未用"
-        }
-        let days = Int(max(Date().timeIntervalSince(lastUsedAt), 0) / 86_400)
-        switch days {
-        case 0:
-            return "今天"
-        case 1:
-            return "昨天"
-        case 2..<7:
-            return "\(days)天"
-        case 7..<31:
-            return "\(days / 7)周"
-        case 31..<365:
-            return "\(days / 30)月"
-        default:
-            return "\(days / 365)年"
-        }
+        PPRelativeTimeFormatter.compactRecency(from: entry.lastUsedAt)
     }
 }
 

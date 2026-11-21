@@ -353,6 +353,89 @@ class SyncServerUnitTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_soft_deleted_project_not_revived_by_orphan_active_entry(self) -> None:
+        db_path = self.tmp_dir / "namespaces" / "orphan.db"
+        conn = srv.init_namespace_db(db_path)
+        try:
+            key = srv.derive_aead_key("test-token-orphan-1")
+            srv.merge_envelope_into_db(
+                conn,
+                {
+                    "deviceId": "mac",
+                    "projects": [
+                        {"id": "p-default", "name": "通用项目", "isDefault": True, "updatedAt": "2026-11-18T00:01:00.000Z"},
+                        {"id": "p-temp", "name": "临时项目", "isDefault": False, "updatedAt": "2026-11-18T00:01:00.000Z"},
+                    ],
+                    "entries": [],
+                },
+                aead_key=key,
+            )
+
+            # Device A soft-deletes p-temp at 00:05:00Z while Device B offline adds e-orphan into p-temp at 00:04:00Z
+            stats, env = srv.merge_envelope_into_db(
+                conn,
+                {
+                    "deviceId": "device-b",
+                    "projects": [
+                        {"id": "p-temp", "name": "临时项目", "isDefault": False, "updatedAt": "2026-11-18T00:05:00.000Z", "deletedAt": "2026-11-18T00:05:00.000Z"},
+                    ],
+                    "entries": [
+                        {"id": "e-orphan", "projectId": "p-temp", "title": "孤儿词条", "content": "Body", "updatedAt": "2026-11-18T00:04:00.000Z"},
+                    ],
+                },
+                aead_key=key,
+            )
+            proj_map = {p["id"]: p for p in env["projects"]}
+            entry_map = {e["id"]: e for e in env["entries"]}
+            self.assertIsNotNone(proj_map["p-temp"]["deletedAt"])
+            self.assertEqual(entry_map["e-orphan"]["projectId"], "p-default")
+            self.assertEqual(stats["orphansMigrated"], 1)
+        finally:
+            conn.close()
+
+    def test_force_overwrite_replaces_cloud_state(self) -> None:
+        db_path = self.tmp_dir / "namespaces" / "force.db"
+        conn = srv.init_namespace_db(db_path)
+        try:
+            key = srv.derive_aead_key("test-token-force-1")
+            srv.merge_envelope_into_db(
+                conn,
+                {
+                    "deviceId": "mac-a",
+                    "projects": [
+                        {"id": "p-def", "name": "通用项目", "isDefault": True, "updatedAt": "2026-11-18T00:01:00.000Z"},
+                        {"id": "p-extra", "name": "多余分组", "updatedAt": "2026-11-18T00:01:00.000Z"},
+                    ],
+                    "entries": [
+                        {"id": "e-keep", "projectId": "p-def", "title": "Old", "content": "OldBody", "updatedAt": "2026-11-18T00:05:00.000Z"},
+                        {"id": "e-drop", "projectId": "p-extra", "title": "Drop", "content": "DropBody", "updatedAt": "2026-11-18T00:05:00.000Z"},
+                    ],
+                },
+                aead_key=key,
+            )
+            _, env = srv.merge_envelope_into_db(
+                conn,
+                {
+                    "deviceId": "mac-b",
+                    "forceOverwrite": True,
+                    "allowMassDelete": True,
+                    "projects": [
+                        {"id": "p-def", "name": "通用项目", "isDefault": True, "updatedAt": "2026-11-18T00:02:00.000Z"},
+                    ],
+                    "entries": [
+                        {"id": "e-keep", "projectId": "p-def", "title": "Forced", "content": "ForcedBody", "updatedAt": "2026-11-18T00:02:00.000Z"},
+                    ],
+                },
+                aead_key=key,
+            )
+            proj_map = {p["id"]: p for p in env["projects"]}
+            entry_map = {e["id"]: e for e in env["entries"]}
+            self.assertIsNotNone(proj_map["p-extra"]["deletedAt"])
+            self.assertIsNotNone(entry_map["e-drop"]["deletedAt"])
+            self.assertEqual(entry_map["e-keep"]["title"], "Forced")
+        finally:
+            conn.close()
+
 
 class SyncServerHTTPTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -548,6 +631,105 @@ class SyncServerHTTPTests(unittest.TestCase):
         assert final_env is not None
         self.assertEqual(len(final_env["entries"]), 12)
         self.assertGreaterEqual(final_env["revision"], 12)
+
+    def test_optimistic_locking_etag_409_conflict_and_rebase(self) -> None:
+        token = "optimistic-lock-token-12345"
+        # Seed revision 1 from Device A
+        s1, h1, env1 = self._request(
+            "POST",
+            "/v1/sync",
+            token=token,
+            body={
+                "deviceId": "mac-a",
+                "expectedRevision": 0,
+                "strictConflict": True,
+                "projects": [{"id": "p1", "name": "General", "isDefault": True, "updatedAt": "2026-11-18T00:01:00.000Z"}],
+                "entries": [{"id": "e1", "projectId": "p1", "title": "V1", "content": "C1", "updatedAt": "2026-11-18T00:01:00.000Z"}],
+            },
+        )
+        self.assertEqual(s1, 200)
+        assert env1 is not None
+        self.assertEqual(env1["revision"], 1)
+        self.assertEqual(h1.get("ETag"), '"rev-1"')
+        self.assertIn("serverTime", env1)
+
+        # GET verifies ETag and serverTime
+        sg, hg, envg = self._request("GET", "/v1/sync", token=token)
+        self.assertEqual(sg, 200)
+        assert envg is not None
+        self.assertEqual(hg.get("ETag"), '"rev-1"')
+        self.assertEqual(hg.get("X-PromptPanel-Revision"), "1")
+        self.assertIn("serverTime", envg)
+
+        # Device A pushes another update -> revision 2
+        s2, _, env2 = self._request(
+            "POST",
+            "/v1/sync",
+            token=token,
+            headers={"If-Match": '"rev-1"'},
+            body={
+                "deviceId": "mac-a",
+                "strictConflict": True,
+                "entries": [{"id": "e1", "projectId": "p1", "title": "V2-A", "content": "C2-A", "updatedAt": "2026-11-18T00:03:00.000Z"}],
+            },
+        )
+        self.assertEqual(s2, 200)
+        assert env2 is not None
+        self.assertEqual(env2["revision"], 2)
+
+        # Device B pushes with stale expectedRevision=1 & strictConflict=True -> 409 Conflict
+        s_conflict, h_conflict, env_conflict = self._request(
+            "POST",
+            "/v1/sync",
+            token=token,
+            body={
+                "deviceId": "android-b",
+                "expectedRevision": 1,
+                "strictConflict": True,
+                "entries": [{"id": "e1", "projectId": "p1", "title": "V2-B", "content": "C2-B", "updatedAt": "2026-11-18T00:02:00.000Z"}],
+            },
+        )
+        self.assertEqual(s_conflict, 409)
+        assert env_conflict is not None
+        self.assertTrue(env_conflict["conflict"])
+        self.assertEqual(env_conflict["serverRevision"], 2)
+        self.assertEqual(h_conflict.get("ETag"), '"rev-2"')
+        self.assertEqual(env_conflict["entries"][0]["title"], "V2-A")
+
+        # Device B retries with updated expectedRevision=2 -> 200 OK
+        s_retry, h_retry, env_retry = self._request(
+            "POST",
+            "/v1/sync",
+            token=token,
+            body={
+                "deviceId": "android-b",
+                "expectedRevision": 2,
+                "strictConflict": True,
+                "entries": [{"id": "e1", "projectId": "p1", "title": "V2-B", "content": "C2-B", "updatedAt": "2026-11-18T00:02:00.000Z"}],
+            },
+        )
+        self.assertEqual(s_retry, 200)
+        assert env_retry is not None
+        self.assertEqual(env_retry["revision"], 3)
+        self.assertEqual(h_retry.get("ETag"), '"rev-3"')
+        self.assertEqual(env_retry["entries"][0]["title"], "V2-A")
+        self.assertTrue(any(v["title"] == "V2-B" for v in env_retry["versions"]))
+
+        # Legacy client without strictConflict passing stale expectedRevision=1 -> 200 with rebased=True
+        s_rebase, _, env_rebase = self._request(
+            "POST",
+            "/v1/sync",
+            token=token,
+            body={
+                "deviceId": "legacy-b",
+                "expectedRevision": 1,
+                "entries": [{"id": "e2", "projectId": "p1", "title": "Legacy", "content": "Body", "updatedAt": "2026-11-18T00:04:00.000Z"}],
+            },
+        )
+        self.assertEqual(s_rebase, 200)
+        assert env_rebase is not None
+        self.assertTrue(env_rebase.get("rebased"))
+        self.assertEqual(env_rebase["serverRevision"], 4)
 
 
 if __name__ == "__main__":

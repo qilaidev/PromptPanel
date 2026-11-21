@@ -22,6 +22,36 @@ struct VisualEffectMaterialView: NSViewRepresentable {
     }
 }
 
+enum PPElevationLevel {
+    case popover
+    case modal
+    case toast
+
+    var ambientRadius: CGFloat {
+        switch self {
+        case .popover: return 6
+        case .modal: return 10
+        case .toast: return 6
+        }
+    }
+
+    var keyRadius: CGFloat {
+        switch self {
+        case .popover: return 18
+        case .modal: return 26
+        case .toast: return 16
+        }
+    }
+
+    var keyYOffset: CGFloat {
+        switch self {
+        case .popover: return 8
+        case .modal: return 12
+        case .toast: return 6
+        }
+    }
+}
+
 enum Design {
     static let rowCornerRadius: CGFloat = 6
     static let pillCornerRadius: CGFloat = 999
@@ -30,11 +60,6 @@ enum Design {
     static let popoverShadowRadius: CGFloat = 36
 
     /// Type scale. Six steps, whole points only.
-    ///
-    /// Half-point sizes and a dozen near-identical steps used to be scattered
-    /// across the views; they cost legibility (9pt labels) without buying any
-    /// hierarchy. Everything now snaps to one of these, so density comes from
-    /// tighter spacing rather than from shrinking text.
     enum TextSize: CGFloat {
         /// Counters, keycaps, badge text. Almost always monospaced.
         case micro = 10
@@ -106,6 +131,50 @@ extension View {
     func hoverHighlight(cornerRadius: CGFloat = 6, isEnabled: Bool = true) -> some View {
         modifier(HoverHighlightModifier(cornerRadius: cornerRadius, isEnabled: isEnabled))
     }
+
+    /// Reusable focus-ring container for plain text fields and custom search inputs.
+    func focusableInputSurface(
+        isFocused: Bool,
+        cornerRadius: CGFloat = 6,
+        fill: Color = Constants.VisualStyle.inputFill
+    ) -> some View {
+        modifier(FocusableInputSurfaceModifier(isFocused: isFocused, cornerRadius: cornerRadius, fill: fill))
+    }
+
+    /// Native macOS vibrancy material backdrop with dynamic surface tint and hairline border.
+    func materialSurface(
+        material: NSVisualEffectView.Material = .hudWindow,
+        blendingMode: NSVisualEffectView.BlendingMode = .behindWindow,
+        state: NSVisualEffectView.State = .followsWindowActiveState,
+        tint: Color = Constants.VisualStyle.surface.opacity(0.68),
+        cornerRadius: CGFloat = Design.windowCornerRadius,
+        borderColor: Color? = Constants.VisualStyle.borderStrong
+    ) -> some View {
+        background(
+            ZStack {
+                VisualEffectMaterialView(material: material, blendingMode: blendingMode, state: state)
+                tint
+            }
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        )
+        .overlay {
+            if let borderColor {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(borderColor, lineWidth: Constants.Layout.hairline)
+            }
+        }
+    }
+
+    /// Two-layer diffuse shadow tuned per appearance so light mode stays crisp and airy.
+    func themedShadow(_ level: PPElevationLevel = .popover, cornerRadius: CGFloat = Design.cardCornerRadius) -> some View {
+        self
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(Constants.VisualStyle.borderStrong, lineWidth: Constants.Layout.hairline)
+            )
+            .shadow(color: Constants.VisualStyle.shadowAmbient, radius: level.ambientRadius, x: 0, y: 2)
+            .shadow(color: Constants.VisualStyle.shadowKey, radius: level.keyRadius, x: 0, y: level.keyYOffset)
+    }
 }
 
 struct HoverHighlightModifier: ViewModifier {
@@ -134,6 +203,400 @@ struct HoverHighlightModifier: ViewModifier {
                     isHovered = hovering
                 }
             }
+    }
+}
+
+struct FocusableInputSurfaceModifier: ViewModifier {
+    let isFocused: Bool
+    let cornerRadius: CGFloat
+    let fill: Color
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(fill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(
+                        isFocused ? Constants.VisualStyle.accentBorder : Constants.VisualStyle.border,
+                        lineWidth: isFocused ? 1 : Constants.Layout.hairline
+                    )
+            )
+    }
+}
+
+/// Shared button style providing macOS tactile press feedback (`0.985` scale) and
+/// automatic `@Environment(\.isEnabled)` dimming.
+struct PPInteractiveButtonStyle: ButtonStyle {
+    var cornerRadius: CGFloat = 6
+    var pressedScale: CGFloat = 0.985
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(configuration.isPressed && isEnabled ? Constants.VisualStyle.tintSubtle : Color.clear)
+            )
+            .scaleEffect(configuration.isPressed && isEnabled ? pressedScale : 1)
+            .opacity(isEnabled ? 1 : 0.45)
+            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
+    }
+}
+
+/// Unified macOS action button primitive covering primary, secondary, ghost, and danger variants
+/// across `compact` (24pt) and `regular` (28pt) control heights.
+struct PPActionButton: View {
+    enum Variant {
+        case primary
+        case secondary
+        case ghost
+        case danger
+    }
+
+    enum ControlSize {
+        case compact
+        case regular
+
+        var height: CGFloat {
+            switch self {
+            case .compact: return Constants.Layout.compactControlHeight
+            case .regular: return Constants.Layout.regularControlHeight
+            }
+        }
+
+        var horizontalPadding: CGFloat {
+            switch self {
+            case .compact: return 9
+            case .regular: return 11
+            }
+        }
+
+        var textSize: PPDesign.TextSize {
+            switch self {
+            case .compact: return .caption
+            case .regular: return .body
+            }
+        }
+    }
+
+    let title: String?
+    let systemImage: String?
+    let shortcut: String?
+    let variant: Variant
+    let size: ControlSize
+    let fillsAvailableWidth: Bool
+    let action: () -> Void
+
+    @Environment(\.isEnabled) private var isEnabled
+    private var _isHovered = SwiftUI.State(initialValue: false)
+
+    private var isHovered: Bool {
+        get { _isHovered.wrappedValue }
+        nonmutating set { _isHovered.wrappedValue = newValue }
+    }
+
+    init(
+        _ title: String? = nil,
+        systemImage: String? = nil,
+        shortcut: String? = nil,
+        variant: Variant = .secondary,
+        size: ControlSize = .compact,
+        fillsAvailableWidth: Bool = false,
+        action: @escaping () -> Void
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.shortcut = shortcut
+        self.variant = variant
+        self.size = size
+        self.fillsAvailableWidth = fillsAvailableWidth
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.icon(size == .compact ? .small : .base, weight: variant == .primary ? .semibold : .medium))
+                }
+                if let title {
+                    Text(title)
+                        .font(.ui(size.textSize, weight: variant == .primary ? .semibold : .medium))
+                        .lineLimit(1)
+                }
+                if let shortcut {
+                    Text(shortcut)
+                        .font(.ui(.micro, weight: .medium, mono: true))
+                        .foregroundStyle(variant == .primary ? Color.white.opacity(0.82) : Constants.VisualStyle.textTertiary)
+                }
+            }
+            .foregroundStyle(foregroundColor)
+            .padding(.horizontal, title == nil ? 0 : size.horizontalPadding)
+            .frame(minWidth: title == nil ? size.height : nil, maxWidth: fillsAvailableWidth ? .infinity : nil)
+            .frame(height: size.height)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(backgroundColor)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(borderColor, lineWidth: Constants.Layout.hairline)
+            )
+            .roundedHitTarget(cornerRadius: 6)
+        }
+        .buttonStyle(PPInteractiveButtonStyle(cornerRadius: 6))
+        .onHover { hovering in
+            if isHovered != hovering {
+                isHovered = hovering
+            }
+        }
+    }
+
+    private var foregroundColor: Color {
+        switch variant {
+        case .primary: return .white
+        case .secondary: return Constants.VisualStyle.text
+        case .ghost: return isHovered && isEnabled ? Constants.VisualStyle.text : Constants.VisualStyle.textSecondary
+        case .danger: return Constants.VisualStyle.danger
+        }
+    }
+
+    private var backgroundColor: Color {
+        switch variant {
+        case .primary:
+            return isHovered && isEnabled
+                ? Constants.VisualStyle.accentSolid.opacity(0.9)
+                : Constants.VisualStyle.accentSolid
+        case .secondary:
+            return isHovered && isEnabled
+                ? Constants.VisualStyle.surfaceHover
+                : Constants.VisualStyle.tintMedium
+        case .ghost:
+            return isHovered && isEnabled
+                ? Constants.VisualStyle.surfaceHover
+                : Constants.VisualStyle.tintSubtle
+        case .danger:
+            return isHovered && isEnabled
+                ? Constants.VisualStyle.dangerDim
+                : Color.clear
+        }
+    }
+
+    private var borderColor: Color {
+        switch variant {
+        case .primary: return .clear
+        case .secondary: return Constants.VisualStyle.borderStrong
+        case .ghost: return Constants.VisualStyle.border
+        case .danger: return Constants.VisualStyle.danger.opacity(0.32)
+        }
+    }
+}
+
+/// Structured cloud sync badge shared by MainWindow header and SettingsView.
+enum SyncBadgeState: Equatable {
+    case unconfigured
+    case syncing
+    case autoSynced(revision: Int?)
+    case autoPending(pendingCount: Int?)
+    case manualIdle(revision: Int?, hasPending: Bool)
+    case error(String?)
+
+    var label: String {
+        switch self {
+        case .unconfigured:
+            return "未配置"
+        case .syncing:
+            return "同步中…"
+        case .autoSynced(let revision):
+            if let revision, revision > 0 {
+                return "自动 · r\(revision)"
+            }
+            return "自动同步"
+        case .autoPending(let count):
+            if let count, count > 0 {
+                return "待上传 \(count)"
+            }
+            return "待同步"
+        case .manualIdle(let revision, let hasPending):
+            if hasPending {
+                return "手动 · 待推送"
+            }
+            if let revision, revision > 0 {
+                return "手动 · r\(revision)"
+            }
+            return "手动模式"
+        case .error:
+            return "同步异常"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .unconfigured: return "cloud"
+        case .syncing: return "arrow.triangle.2.circlepath"
+        case .autoSynced: return "checkmark.icloud"
+        case .autoPending: return "icloud.and.arrow.up"
+        case .manualIdle(_, let hasPending): return hasPending ? "icloud.and.arrow.up" : "icloud"
+        case .error: return "exclamationmark.icloud"
+        }
+    }
+}
+
+struct SyncStatusBadge: View {
+    let state: SyncBadgeState
+    var compact: Bool = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if case .syncing = state {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.6)
+                    .frame(width: 11, height: 11)
+            } else {
+                Circle()
+                    .fill(foregroundColor)
+                    .frame(width: 5, height: 5)
+                if !compact {
+                    Image(systemName: state.systemImage)
+                        .font(.icon(.micro, weight: .semibold))
+                }
+            }
+
+            Text(state.label)
+                .font(.ui(compact ? .caption : .body, weight: .medium))
+                .monospacedDigit()
+                .lineLimit(1)
+        }
+        .foregroundStyle(foregroundColor)
+        .padding(.horizontal, compact ? 7 : 8)
+        .frame(height: compact ? 22 : Constants.Layout.compactControlHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(backgroundColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(borderColor, lineWidth: Constants.Layout.hairline)
+        )
+    }
+
+    private var foregroundColor: Color {
+        switch state {
+        case .unconfigured: return Constants.VisualStyle.textTertiary
+        case .syncing: return Constants.VisualStyle.accent
+        case .autoSynced: return Constants.VisualStyle.success
+        case .autoPending: return Constants.VisualStyle.warn
+        case .manualIdle(_, let hasPending):
+            return hasPending ? Constants.VisualStyle.warn : Constants.VisualStyle.accent
+        case .error: return Constants.VisualStyle.danger
+        }
+    }
+
+    private var backgroundColor: Color {
+        switch state {
+        case .unconfigured: return Constants.VisualStyle.tintSubtle
+        case .syncing: return Constants.VisualStyle.accentDim
+        case .autoSynced: return Constants.VisualStyle.successDim
+        case .autoPending: return Constants.VisualStyle.warnDim
+        case .manualIdle(_, let hasPending):
+            return hasPending ? Constants.VisualStyle.warnDim : Constants.VisualStyle.accentDim
+        case .error: return Constants.VisualStyle.dangerDim
+        }
+    }
+
+    private var borderColor: Color {
+        switch state {
+        case .unconfigured: return Constants.VisualStyle.border
+        case .syncing: return Constants.VisualStyle.accentBorder
+        case .autoSynced: return Constants.VisualStyle.success.opacity(0.26)
+        case .autoPending: return Constants.VisualStyle.warn.opacity(0.28)
+        case .manualIdle(_, let hasPending):
+            return hasPending ? Constants.VisualStyle.warn.opacity(0.28) : Constants.VisualStyle.accentBorder
+        case .error: return Constants.VisualStyle.danger.opacity(0.28)
+        }
+    }
+}
+
+/// Shared, time-bucket cached relative time formatter so dense list rows avoid
+/// allocating `Date()` and `RelativeDateTimeFormatter` per row per frame.
+enum PPRelativeTimeFormatter {
+    private struct CacheKey: Hashable {
+        let targetBucket: Int64
+        let nowBucket: Int64
+        let isCompact: Bool
+    }
+
+    private static let lock = NSLock()
+    private static var cache: [CacheKey: String] = [:]
+    private static let bucketSeconds: TimeInterval = 30
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter
+    }()
+
+    static func compactRecency(from date: Date?, now: Date = Date()) -> String {
+        guard let date else { return "未用" }
+        let key = CacheKey(
+            targetBucket: Int64(date.timeIntervalSince1970 / bucketSeconds),
+            nowBucket: Int64(now.timeIntervalSince1970 / bucketSeconds),
+            isCompact: true
+        )
+        lock.lock()
+        if let cached = cache[key] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        let days = Int(max(now.timeIntervalSince(date), 0) / 86_400)
+        let result: String
+        switch days {
+        case 0: result = "今天"
+        case 1: result = "昨天"
+        case 2..<7: result = "\(days)天"
+        case 7..<31: result = "\(days / 7)周"
+        case 31..<365: result = "\(days / 30)月"
+        default: result = "\(days / 365)年"
+        }
+
+        store(result, for: key)
+        return result
+    }
+
+    static func relativeString(from date: Date?, now: Date = Date()) -> String {
+        guard let date else { return "未使用" }
+        let key = CacheKey(
+            targetBucket: Int64(date.timeIntervalSince1970 / bucketSeconds),
+            nowBucket: Int64(now.timeIntervalSince1970 / bucketSeconds),
+            isCompact: false
+        )
+        lock.lock()
+        if let cached = cache[key] {
+            lock.unlock()
+            return cached
+        }
+        let result = relativeFormatter.localizedString(for: date, relativeTo: now)
+        if cache.count > 512 {
+            cache.removeAll(keepingCapacity: true)
+        }
+        cache[key] = result
+        lock.unlock()
+        return result
+    }
+
+    private static func store(_ value: String, for key: CacheKey) {
+        lock.lock()
+        if cache.count > 512 {
+            cache.removeAll(keepingCapacity: true)
+        }
+        cache[key] = value
+        lock.unlock()
     }
 }
 
@@ -200,14 +663,23 @@ struct FilterChip: View {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .fill(isActive ? Constants.VisualStyle.accentDim : Color.clear)
             )
+            .hoverHighlight(cornerRadius: 4, isEnabled: !isActive)
             .roundedHitTarget(cornerRadius: 4)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PPInteractiveButtonStyle(cornerRadius: 4))
     }
 }
 
 struct SectionHeading: View {
     let text: String
+
+    init(text: String) {
+        self.text = text
+    }
+
+    init(_ text: String) {
+        self.text = text
+    }
 
     var body: some View {
         Text(text)
@@ -236,30 +708,14 @@ struct PrimaryActionButton: View {
     }
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                if let systemImage {
-                    Image(systemName: systemImage)
-                        .font(.icon(.small, weight: .semibold))
-                }
-                Text(title)
-                    .font(.ui(.body, weight: .semibold))
-                if let shortcut {
-                    Text(shortcut)
-                        .font(.ui(.micro, weight: .medium, mono: true))
-                        .opacity(0.8)
-                }
-            }
-            .foregroundStyle(.white)
-            .padding(.horizontal, Design.Space.lg)
-            .frame(height: Constants.Layout.regularControlHeight)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Constants.VisualStyle.accentSolid)
-            )
-            .roundedHitTarget(cornerRadius: 6)
-        }
-        .buttonStyle(.plain)
+        PPActionButton(
+            title,
+            systemImage: systemImage,
+            shortcut: shortcut,
+            variant: .primary,
+            size: .regular,
+            action: action
+        )
     }
 }
 
@@ -290,48 +746,14 @@ struct GhostActionButton: View {
     }
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                if let systemImage {
-                    Image(systemName: systemImage)
-                        .font(.icon(.small))
-                }
-                Text(title)
-                    .font(.ui(.body, weight: .medium))
-                if let shortcut {
-                    Text(shortcut)
-                        .font(.ui(.micro, weight: .medium, mono: true))
-                        .foregroundStyle(Constants.VisualStyle.textTertiary)
-                }
-            }
-            .foregroundStyle(foreground)
-            .padding(.horizontal, Design.Space.lg)
-            .frame(height: Constants.Layout.regularControlHeight)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Constants.VisualStyle.tintMedium)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(strokeColor, lineWidth: Constants.Layout.hairline)
-            )
-            .roundedHitTarget(cornerRadius: 6)
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var foreground: Color {
-        switch tone {
-        case .neutral: return Constants.VisualStyle.text
-        case .danger: return Constants.VisualStyle.danger
-        }
-    }
-
-    private var strokeColor: Color {
-        switch tone {
-        case .neutral: return Constants.VisualStyle.border
-        case .danger: return Constants.VisualStyle.danger.opacity(0.3)
-        }
+        PPActionButton(
+            title,
+            systemImage: systemImage,
+            shortcut: shortcut,
+            variant: tone == .danger ? .danger : .secondary,
+            size: .regular,
+            action: action
+        )
     }
 }
 
@@ -354,13 +776,10 @@ struct QuietIconButton: View {
                 .font(.icon(.base))
                 .foregroundStyle(tint ?? Constants.VisualStyle.textTertiary)
                 .frame(width: Constants.Layout.compactControlHeight, height: Constants.Layout.compactControlHeight)
-                .background(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(Color.clear)
-                )
-                .roundedHitTarget(cornerRadius: 5)
+                .hoverHighlight(cornerRadius: 6)
+                .roundedHitTarget(cornerRadius: 6)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PPInteractiveButtonStyle(cornerRadius: 6))
         .help(help ?? "")
     }
 }

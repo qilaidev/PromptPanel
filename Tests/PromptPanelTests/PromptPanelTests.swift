@@ -2822,6 +2822,22 @@ final class PromptPanelTests: XCTestCase {
     func testGlobalHotkeysRepeatLastAndClipboardRestore() throws {
         try CoreTestSuite.verifyGlobalHotkeysRepeatLastAndClipboardRestore()
     }
+
+    func testCtrlCIsolationAndPinnedCopyExpansion() throws {
+        try CoreTestSuite.verifyCtrlCIsolationAndPinnedCopyExpansion()
+    }
+
+    func testEntryTagsIndexEditableFieldsAndProjectGuards() throws {
+        try CoreTestSuite.verifyEntryTagsIndexEditableFieldsAndProjectGuards()
+    }
+
+    func testMainWindowCombinedFiltersArchivedExclusionAndDraftSafety() throws {
+        try CoreTestSuite.verifyMainWindowCombinedFiltersArchivedExclusionAndDraftSafety()
+    }
+
+    func testCloudSyncActionModesReportAndTrashRestore() throws {
+        try CoreTestSuite.verifyCloudSyncActionModesReportAndTrashRestore()
+    }
 }
 #else
 @MainActor
@@ -2930,6 +2946,22 @@ struct PromptPanelSwiftTestingSuite {
 
     @Test func globalHotkeysRepeatLastAndClipboardRestore() async throws {
         try await CoreTestSuite.verifyGlobalHotkeysRepeatLastAndClipboardRestoreAsync()
+    }
+
+    @Test func ctrlCIsolationAndPinnedCopyExpansion() async throws {
+        try await CoreTestSuite.verifyCtrlCIsolationAndPinnedCopyExpansionAsync()
+    }
+
+    @Test func entryTagsIndexEditableFieldsAndProjectGuards() throws {
+        try CoreTestSuite.verifyEntryTagsIndexEditableFieldsAndProjectGuards()
+    }
+
+    @Test func mainWindowCombinedFiltersArchivedExclusionAndDraftSafety() async throws {
+        try await CoreTestSuite.verifyMainWindowCombinedFiltersArchivedExclusionAndDraftSafetyAsync()
+    }
+
+    @Test func cloudSyncActionModesReportAndTrashRestore() async throws {
+        try await CoreTestSuite.verifyCloudSyncActionModesReportAndTrashRestoreAsync()
     }
 }
 #endif
@@ -3235,6 +3267,604 @@ extension CoreTestSuite {
             )
             await waitUntilAsync(timeout: 2) { paste.dispatchCount == 3 && clipboard.current == "user-copied" }
             try check(paste.dispatchCount == 3)
+        }
+    }
+
+    // MARK: - Phase 2 Regression & New Feature Suites
+
+    static func verifyCtrlCIsolationAndPinnedCopyExpansion() throws {
+        try runAsyncOnMainRunLoop {
+            try await verifyCtrlCIsolationAndPinnedCopyExpansionAsync()
+        }
+    }
+
+    static func verifyCtrlCIsolationAndPinnedCopyExpansionAsync() async throws {
+        // 1. HotkeyService dangerous/reserved shortcut validation + persistence sanitization.
+        let ctrlC = KeyboardShortcuts.Shortcut(.c, modifiers: [.control])
+        let ctrlD = KeyboardShortcuts.Shortcut(.d, modifiers: [.control])
+        let ctrlZ = KeyboardShortcuts.Shortcut(.z, modifiers: [.control])
+        let ctrlBackslash = KeyboardShortcuts.Shortcut(.backslash, modifiers: [.control])
+        let cmdC = KeyboardShortcuts.Shortcut(.c, modifiers: [.command])
+        let cmdV = KeyboardShortcuts.Shortcut(.v, modifiers: [.command])
+        let safeOptCmdK = KeyboardShortcuts.Shortcut(.k, modifiers: [.command, .option])
+
+        try check(HotkeyService.isDangerousOrReservedShortcut(ctrlC))
+        try check(HotkeyService.dangerousShortcutReason(for: ctrlC) != nil)
+        try check(HotkeyService.isDangerousOrReservedShortcut(ctrlD))
+        try check(HotkeyService.isDangerousOrReservedShortcut(ctrlZ))
+        try check(HotkeyService.isDangerousOrReservedShortcut(ctrlBackslash))
+        try check(HotkeyService.isDangerousOrReservedShortcut(cmdC))
+        try check(HotkeyService.isDangerousOrReservedShortcut(cmdV))
+        try check(!HotkeyService.isDangerousOrReservedShortcut(safeOptCmdK))
+
+        let testSlotName = KeyboardShortcuts.Name("quickNote")
+        let previousSlotShortcut = KeyboardShortcuts.getShortcut(for: testSlotName)
+        defer { KeyboardShortcuts.setShortcut(previousSlotShortcut, for: testSlotName) }
+        KeyboardShortcuts.setShortcut(ctrlC, for: testSlotName)
+        try check(KeyboardShortcuts.getShortcut(for: testSlotName) == ctrlC)
+
+        let sanitizerService = HotkeyService(onTogglePanel: {})
+        sanitizerService.sanitizeDangerousStoredShortcuts()
+        try check(
+            KeyboardShortcuts.getShortcut(for: testSlotName) == nil,
+            "Dangerous Ctrl+C shortcut persisted in UserDefaults must be purged on sanitization"
+        )
+
+        // 2. Panel and main window key command isolation against Ctrl+C + non-Latin keyCode mapping.
+        try check(
+            QuickPanelViewModel.panelKeyCommand(
+                keyCode: 8,
+                modifierFlags: [.control],
+                charactersIgnoringModifiers: "c"
+            ) == nil,
+            "Ctrl+C must never resolve to quick panel copySelection"
+        )
+        try check(
+            QuickPanelViewModel.panelKeyCommand(
+                keyCode: 8,
+                modifierFlags: [.command, .control],
+                charactersIgnoringModifiers: "c"
+            ) == nil
+        )
+        try check(
+            QuickPanelViewModel.panelKeyCommand(
+                keyCode: 8,
+                modifierFlags: [.command],
+                charactersIgnoringModifiers: "я"
+            ) == .copySelection,
+            "Cmd+C by virtual keyCode must still match under non-Latin IME layouts"
+        )
+        try check(
+            MainWindowViewModel.mainWindowKeyCommand(
+                keyCode: 8,
+                modifierFlags: [.control],
+                charactersIgnoringModifiers: "c"
+            ) == nil,
+            "Ctrl+C must never resolve to main window command"
+        )
+        try check(
+            MainWindowViewModel.mainWindowKeyCommand(
+                keyCode: 8,
+                modifierFlags: [.control, .shift],
+                charactersIgnoringModifiers: "C"
+            ) == nil
+        )
+        try check(
+            MainWindowViewModel.mainWindowKeyCommand(
+                keyCode: 8,
+                modifierFlags: [.command, .shift],
+                charactersIgnoringModifiers: "с"
+            ) == .copySelectedEntry
+        )
+
+        // 3. QuickPanelViewModel.copySelectionOnly expands {{clipboard}}/{{date}}, logs execution,
+        //    and respects appState.isPanelPinned == true without dismissing the panel.
+        try await withTempDatabaseAsync { manager, _ in
+            let projectRepo = ProjectRepository(dbQueue: manager.dbQueue)
+            let entryRepo = EntryRepository(dbQueue: manager.dbQueue)
+            let settingsRepo = SettingsRepository(dbQueue: manager.dbQueue)
+            let logRepo = LogRepository(dbQueue: manager.dbQueue)
+            let defaultProject = try unwrap(projectRepo.fetchDefault())
+
+            let entry = Entry(
+                projectId: defaultProject.id,
+                title: "Pinned Copy Template",
+                content: "Check {{clipboard}} @ {{date}}"
+            )
+            try entryRepo.create(entry)
+
+            let appState = AppState()
+            appState.loadPersistedState(
+                currentProjectId: defaultProject.id,
+                defaultProjectId: defaultProject.id,
+                isPanelPinned: true
+            )
+            let clipboard = SnapshottingClipboardSpy()
+            clipboard.current = "ERR-42"
+            let executeService = ExecuteService(
+                clipboardService: clipboard,
+                pasteService: SpyPasteService(),
+                entryRepository: entryRepo,
+                logRepository: logRepo,
+                permissionService: StubPermissionService(),
+                targetApplicationProvider: { "com.example.editor" },
+                currentFrontApplicationProvider: { "com.example.editor" },
+                restoreClipboardEnabled: { false },
+                clipboardTextProvider: { clipboard.current }
+            )
+            var closeCount = 0
+            let panelVM = QuickPanelViewModel(
+                appState: appState,
+                projectRepository: projectRepo,
+                entryRepository: entryRepo,
+                settingsRepository: settingsRepo,
+                searchService: EntrySearchService(entryRepository: entryRepo),
+                executeService: executeService,
+                clipboardService: clipboard,
+                permissionService: PermissionService(),
+                onClosePanel: { closeCount += 1 }
+            )
+            panelVM.prepareForPresentation()
+            await waitUntilAsync(timeout: 1.5) {
+                !panelVM.isScopeSearchInFlight && panelVM.entries.contains(where: { $0.id == entry.id })
+            }
+
+            let dateFormatter = DateFormatter()
+            dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+            dateFormatter.timeZone = .current
+            dateFormatter.dateFormat = "yyyy-MM-dd"
+            let today = dateFormatter.string(from: Date())
+
+            panelVM.copySelectionOnly()
+            try check(clipboard.current == "Check ERR-42 @ \(today)")
+            try check(closeCount == 0, "Pinned panel must stay open on copySelectionOnly")
+            let logs = try logRepo.fetchRecent(limit: 10)
+            try check(logs.first?.result == Constants.ExecutionResult.clipboardOnly.rawValue)
+
+            appState.isPanelPinned = false
+            panelVM.copySelectionOnly()
+            try check(closeCount == 1, "Unpinned panel should close on copySelectionOnly")
+        }
+    }
+
+    static func verifyEntryTagsIndexEditableFieldsAndProjectGuards() throws {
+        try withTempDatabase { manager, _ in
+            let projectRepo = ProjectRepository(dbQueue: manager.dbQueue)
+            let entryRepo = EntryRepository(dbQueue: manager.dbQueue)
+            let defaultProject = try unwrap(projectRepo.fetchDefault())
+            let inboxProject = try unwrap(projectRepo.fetchInbox())
+
+            let activeProj = Project(name: "ActiveApp", groupKind: .project)
+            let archivedProj = Project(name: "ArchivedApp", groupKind: .project, isArchived: true)
+            try projectRepo.create(activeProj)
+            try projectRepo.create(archivedProj)
+
+            // Active targets include inboxProject & defaultProject and exclude archivedProj.
+            let activeTargets = try projectRepo.fetchActiveTargetProjects()
+            try check(activeTargets.contains(where: { $0.id == inboxProject.id }))
+            try check(activeTargets.contains(where: { $0.id == defaultProject.id }))
+            try check(activeTargets.contains(where: { $0.id == activeProj.id }))
+            try check(!activeTargets.contains(where: { $0.id == archivedProj.id }))
+
+            // Duplicate, empty, system rename, and archived migration guards.
+            do {
+                try projectRepo.create(Project(name: "  activeapp  ", groupKind: .project))
+                try check(false, "Expected duplicateProjectName error on create")
+            } catch RepositoryError.duplicateProjectName {}
+
+            do {
+                try projectRepo.create(Project(name: "   ", groupKind: .project))
+                try check(false, "Expected emptyProjectName error on create")
+            } catch RepositoryError.emptyProjectName {}
+
+            do {
+                try projectRepo.rename(id: defaultProject.id, newName: "Renamed Default")
+                try check(false, "Expected cannotRenameSystemProject error")
+            } catch RepositoryError.cannotRenameSystemProject {}
+
+            let entry = Entry(
+                projectId: activeProj.id,
+                title: "Docker Run",
+                content: "docker ps",
+                tags: ["Docker", "Ops"]
+            )
+            try entryRepo.create(entry)
+            try entryRepo.recordExecution(id: entry.id)
+            try entryRepo.recordExecution(id: entry.id)
+
+            // entry_tags table synced on create.
+            let initialIndexedTags = try manager.dbQueue.read { db in
+                try String.fetchAll(
+                    db,
+                    sql: "SELECT tag_lower FROM entry_tags WHERE entry_id = ? ORDER BY tag_lower ASC",
+                    arguments: [entry.id]
+                )
+            }
+            try check(initialIndexedTags == ["docker", "ops"])
+            try check(entryRepo.searchAll(query: "", tag: "DOCKER").map(\.id) == [entry.id])
+
+            // updateEditableFields preserves concurrent useCount / lastUsedAt and updates entry_tags.
+            let updateOutcome = try entryRepo.updateEditableFields(
+                id: entry.id,
+                title: "K8s Pods",
+                content: "kubectl get pods",
+                type: Constants.EntryType.code.rawValue,
+                projectId: activeProj.id,
+                tags: ["K8s"],
+                isPinned: true,
+                isCompleted: false
+            )
+            guard case .updated(let updated) = updateOutcome else {
+                try check(false, "Expected .updated result")
+                return
+            }
+            try check(updated.useCount == 2, "updateEditableFields must preserve concurrent useCount")
+            try check(updated.lastUsedAt != nil, "updateEditableFields must preserve lastUsedAt")
+            try check(entryRepo.searchAll(query: "", tag: "docker").isEmpty)
+            try check(entryRepo.searchAll(query: "", tag: "K8S").map(\.id) == [entry.id])
+
+            // Cannot migrate entries into an archived project.
+            do {
+                try projectRepo.migrateAndDelete(fromId: activeProj.id, toId: archivedProj.id)
+                try check(false, "Expected cannotMigrateToArchivedProject error")
+            } catch RepositoryError.cannotMigrateToArchivedProject {}
+
+            // Soft-deleted entry returns .deletedOrMissing and stays tombstoned.
+            try entryRepo.delete(id: entry.id)
+            let deletedOutcome = try entryRepo.updateEditableFields(
+                id: entry.id,
+                title: "Resurrection Attempt",
+                content: "should not revive",
+                type: Constants.EntryType.prompt.rawValue,
+                projectId: activeProj.id,
+                tags: [],
+                isPinned: false,
+                isCompleted: false
+            )
+            try check(deletedOutcome == .deletedOrMissing)
+            try check(try entryRepo.fetchById(entry.id) == nil)
+        }
+    }
+
+    static func verifyMainWindowCombinedFiltersArchivedExclusionAndDraftSafety() throws {
+        try runAsyncOnMainRunLoop {
+            try await verifyMainWindowCombinedFiltersArchivedExclusionAndDraftSafetyAsync()
+        }
+    }
+
+    static func verifyMainWindowCombinedFiltersArchivedExclusionAndDraftSafetyAsync() async throws {
+        try await withTempDatabaseAsync { manager, rootDBURL in
+            let projectRepo = ProjectRepository(dbQueue: manager.dbQueue)
+            let entryRepo = EntryRepository(dbQueue: manager.dbQueue)
+            let settingsRepo = SettingsRepository(dbQueue: manager.dbQueue)
+            let logRepo = LogRepository(dbQueue: manager.dbQueue)
+            let defaultProject = try unwrap(projectRepo.fetchDefault())
+            let inboxProject = try unwrap(projectRepo.fetchInbox())
+
+            let activeProj = Project(name: "ActiveProj", groupKind: .project)
+            let emptyProj = Project(name: "EmptyProj", groupKind: .project)
+            let archivedProj = Project(name: "ArchivedProj", groupKind: .project, isArchived: true)
+            try projectRepo.create(activeProj)
+            try projectRepo.create(emptyProj)
+            try projectRepo.create(archivedProj)
+
+            let codeAlpha = Entry(
+                projectId: activeProj.id,
+                title: "Build Script",
+                content: "swift build",
+                type: Constants.EntryType.code.rawValue,
+                tags: ["alpha"]
+            )
+            let promptAlpha = Entry(
+                projectId: activeProj.id,
+                title: "Prompt Alpha",
+                content: "explain code",
+                type: Constants.EntryType.prompt.rawValue,
+                tags: ["alpha"]
+            )
+            let archivedEntry = Entry(
+                projectId: archivedProj.id,
+                title: "Legacy Archived",
+                content: "old script",
+                type: Constants.EntryType.code.rawValue,
+                tags: ["alpha"]
+            )
+            try entryRepo.create(codeAlpha)
+            try entryRepo.create(promptAlpha)
+            try entryRepo.create(archivedEntry)
+
+            let appState = AppState()
+            appState.loadPersistedState(currentProjectId: defaultProject.id, defaultProjectId: defaultProject.id)
+            let storageMaintenance = StorageMaintenanceService(
+                dbQueue: manager.dbQueue,
+                logRepository: logRepo,
+                databaseURL: rootDBURL
+            )
+            let viewModel = MainWindowViewModel(
+                appState: appState,
+                projectRepository: projectRepo,
+                entryRepository: entryRepo,
+                settingsRepository: settingsRepo,
+                logRepository: logRepo,
+                permissionService: PermissionService(),
+                loginItemService: LoginItemService(),
+                storageMaintenanceService: storageMaintenance,
+                updaterService: UpdaterService(configurationState: UpdaterService.ConfigurationState(
+                    feedURL: nil,
+                    publicKey: nil,
+                    expectedTeamIdentifier: nil
+                )),
+                launchRecoveryReport: nil
+            )
+            defer { viewModel.cancelPendingBackgroundTasks() }
+
+            viewModel.load()
+            await waitUntilAsync(timeout: 1.5) {
+                viewModel.totalEntryCount == 2 && viewModel.displayedEntries.count == 2
+            }
+            // All-projects view and totalEntryCount must exclude archived project entries.
+            try check(viewModel.totalEntryCount == 2)
+            try check(!viewModel.displayedEntries.contains(where: { $0.id == archivedEntry.id }))
+            try check(viewModel.targetProjects(excluding: activeProj.id).contains(where: { $0.id == inboxProject.id }))
+            try check(!viewModel.targetProjects(excluding: activeProj.id).contains(where: { $0.id == archivedProj.id }))
+
+            // Combined Kind + Tag filtering must not clear each other.
+            viewModel.toggleEntryKindFilter(.code)
+            viewModel.toggleEntryTagFilter("alpha")
+            try check(viewModel.entryKindFilter == Constants.EntryType.code.rawValue)
+            try check(viewModel.entryTagFilter == "alpha")
+            try check(viewModel.displayedEntries.map(\.id) == [codeAlpha.id])
+
+            // Switching to a project without matching kind/tag auto-clears stale filters.
+            viewModel.selectedProjectId = emptyProj.id
+            await waitUntilAsync(timeout: 1.5) {
+                viewModel.entryKindFilter == nil && viewModel.entryTagFilter == nil
+            }
+            try check(viewModel.entryKindFilter == nil && viewModel.entryTagFilter == nil)
+
+            // Dirty invalid draft prevents silent group/tab switch rollback loss.
+            viewModel.selectedProjectId = activeProj.id
+            await waitUntilAsync(timeout: 1.5) {
+                viewModel.selectedEntryId == codeAlpha.id && viewModel.inlineDraftEntryId == codeAlpha.id
+            }
+            viewModel.inlineDraftContent = "   "
+            viewModel.selectedProjectId = defaultProject.id
+            try check(
+                viewModel.selectedProjectId == activeProj.id,
+                "Invalid blank draft must revert project switch instead of discarding edits"
+            )
+            try check(viewModel.inlineDraftContent == "   ")
+            viewModel.selectedTab = .settings
+            try check(
+                viewModel.selectedTab == .library,
+                "Invalid blank draft must revert tab switch instead of leaving unsaved edits behind"
+            )
+            viewModel.inlineDraftContent = codeAlpha.content
+
+            // Right-click empty project deletion prompts confirmation without mutating selectedProjectId.
+            viewModel.requestDeleteProject(emptyProj)
+            try check(viewModel.selectedProjectId == activeProj.id)
+            try check(viewModel.deleteProjectState?.project.id == emptyProj.id)
+            try check(viewModel.deleteProjectState?.entryCount == 0)
+            try check(viewModel.confirmDeleteProject())
+            try check(try projectRepo.fetchById(emptyProj.id) == nil)
+        }
+    }
+
+    static func verifyCloudSyncActionModesReportAndTrashRestore() throws {
+        try runAsyncOnMainRunLoop {
+            try await verifyCloudSyncActionModesReportAndTrashRestoreAsync()
+        }
+    }
+
+    static func verifyCloudSyncActionModesReportAndTrashRestoreAsync() async throws {
+        final class MockActionSyncProtocol: URLProtocol, @unchecked Sendable {
+            static let lock = NSLock()
+            nonisolated(unsafe) static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+            static func setHandler(_ newHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?) {
+                lock.lock()
+                handler = newHandler
+                lock.unlock()
+            }
+
+            override class func canInit(with request: URLRequest) -> Bool { true }
+            override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+            override func startLoading() {
+                Self.lock.lock()
+                let current = Self.handler
+                Self.lock.unlock()
+                guard let current else {
+                    client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+                    return
+                }
+                do {
+                    let (response, data) = try current(request)
+                    client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                    client?.urlProtocol(self, didLoad: data)
+                    client?.urlProtocolDidFinishLoading(self)
+                } catch {
+                    client?.urlProtocol(self, didFailWithError: error)
+                }
+            }
+
+            override func stopLoading() {}
+        }
+
+        try await withTempDatabaseAsync { manager, _ in
+            let projectRepo = ProjectRepository(dbQueue: manager.dbQueue)
+            let entryRepo = EntryRepository(dbQueue: manager.dbQueue)
+            let defaultProject = try unwrap(projectRepo.fetchDefault())
+
+            let deletedGroup = Project(id: "proj-deleted-remote-orphan", name: "已删分组", groupKind: .project)
+            try projectRepo.create(deletedGroup)
+            try projectRepo.delete(id: deletedGroup.id)
+
+            let localEntry = Entry(
+                id: "entry-local-1",
+                projectId: defaultProject.id,
+                title: "Local Prompt",
+                content: "local body",
+                tags: ["syncTag"]
+            )
+            try entryRepo.create(localEntry)
+
+            // Verify recordExecution marks usage_dirty without advancing local_mutation_seq.
+            let seqBeforeExec = try await manager.dbQueue.read { db in
+                try String.fetchOne(db, sql: "SELECT value FROM sync_metadata WHERE key = 'local_mutation_seq'")
+            }.flatMap(Int.init) ?? 0
+            try entryRepo.recordExecution(id: localEntry.id)
+            let seqAfterExec = try await manager.dbQueue.read { db in
+                try String.fetchOne(db, sql: "SELECT value FROM sync_metadata WHERE key = 'local_mutation_seq'")
+            }.flatMap(Int.init) ?? 0
+            try check(seqAfterExec == seqBeforeExec, "recordExecution must not bump local_mutation_seq")
+
+            let config = URLSessionConfiguration.ephemeral
+            config.protocolClasses = [MockActionSyncProtocol.self]
+            let mockSession = URLSession(configuration: config)
+            let syncService = CloudSyncService(dbQueue: manager.dbQueue, urlSession: mockSession)
+
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let remoteOnlyEntry = Entry(
+                id: "entry-remote-2",
+                projectId: defaultProject.id,
+                title: "Remote Prompt",
+                content: "remote body",
+                tags: ["cloud"]
+            )
+            let remoteOrphanEntry = Entry(
+                id: "entry-remote-orphan",
+                projectId: deletedGroup.id,
+                title: "Orphan From Deleted Project",
+                content: "orphan body"
+            )
+
+            var serverRevision = 3
+            var postPayloads: [[String: Any]] = []
+            MockActionSyncProtocol.setHandler { request in
+                let method = request.httpMethod ?? "GET"
+                let url = request.url ?? URL(string: "https://sync.example.com/v1/sync")!
+                if method == "GET" {
+                    let remotePayload: [String: Any] = [
+                        "formatVersion": 1,
+                        "serverRevision": serverRevision,
+                        "projects": [],
+                        "entries": [
+                            [
+                                "id": remoteOnlyEntry.id,
+                                "projectId": defaultProject.id,
+                                "title": remoteOnlyEntry.title,
+                                "content": remoteOnlyEntry.content,
+                                "type": remoteOnlyEntry.type,
+                                "isPinned": false,
+                                "isCompleted": false,
+                                "sortOrder": 0,
+                                "useCount": 0,
+                                "createdAt": ISO8601DateFormatter().string(from: remoteOnlyEntry.createdAt),
+                                "updatedAt": ISO8601DateFormatter().string(from: remoteOnlyEntry.updatedAt),
+                                "tags": ["cloud"]
+                            ],
+                            [
+                                "id": remoteOrphanEntry.id,
+                                "projectId": deletedGroup.id,
+                                "title": remoteOrphanEntry.title,
+                                "content": remoteOrphanEntry.content,
+                                "type": remoteOrphanEntry.type,
+                                "isPinned": false,
+                                "isCompleted": false,
+                                "sortOrder": 0,
+                                "useCount": 0,
+                                "createdAt": ISO8601DateFormatter().string(from: remoteOrphanEntry.createdAt),
+                                "updatedAt": ISO8601DateFormatter().string(from: remoteOrphanEntry.updatedAt),
+                                "tags": []
+                            ]
+                        ],
+                        "versions": []
+                    ]
+                    let data = try JSONSerialization.data(withJSONObject: remotePayload)
+                    let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+                    return (resp, data)
+                }
+
+                var bodyData = request.httpBody
+                if bodyData == nil, let stream = request.httpBodyStream {
+                    stream.open()
+                    defer { stream.close() }
+                    var buf = [UInt8](repeating: 0, count: 4096)
+                    var acc = Data()
+                    while stream.hasBytesAvailable {
+                        let n = stream.read(&buf, maxLength: buf.count)
+                        if n > 0 { acc.append(buf, count: n) } else { break }
+                    }
+                    bodyData = acc
+                }
+                if let bodyData {
+                    let decryptedData = (try? CloudSyncCrypto.openEnvelopeData(bodyData, apiKey: "pp_test_token_123456")) ?? bodyData
+                    if let json = try? JSONSerialization.jsonObject(with: decryptedData) as? [String: Any] {
+                        postPayloads.append(json)
+                    }
+                }
+                serverRevision += 1
+                let ack: [String: Any] = [
+                    "ok": true,
+                    "serverRevision": serverRevision,
+                    "stats": ["projectsCreated": 0, "projectsUpdated": 0, "entriesCreated": 1, "entriesUpdated": 0]
+                ]
+                let data = try JSONSerialization.data(withJSONObject: ack)
+                let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+                return (resp, data)
+            }
+            defer { MockActionSyncProtocol.setHandler(nil) }
+
+            // 1. .pullOnly pulls remote + migrates orphan without reviving soft-deleted project or pushing local.
+            let pullReport = try await syncService.syncWithReport(
+                endpoint: "https://sync.example.com/v1/sync",
+                apiKey: "pp_test_token_123456",
+                actionMode: .pullOnly
+            )
+            try check(pullReport.actionMode == .pullOnly)
+            try check(pullReport.direction == .pulledOnly)
+            try check(postPayloads.isEmpty, ".pullOnly must never POST to server")
+            try check(pullReport.orphansMigrated >= 1)
+            try check(try projectRepo.fetchById(deletedGroup.id) == nil, "Orphan merge must not resurrect deleted project")
+            let healedOrphan = try unwrap(entryRepo.fetchById(remoteOrphanEntry.id))
+            try check(healedOrphan.projectId == defaultProject.id)
+
+            // 2. .smartBidirectional pushes pending local changes and emits CloudSyncReport.
+            let smartReport = try await syncService.syncWithReport(
+                endpoint: "https://sync.example.com/v1/sync",
+                apiKey: "pp_test_token_123456",
+                actionMode: .smartBidirectional
+            )
+            try check(smartReport.actionMode == .smartBidirectional)
+            try check(postPayloads.count == 1)
+            let pendingAfterSmart = try syncService.pendingSyncState()
+            try check(!pendingAfterSmart.hasPendingLocalChanges)
+
+            // 3. .forcePushLocal sends forceOverwrite = true and reports .forcedLocalOverwrite.
+            let forceReport = try await syncService.syncWithReport(
+                endpoint: "https://sync.example.com/v1/sync",
+                apiKey: "pp_test_token_123456",
+                actionMode: .forcePushLocal,
+                forceFullSync: true
+            )
+            try check(forceReport.direction == .forcedLocalOverwrite)
+            try check((postPayloads.last?["forceOverwrite"] as? Bool) == true)
+
+            // 4. Soft-delete trash listing + per-entry restore + entry_tags index restoration.
+            try entryRepo.delete(id: localEntry.id)
+            let trashItems = try syncService.fetchRecentSoftDeletedEntries(withinDays: 30)
+            try check(trashItems.contains(where: { $0.id == localEntry.id }))
+            try check(try entryRepo.searchAll(query: "", tag: "synctag").isEmpty)
+
+            let seqBeforeRestore = try syncService.pendingSyncState().localSeq
+            let restoredCount = try syncService.restoreSoftDeletedEntries(ids: [localEntry.id])
+            try check(restoredCount == 1)
+            try check(try entryRepo.fetchById(localEntry.id)?.deletedAt == nil)
+            try check(try syncService.pendingSyncState().localSeq > seqBeforeRestore)
+            try check(try entryRepo.searchAll(query: "", tag: "synctag").map(\.id) == [localEntry.id])
         }
     }
 }

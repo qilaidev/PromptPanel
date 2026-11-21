@@ -25,16 +25,37 @@ final class ExecuteService {
     private let clipboardTextProvider: () -> String?
     private var isExecuting = false
     private var executionStartedAt: UInt64?
+    private var pendingClipboardRestoreTask: Task<Void, Never>?
+    private var activePendingRestorePlan: ClipboardRestorePlan?
 
     static let terminalBundleIdentifiers: Set<String> = [
         "com.apple.Terminal",
         "com.googlecode.iterm2",
         "com.mitchellh.ghostty",
         "dev.warp.Warp-Stable",
+        "dev.warp.Warp",
         "net.kovidgoyal.kitty",
         "io.alacritty",
+        "org.alacritty",
         "co.zeit.hyper",
         "com.github.wez.wezterm",
+        "com.raphaelamorim.rio",
+        "org.tabby",
+        "com.microsoft.VSCode",
+        "com.microsoft.VSCodeInsiders",
+        "com.todesktop.230313mzl4w4u92",
+        "com.exafunction.windsurf",
+        "dev.zed.Zed",
+        "com.jetbrains.intellij",
+        "com.jetbrains.pycharm",
+        "com.jetbrains.CLion",
+        "com.jetbrains.goland",
+        "com.jetbrains.WebStorm",
+        "com.jetbrains.rider",
+        "com.jetbrains.rubymine",
+        "com.jetbrains.phpstorm",
+        "com.jetbrains.datagrip",
+        "com.jetbrains.fleet",
     ]
 
     private static let placeholderRegex = try! NSRegularExpression(
@@ -140,14 +161,20 @@ final class ExecuteService {
             resolved = expanded
         }
 
-        // Prevent synthetic ⌘V from auto-submitting the final line inside terminal prompts.
+        // Normalize CRLF/CR and prevent synthetic ⌘V from auto-submitting the final line inside terminal prompts.
         if let targetBundleId,
-           terminalBundleIdentifiers.contains(targetBundleId),
-           (entry.type == Constants.EntryType.code.rawValue
-            || resolved.unicodeScalars.contains(where: { $0 == "\n" || $0 == "\r" })) {
-            while let lastScalar = resolved.unicodeScalars.last,
-                  lastScalar == "\n" || lastScalar == "\r" {
-                resolved.unicodeScalars.removeLast()
+           terminalBundleIdentifiers.contains(targetBundleId) {
+            if resolved.unicodeScalars.contains("\r") {
+                resolved = resolved
+                    .replacingOccurrences(of: "\r\n", with: "\n")
+                    .replacingOccurrences(of: "\r", with: "\n")
+            }
+            if entry.type == Constants.EntryType.code.rawValue
+                || resolved.unicodeScalars.contains(where: { $0 == "\n" }) {
+                while let lastScalar = resolved.unicodeScalars.last,
+                      lastScalar == "\n" || lastScalar == "\r" {
+                    resolved.unicodeScalars.removeLast()
+                }
             }
         }
 
@@ -192,6 +219,44 @@ final class ExecuteService {
         )
     }
 
+    /// Copy an entry to the clipboard without auto-pasting, expanding placeholders (`{{clipboard}}`, `{{date}}`),
+    /// logging the copy-only execution, and recording usage stats.
+    @discardableResult
+    func resolveAndCopyEntry(
+        _ entry: Entry,
+        currentProjectId: String,
+        targetBundleId: String? = nil,
+        triggerSource: Constants.ExecutionTrigger = .keyboardSubmit
+    ) -> Bool {
+        flushPendingClipboardRestoreIfNeeded()
+        let startTime = DispatchTime.now().uptimeNanoseconds
+        let effectiveBundleId = targetBundleId ?? targetApplicationProvider()
+        let resolved = Self.resolveContent(
+            for: entry,
+            clipboardText: clipboardTextProvider(),
+            targetBundleId: effectiveBundleId
+        )
+        let clipboardSuccess = clipboardService.writeText(resolved)
+        logExecution(
+            entry: entry,
+            projectId: currentProjectId,
+            frontAppBundleId: effectiveBundleId,
+            observedAppBundleId: currentFrontApplicationProvider(),
+            clipboardSuccess: clipboardSuccess,
+            pasteAttempted: false,
+            pasteSuccess: false,
+            result: clipboardSuccess ? .clipboardOnly : .failed,
+            triggerSource: triggerSource,
+            failureReason: clipboardSuccess ? nil : .clipboardWriteFailed,
+            targetAppRestoreDurationMs: nil,
+            totalDurationMs: elapsedMilliseconds(since: startTime)
+        )
+        if clipboardSuccess {
+            recordUsage(entry: entry)
+        }
+        return clipboardSuccess
+    }
+
     private func run(
         entry: Entry,
         currentProjectId: String,
@@ -217,6 +282,10 @@ final class ExecuteService {
         )
         let startTime = DispatchTime.now().uptimeNanoseconds
 
+        // Flush any uncompleted clipboard restoration from a previous paste so
+        // {{clipboard}} and snapshot capture observe the user's actual clipboard.
+        flushPendingClipboardRestoreIfNeeded()
+
         // Step 1: Resolve dynamic placeholders and terminal safety guard before
         // overwriting the clipboard (snapshotting the previous contents first when
         // the user asked for them to be restored after the paste).
@@ -229,14 +298,16 @@ final class ExecuteService {
         var restorePlan: ClipboardRestorePlan?
         let clipboardSuccess: Bool
         if restoreClipboardEnabled(),
-           let snapshotter = clipboardService as? ClipboardSnapshotting,
-           let snapshot = snapshotter.captureSnapshot() {
+           let snapshotter = clipboardService as? ClipboardSnapshotting {
+            let snapshot = snapshotter.captureSnapshot()
             if let changeCount = snapshotter.writeTransientText(resolvedContent) {
-                restorePlan = ClipboardRestorePlan(
-                    snapshotter: snapshotter,
-                    snapshot: snapshot,
-                    changeCountAfterWrite: changeCount
-                )
+                if let snapshot {
+                    restorePlan = ClipboardRestorePlan(
+                        snapshotter: snapshotter,
+                        snapshot: snapshot,
+                        changeCountAfterWrite: changeCount
+                    )
+                }
                 clipboardSuccess = true
             } else {
                 clipboardSuccess = false
@@ -478,17 +549,37 @@ final class ExecuteService {
     /// Only called after a dispatched paste. When the paste fell back to
     /// clipboard-only, the entry must stay on the clipboard for a manual ⌘V.
     private func scheduleClipboardRestore(_ plan: ClipboardRestorePlan?) {
+        pendingClipboardRestoreTask?.cancel()
+        pendingClipboardRestoreTask = nil
+        activePendingRestorePlan = nil
         guard let plan else { return }
-        Task { @MainActor in
+        activePendingRestorePlan = plan
+        pendingClipboardRestoreTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(Constants.clipboardRestoreDelayMs) * 1_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.activePendingRestorePlan = nil
+            self.pendingClipboardRestoreTask = nil
             plan.snapshotter.restore(plan.snapshot, ifChangeCountIs: plan.changeCountAfterWrite)
+        }
+    }
+
+    private func flushPendingClipboardRestoreIfNeeded() {
+        pendingClipboardRestoreTask?.cancel()
+        pendingClipboardRestoreTask = nil
+        if let pendingPlan = activePendingRestorePlan {
+            activePendingRestorePlan = nil
+            pendingPlan.snapshotter.restore(pendingPlan.snapshot, ifChangeCountIs: pendingPlan.changeCountAfterWrite)
         }
     }
 
     private func recordUsage(entry: Entry) {
         do {
             try entryRepository.recordExecution(id: entry.id)
-            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            NotificationCenter.default.post(
+                name: .entryUsageDidChange,
+                object: nil,
+                userInfo: ["entryId": entry.id]
+            )
         } catch {
             PPLogger.execute.error("Failed to record usage: \(error.localizedDescription)")
         }

@@ -109,6 +109,7 @@ final class DatabaseManager {
             // It has to be registered on every connection, not just the first.
             db.add(function: EntryRanking.databaseFunction)
             db.add(function: EntryRepository.hasTagDatabaseFunction)
+            db.add(function: EntryRepository.icontainsDatabaseFunction)
             // Opt-in rather than on for every debug build: tracing emits a log line
             // per statement, which on a library load is one line per row fetched.
             if ProcessInfo.processInfo.environment["PROMPTPANEL_TRACE_SQL"] == "1" {
@@ -171,6 +172,12 @@ final class DatabaseManager {
                 sql: """
                     CREATE INDEX IF NOT EXISTS idx_projects_active_kind
                     ON projects(deleted_at, is_archived, group_kind)
+                    """
+            )
+            try db.execute(
+                sql: """
+                    CREATE INDEX IF NOT EXISTS idx_entry_tags_tag_lower
+                    ON entry_tags(tag_lower, entry_id)
                     """
             )
         }

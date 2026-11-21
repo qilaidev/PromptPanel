@@ -53,7 +53,7 @@ final class ClipboardService: ClipboardWriting, ClipboardSnapshotting {
 
     func captureSnapshot() -> ClipboardSnapshot? {
         guard let items = pasteboard.pasteboardItems, !items.isEmpty else {
-            return nil
+            return ClipboardSnapshot(items: [])
         }
         var totalBytes = 0
         var captured: [[NSPasteboard.PasteboardType: Data]] = []
@@ -72,7 +72,7 @@ final class ClipboardService: ClipboardWriting, ClipboardSnapshotting {
                 captured.append(types)
             }
         }
-        return captured.isEmpty ? nil : ClipboardSnapshot(items: captured)
+        return ClipboardSnapshot(items: captured)
     }
 
     func writeTransientText(_ text: String) -> Int? {
@@ -94,10 +94,20 @@ final class ClipboardService: ClipboardWriting, ClipboardSnapshotting {
             return false
         }
         pasteboard.clearContents()
-        let items: [NSPasteboardItem] = snapshot.items.map { types in
+        if snapshot.items.isEmpty {
+            let markerItem = NSPasteboardItem()
+            markerItem.setData(Data(), forType: Self.transientType)
+            let restored = pasteboard.writeObjects([markerItem])
+            PPLogger.clipboard.info("Clipboard restored to empty state after paste: \(restored)")
+            return restored
+        }
+        let items: [NSPasteboardItem] = snapshot.items.enumerated().map { index, types in
             let item = NSPasteboardItem()
             for (type, data) in types {
                 item.setData(data, forType: type)
+            }
+            if index == 0, types[Self.transientType] == nil {
+                item.setData(Data(), forType: Self.transientType)
             }
             return item
         }

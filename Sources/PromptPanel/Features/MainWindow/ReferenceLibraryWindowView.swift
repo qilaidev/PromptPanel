@@ -3,17 +3,38 @@ import SwiftUI
 
 struct ReferenceLibraryWindowView: View {
     @ObservedObject var viewModel: MainWindowViewModel
+    @FocusState private var isSearchFocused: Bool
+
+    private var activeTargetProjects: [Project] {
+        viewModel.targetProjects(excluding: "")
+    }
 
     private var effectiveTargetProjectId: String {
         if !viewModel.referenceTargetProjectId.isEmpty,
-           viewModel.projects.contains(where: { $0.id == viewModel.referenceTargetProjectId }) {
+           activeTargetProjects.contains(where: { $0.id == viewModel.referenceTargetProjectId }) {
             return viewModel.referenceTargetProjectId
         }
         if viewModel.selectedProjectId != MainWindowViewModel.allProjectsSelection,
-           viewModel.projects.contains(where: { $0.id == viewModel.selectedProjectId }) {
+           activeTargetProjects.contains(where: { $0.id == viewModel.selectedProjectId }) {
             return viewModel.selectedProjectId
         }
-        return viewModel.currentProjectId
+        if activeTargetProjects.contains(where: { $0.id == viewModel.currentProjectId }) {
+            return viewModel.currentProjectId
+        }
+        return activeTargetProjects.first?.id ?? viewModel.currentProjectId
+    }
+
+    private var sourceFilterLabel: String {
+        if viewModel.referenceSourceProjectId == MainWindowViewModel.allProjectsSelection {
+            return "全部来源"
+        }
+        let name = viewModel.projectName(for: viewModel.referenceSourceProjectId)
+        return name.isEmpty ? "全部来源" : name
+    }
+
+    private var targetProjectLabel: String {
+        let name = viewModel.projectName(for: effectiveTargetProjectId)
+        return name.isEmpty ? "选择目标" : name
     }
 
     var body: some View {
@@ -32,16 +53,21 @@ struct ReferenceLibraryWindowView: View {
 
             referenceEntriesList
         }
-        .frame(minWidth: 520, minHeight: 560)
+        .frame(minWidth: 540, minHeight: 560)
         .background(Constants.VisualStyle.surfaceRaised)
         .tint(Constants.VisualStyle.accent)
         .preferredColorScheme(viewModel.appTheme.preferredColorScheme)
         .onAppear {
-            if viewModel.referenceTargetProjectId.isEmpty {
+            if viewModel.referenceTargetProjectId.isEmpty
+                || !activeTargetProjects.contains(where: { $0.id == viewModel.referenceTargetProjectId }) {
                 viewModel.referenceTargetProjectId = effectiveTargetProjectId
             }
+            if viewModel.referenceSourceProjectId != MainWindowViewModel.allProjectsSelection
+                && !activeTargetProjects.contains(where: { $0.id == viewModel.referenceSourceProjectId }) {
+                viewModel.referenceSourceProjectId = MainWindowViewModel.allProjectsSelection
+            }
             viewModel.refreshClipboardPreview()
-            viewModel.refreshReferenceEntries()
+            viewModel.refreshReferenceEntries(immediate: true)
         }
         .onChange(of: viewModel.referenceSourceProjectId) { _, _ in
             viewModel.refreshReferenceEntries()
@@ -49,37 +75,32 @@ struct ReferenceLibraryWindowView: View {
         .onChange(of: viewModel.referenceSearchText) { _, _ in
             viewModel.refreshReferenceEntries()
         }
+        .onChange(of: viewModel.projects) { _, _ in
+            if !activeTargetProjects.contains(where: { $0.id == viewModel.referenceTargetProjectId }) {
+                viewModel.referenceTargetProjectId = effectiveTargetProjectId
+            }
+            if viewModel.referenceSourceProjectId != MainWindowViewModel.allProjectsSelection
+                && !activeTargetProjects.contains(where: { $0.id == viewModel.referenceSourceProjectId }) {
+                viewModel.referenceSourceProjectId = MainWindowViewModel.allProjectsSelection
+            }
+        }
     }
 
     // MARK: - Top Toolbar (Source Filter, Search & Target Project)
 
     private var headerToolbar: some View {
         HStack(spacing: 8) {
-            Picker("来源", selection: $viewModel.referenceSourceProjectId) {
-                Text("全部来源").tag(MainWindowViewModel.allProjectsSelection)
-                Section("常用类型") {
-                    ForEach(viewModel.categoryProjects) { category in
-                        Text(category.name).tag(category.id)
-                    }
-                }
-                Section("项目") {
-                    ForEach(viewModel.activeProjects) { project in
-                        Text(project.name).tag(project.id)
-                    }
-                }
-            }
-            .labelsHidden()
-            .controlSize(.small)
-            .frame(width: 136)
+            sourceFilterMenu
 
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .font(.icon(.small))
-                    .foregroundStyle(Constants.VisualStyle.textTertiary)
+                    .foregroundStyle(isSearchFocused ? Constants.VisualStyle.accent : Constants.VisualStyle.textTertiary)
                 TextField("搜索标题、内容或标签…", text: $viewModel.referenceSearchText)
                     .textFieldStyle(.plain)
                     .font(.ui(.body))
                     .foregroundStyle(Constants.VisualStyle.text)
+                    .focused($isSearchFocused)
                 if !viewModel.referenceSearchText.isEmpty {
                     Button {
                         viewModel.referenceSearchText = ""
@@ -87,60 +108,162 @@ struct ReferenceLibraryWindowView: View {
                         Image(systemName: "xmark.circle.fill")
                             .font(.icon(.small))
                             .foregroundStyle(Constants.VisualStyle.textTertiary)
+                            .frame(width: 18, height: 18)
+                            .hoverHighlight(cornerRadius: 4)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(PPInteractiveButtonStyle(cornerRadius: 4))
+                    .help("清空搜索")
                 }
             }
             .padding(.horizontal, 8)
             .frame(height: Constants.Layout.regularControlHeight)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Constants.VisualStyle.inputFill)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
-            )
+            .focusableInputSurface(isFocused: isSearchFocused, cornerRadius: 6)
 
-            HStack(spacing: 4) {
-                Text("目标")
-                    .font(.ui(.caption, weight: .medium))
-                    .foregroundStyle(Constants.VisualStyle.textSecondary)
-
-                Picker("目标项目", selection: Binding(
-                    get: { effectiveTargetProjectId },
-                    set: { viewModel.referenceTargetProjectId = $0 }
-                )) {
-                    Section("项目") {
-                        ForEach(viewModel.activeProjects) { project in
-                            Text(project.name).tag(project.id)
-                        }
-                    }
-                    Section("常用类型") {
-                        ForEach(viewModel.categoryProjects) { category in
-                            Text(category.name).tag(category.id)
-                        }
-                    }
-                    if let inbox = viewModel.inboxProject {
-                        Section("速记与待办") {
-                            Text(inbox.name).tag(inbox.id)
-                        }
-                    }
-                }
-                .labelsHidden()
-                .controlSize(.small)
-                .frame(width: 140)
-            }
+            targetProjectMenu
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(Constants.VisualStyle.surface)
     }
 
+    private var sourceFilterMenu: some View {
+        Menu {
+            Button {
+                viewModel.referenceSourceProjectId = MainWindowViewModel.allProjectsSelection
+            } label: {
+                menuItemLabel("全部来源", isSelected: viewModel.referenceSourceProjectId == MainWindowViewModel.allProjectsSelection)
+            }
+
+            if let inbox = viewModel.inboxProject, !inbox.isArchived {
+                Divider()
+                Section("速记与待办") {
+                    Button {
+                        viewModel.referenceSourceProjectId = inbox.id
+                    } label: {
+                        menuItemLabel(inbox.name, isSelected: viewModel.referenceSourceProjectId == inbox.id)
+                    }
+                }
+            }
+
+            if !viewModel.categoryProjects.isEmpty {
+                Divider()
+                Section("常用类型") {
+                    ForEach(viewModel.categoryProjects) { category in
+                        Button {
+                            viewModel.referenceSourceProjectId = category.id
+                        } label: {
+                            menuItemLabel(category.name, isSelected: viewModel.referenceSourceProjectId == category.id)
+                        }
+                    }
+                }
+            }
+
+            if !viewModel.activeProjects.isEmpty {
+                Divider()
+                Section("项目") {
+                    ForEach(viewModel.activeProjects) { project in
+                        Button {
+                            viewModel.referenceSourceProjectId = project.id
+                        } label: {
+                            menuItemLabel(project.name, isSelected: viewModel.referenceSourceProjectId == project.id)
+                        }
+                    }
+                }
+            }
+        } label: {
+            toolbarMenuPill(prefix: "来源", title: sourceFilterLabel, maxWidth: 146)
+        }
+        .menuStyle(.borderlessButton)
+        .help("筛选来源分组：\(sourceFilterLabel)")
+    }
+
+    private var targetProjectMenu: some View {
+        Menu {
+            if !viewModel.activeProjects.isEmpty {
+                Section("项目") {
+                    ForEach(viewModel.activeProjects) { project in
+                        Button {
+                            viewModel.referenceTargetProjectId = project.id
+                        } label: {
+                            menuItemLabel(project.name, isSelected: effectiveTargetProjectId == project.id)
+                        }
+                    }
+                }
+            }
+
+            if !viewModel.categoryProjects.isEmpty {
+                Section("常用类型") {
+                    ForEach(viewModel.categoryProjects) { category in
+                        Button {
+                            viewModel.referenceTargetProjectId = category.id
+                        } label: {
+                            menuItemLabel(category.name, isSelected: effectiveTargetProjectId == category.id)
+                        }
+                    }
+                }
+            }
+
+            if let inbox = viewModel.inboxProject, !inbox.isArchived {
+                Section("速记与待办") {
+                    Button {
+                        viewModel.referenceTargetProjectId = inbox.id
+                    } label: {
+                        menuItemLabel(inbox.name, isSelected: effectiveTargetProjectId == inbox.id)
+                    }
+                }
+            }
+        } label: {
+            toolbarMenuPill(prefix: "目标", title: targetProjectLabel, maxWidth: 152)
+        }
+        .menuStyle(.borderlessButton)
+        .help("目标存入与克隆分组：\(targetProjectLabel)")
+    }
+
+    private func toolbarMenuPill(prefix: String, title: String, maxWidth: CGFloat) -> some View {
+        HStack(spacing: 5) {
+            Text(prefix)
+                .font(.ui(.caption, weight: .medium))
+                .foregroundStyle(Constants.VisualStyle.textTertiary)
+            Text(title)
+                .font(.ui(.body, weight: .medium))
+                .foregroundStyle(Constants.VisualStyle.text)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 2)
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.icon(.nano, weight: .semibold))
+                .foregroundStyle(Constants.VisualStyle.textTertiary)
+        }
+        .padding(.horizontal, 9)
+        .frame(minWidth: 112, maxWidth: maxWidth)
+        .frame(height: Constants.Layout.regularControlHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Constants.VisualStyle.inputFill)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
+        )
+        .hoverHighlight(cornerRadius: 6)
+    }
+
+    @ViewBuilder
+    private func menuItemLabel(_ title: String, isSelected: Bool) -> some View {
+        if isSelected {
+            Label(title, systemImage: "checkmark")
+        } else {
+            Text(title)
+        }
+    }
+
     // MARK: - System Clipboard Strip
 
     private var clipboardQuickImportStrip: some View {
-        HStack(spacing: 8) {
+        let fullTargetName = viewModel.projectName(for: effectiveTargetProjectId)
+        let compactTargetName = Self.compactProjectLabel(fullTargetName)
+
+        return HStack(spacing: 8) {
             Image(systemName: "doc.on.clipboard")
                 .font(.icon(.small, weight: .semibold))
                 .foregroundStyle(Constants.VisualStyle.accent)
@@ -169,30 +292,23 @@ struct ReferenceLibraryWindowView: View {
                     .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
             )
 
-            Button {
+            QuietIconButton(systemImage: "arrow.clockwise", help: "刷新剪贴板内容") {
                 viewModel.refreshClipboardPreview()
-            } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.icon(.small))
-                    .foregroundStyle(Constants.VisualStyle.textSecondary)
-                    .frame(width: 24, height: 24)
-                    .roundedHitTarget(cornerRadius: 5)
             }
-            .buttonStyle(.plain)
-            .help("刷新剪贴板内容")
 
             if !viewModel.clipboardPreviewText.isEmpty {
-                if let inbox = viewModel.inboxProject {
-                    SettingsPillButton("记入待办", systemImage: "checklist") {
+                if let inbox = viewModel.inboxProject, !inbox.isArchived {
+                    PPActionButton("记入待办", systemImage: "checklist", variant: .secondary, size: .compact) {
                         viewModel.createQuickEntryFromClipboard(intoProjectId: inbox.id, type: .todo)
                         viewModel.refreshReferenceEntries()
                     }
                 }
 
-                SettingsPillButton(
-                    "存入「\(viewModel.projectName(for: effectiveTargetProjectId))」",
+                PPActionButton(
+                    "存入「\(compactTargetName)」",
                     systemImage: "plus",
-                    tone: .primary
+                    variant: .primary,
+                    size: .compact
                 ) {
                     viewModel.createQuickEntryFromClipboard(
                         intoProjectId: effectiveTargetProjectId,
@@ -200,6 +316,8 @@ struct ReferenceLibraryWindowView: View {
                     )
                     viewModel.refreshReferenceEntries()
                 }
+                .frame(maxWidth: 168)
+                .help("将剪贴板内容存入「\(fullTargetName)」")
             }
         }
         .padding(.horizontal, 14)
@@ -219,6 +337,14 @@ struct ReferenceLibraryWindowView: View {
                     Text("没有匹配的参考词条")
                         .font(.ui(.title, weight: .semibold))
                         .foregroundStyle(Constants.VisualStyle.textSecondary)
+                    if !viewModel.referenceSearchText.isEmpty
+                        || viewModel.referenceSourceProjectId != MainWindowViewModel.allProjectsSelection {
+                        PPActionButton("重置筛选条件", variant: .secondary, size: .compact) {
+                            viewModel.referenceSearchText = ""
+                            viewModel.referenceSourceProjectId = MainWindowViewModel.allProjectsSelection
+                        }
+                        .padding(.top, 2)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -249,6 +375,12 @@ struct ReferenceLibraryWindowView: View {
             }
         }
     }
+
+    static func compactProjectLabel(_ name: String, maxCharacters: Int = 8) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > maxCharacters else { return trimmed }
+        return String(trimmed.prefix(maxCharacters)) + "…"
+    }
 }
 
 private struct ReferenceEntryRow: View {
@@ -260,50 +392,70 @@ private struct ReferenceEntryRow: View {
     let onCopy: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        let compactTarget = ReferenceLibraryWindowView.compactProjectLabel(targetName)
+        let cloneTitle = isAlreadyInTarget ? "再次克隆" : "克隆到「\(compactTarget)」"
+        let cloneHelp = isAlreadyInTarget ? "再次克隆到「\(targetName)」" : "克隆到「\(targetName)」"
+
+        HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Text(sourceName)
-                        .font(.ui(.micro, weight: .semibold))
-                        .foregroundStyle(Constants.VisualStyle.accent)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
+                    Text(ReferenceLibraryWindowView.compactProjectLabel(sourceName, maxCharacters: 10))
+                        .font(.ui(.micro, weight: .medium))
+                        .foregroundStyle(Constants.VisualStyle.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
                         .background(
                             RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .fill(Constants.VisualStyle.accentDim)
+                                .fill(Constants.VisualStyle.tintMedium)
                         )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
+                        )
+                        .help(sourceName)
 
                     Text(entry.title)
                         .font(.ui(.body, weight: .semibold))
                         .foregroundStyle(Constants.VisualStyle.text)
                         .lineLimit(1)
+                        .truncationMode(.tail)
 
-                    Spacer(minLength: 0)
+                    Spacer(minLength: 4)
 
                     Text("\(entry.useCount)次 · \(EntryDateFormat.shortDay(entry.createdAt))")
                         .font(.ui(.micro, mono: true))
+                        .monospacedDigit()
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
 
                 Text(entry.content)
                     .font(.ui(.caption))
                     .foregroundStyle(Constants.VisualStyle.textSecondary)
                     .lineLimit(2)
+                    .truncationMode(.tail)
             }
 
             HStack(spacing: 6) {
-                SettingsPillButton("复制", action: onCopy)
+                PPActionButton("复制", variant: .secondary, size: .compact, action: onCopy)
 
-                SettingsPillButton(
-                    isAlreadyInTarget ? "再次克隆" : "克隆到「\(targetName)」",
+                PPActionButton(
+                    cloneTitle,
                     systemImage: "plus.square.on.square",
-                    tone: .primary,
+                    variant: .primary,
+                    size: .compact,
                     action: onCloneToTarget
                 )
+                .frame(maxWidth: 164)
                 .disabled(targetName.isEmpty)
+                .help(cloneHelp)
             }
+            .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+        .hoverHighlight(cornerRadius: 0)
     }
 }

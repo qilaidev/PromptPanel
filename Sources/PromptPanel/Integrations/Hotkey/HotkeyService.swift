@@ -169,15 +169,85 @@ final class HotkeyService {
     /// and picks up later edits from the recorder on its own.
     func start() {
         migrateLegacyShortcutIfNeeded()
+        sanitizeDangerousStoredShortcuts()
         for action in GlobalHotkeyAction.allCases {
             guard handlers[action] != nil else { continue }
             for name in action.shortcutNames {
                 registrar.onKeyUp(for: name) { [weak self] in
+                    if let current = KeyboardShortcuts.getShortcut(for: name),
+                       Self.isDangerousOrReservedShortcut(current) {
+                        KeyboardShortcuts.setShortcut(nil, for: name)
+                        PPLogger.hotkey.warning("Blocked and cleared dangerous global shortcut on \(name.rawValue, privacy: .public)")
+                        NotificationCenter.default.post(name: .globalHotkeysDidChange, object: nil)
+                        return
+                    }
                     self?.handle(action)
                 }
             }
         }
         PPLogger.hotkey.info("Hotkey service started")
+    }
+
+    /// Returns a human-readable reason when a shortcut collides with essential terminal signals
+    /// or macOS system editing commands and must not be bound as a global hotkey.
+    static func dangerousShortcutReason(for shortcut: KeyboardShortcuts.Shortcut) -> String? {
+        guard let key = shortcut.key else { return nil }
+        let modifiers = shortcut.modifiers.intersection([.command, .option, .control, .shift])
+
+        if modifiers == [.control] {
+            switch key {
+            case .c:
+                return "Ctrl+C 为终端中断信号 (SIGINT) 与系统控制键，不可设为全局快捷键"
+            case .d:
+                return "Ctrl+D 为终端 EOF 信号，不可设为全局快捷键"
+            case .z:
+                return "Ctrl+Z 为终端挂起信号 (SIGTSTP)，不可设为全局快捷键"
+            case .backslash:
+                return "Ctrl+\\ 为终端退出信号 (SIGQUIT)，不可设为全局快捷键"
+            default:
+                break
+            }
+        }
+
+        if modifiers == [.command] {
+            switch key {
+            case .c, .v, .x, .a, .z, .q, .w, .h, .m, .comma:
+                return "该快捷键为系统保留编辑/窗口快捷键，不可设为全局快捷键"
+            default:
+                break
+            }
+        }
+
+        if modifiers == [.command, .shift], key == .z {
+            return "Cmd+Shift+Z 为系统保留重做快捷键，不可设为全局快捷键"
+        }
+
+        if modifiers == [.command, .option], key == .h {
+            return "Cmd+Option+H 为系统保留窗口快捷键，不可设为全局快捷键"
+        }
+
+        return nil
+    }
+
+    static func isDangerousOrReservedShortcut(_ shortcut: KeyboardShortcuts.Shortcut) -> Bool {
+        dangerousShortcutReason(for: shortcut) != nil
+    }
+
+    /// Purge any previously persisted dangerous/reserved shortcuts (e.g. Ctrl+C) before Carbon grabs them.
+    func sanitizeDangerousStoredShortcuts() {
+        var didClear = false
+        for name in GlobalHotkeyAction.allShortcutNames {
+            guard let shortcut = KeyboardShortcuts.getShortcut(for: name),
+                  Self.isDangerousOrReservedShortcut(shortcut) else {
+                continue
+            }
+            KeyboardShortcuts.setShortcut(nil, for: name)
+            didClear = true
+            PPLogger.hotkey.warning("Cleared dangerous stored shortcut for \(name.rawValue, privacy: .public)")
+        }
+        if didClear {
+            NotificationCenter.default.post(name: .globalHotkeysDidChange, object: nil)
+        }
     }
 
     /// Stop listening.

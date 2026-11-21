@@ -1882,7 +1882,7 @@
       </div>
       <div class="health-inline">
         <span class="status-dot"></span>
-        <span id="healthInlineText">SQLite WAL · KeyStore AES-256 · v1.7.6 (17)</span>
+        <span id="healthInlineText">SQLite WAL · KeyStore AES-256 · v1.8.0 (18)</span>
       </div>
     </div>
 
@@ -1920,7 +1920,7 @@
       <div class="settings-card">
         <div class="settings-card-header">
           <span class="settings-card-title">版本与一键更新</span>
-          <span id="updateVersionBadge" class="kbd-badge">v1.7.6 (17)</span>
+          <span id="updateVersionBadge" class="kbd-badge">v1.8.0 (18)</span>
         </div>
         <div class="settings-row" style="padding:4px 0 10px;">
           <div>
@@ -1941,6 +1941,13 @@
           <span class="settings-card-title">云端同步 (CloudSyncService v2)</span>
           <span id="syncBadgeText" class="kbd-badge">未检测</span>
         </div>
+        <div id="syncModeBanner" style="margin-bottom:10px;padding:7px 10px;border-radius:7px;background:var(--input-fill);border:0.5px solid var(--border);font-size:11px;color:var(--text-sub);line-height:1.45;">
+          <div style="display:flex;justify-content:space-between;gap:8px;">
+            <span id="syncModeSummary">当前模式：手动同步</span>
+            <span id="syncRevisionSummary" style="font-family:var(--font-mono);color:var(--text-muted);">版本 --</span>
+          </div>
+          <div id="syncTelemetrySubline" style="margin-top:3px;font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted);">点击「立即双向同步」将先拉取云端新变更与本地合并，再仅在本地有修改时推送上传。</div>
+        </div>
         <div class="btn-row" style="margin-bottom:10px;">
           <button class="btn-secondary" style="flex:1;" onclick="pasteSyncConfigFromClipboard()">粘贴剪贴板配置</button>
           <button class="btn-secondary" style="flex:1;" onclick="triggerQrScanInput()">扫码读取配对图</button>
@@ -1957,16 +1964,19 @@
         <div class="settings-row" style="padding:6px 0 10px;">
           <div>
             <div class="settings-row-label">修改后自动同步</div>
-            <div class="settings-row-desc">保存词条、前台唤醒及后台定时自动双向同步</div>
+            <div class="settings-row-desc">开启：编辑、切回前台及每 45 秒自动先拉取合并再推送；关闭：仅手动触发</div>
           </div>
           <button id="autoSyncSwitch" type="button" role="switch" aria-checked="false" class="switch-toggle" onclick="toggleAutoSyncSwitch()" aria-label="修改后自动同步"></button>
         </div>
-        <div class="btn-row">
-          <button class="btn-secondary" onclick="testCloudConnection()">测试连接</button>
-          <button class="btn-secondary" onclick="saveSyncSettings()">保存配置</button>
-          <button class="btn-primary" style="flex:1;" onclick="triggerCloudSync()">立即双向同步</button>
+        <div class="btn-row" style="margin-bottom:6px;">
+          <button class="btn-primary" style="flex:1;" onclick="triggerCloudSync(false, 'smart')">立即双向同步</button>
+          <button class="btn-secondary" onclick="triggerCloudSync(false, 'pull_only')">仅拉取云端合并</button>
         </div>
-        <div id="syncStatusText" style="margin-top:10px;font-family:var(--font-mono);font-size:11px;color:var(--text-sub);line-height:1.45;">尚未执行云端同步</div>
+        <div class="btn-row">
+          <button class="btn-secondary" style="flex:1;" onclick="testCloudConnection()">测试连接</button>
+          <button class="btn-secondary" style="flex:1;" onclick="saveSyncSettings()">保存配置</button>
+        </div>
+        <div id="syncStatusText" style="margin-top:10px;font-family:var(--font-mono);font-size:11px;color:var(--text-sub);line-height:1.5;word-break:break-word;">尚未执行云端同步</div>
       </div>
     </div>
 
@@ -2646,11 +2656,53 @@ let lastCreatedEntryId = null;
 let hasPendingStoreFlush = false;
 let lastRenderContextKey = '';
 let lastListScrollTimeMs = 0;
+const SYNC_META_STORAGE_KEY = 'promptpanel_sync_runtime_v1';
 let localMutationSeq = 0;
 let lastSyncedMutationSeq = -1;
 let lastSyncedRevision = null;
 let lastSyncedCredKey = '';
 let pendingAllowMassDelete = false;
+let usageDirty = false;
+let syncAuthPaused = false;
+let lastSyncReportText = '';
+
+function loadSyncRuntimeState() {
+  try {
+    const raw = localStorage.getItem(SYNC_META_STORAGE_KEY);
+    if (!raw) return;
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== 'object') return;
+    if (typeof obj.localMutationSeq === 'number') localMutationSeq = obj.localMutationSeq;
+    if (typeof obj.lastSyncedMutationSeq === 'number') lastSyncedMutationSeq = obj.lastSyncedMutationSeq;
+    if (typeof obj.lastSyncedRevision === 'number') lastSyncedRevision = obj.lastSyncedRevision;
+    if (typeof obj.lastSyncedCredKey === 'string') lastSyncedCredKey = obj.lastSyncedCredKey;
+    if (typeof obj.usageDirty === 'boolean') usageDirty = obj.usageDirty;
+    if (typeof obj.lastSyncReportText === 'string') lastSyncReportText = obj.lastSyncReportText;
+  } catch (e) {}
+}
+
+function saveSyncRuntimeState() {
+  try {
+    localStorage.setItem(SYNC_META_STORAGE_KEY, JSON.stringify({
+      localMutationSeq,
+      lastSyncedMutationSeq,
+      lastSyncedRevision,
+      lastSyncedCredKey,
+      usageDirty,
+      lastSyncReportText
+    }));
+  } catch (e) {}
+}
+
+function resetSyncedCursorForCreds(credKey) {
+  if (credKey !== lastSyncedCredKey) {
+    lastSyncedCredKey = credKey;
+    lastSyncedRevision = null;
+    lastSyncedMutationSeq = -1;
+    syncAuthPaused = false;
+    saveSyncRuntimeState();
+  }
+}
 
 function triggerHaptic(ms = 10) {
   try {
@@ -2690,6 +2742,7 @@ function loadPreferencesAndStore() {
   } catch (e) {}
 
   try {
+    loadSyncRuntimeState();
     let raw = '';
     if (window.AndroidBridge && AndroidBridge.loadStore) {
       raw = AndroidBridge.loadStore();
@@ -2712,10 +2765,15 @@ function loadPreferencesAndStore() {
   persistStore(false, true);
 }
 
-function persistStore(triggerAuto = false, flushImmediate = false) {
+function persistStore(triggerAuto = false, flushImmediate = false, usageOnly = false) {
   store.exportedAt = new Date().toISOString();
   if (triggerAuto) {
-    localMutationSeq++;
+    if (usageOnly) {
+      usageDirty = true;
+    } else {
+      localMutationSeq++;
+    }
+    saveSyncRuntimeState();
   }
   hasPendingStoreFlush = true;
   clearTimeout(window.__storeFlushTimer);
@@ -2725,7 +2783,7 @@ function persistStore(triggerAuto = false, flushImmediate = false) {
     window.__storeFlushTimer = setTimeout(flushPendingStoreSave, 200);
   }
 
-  if (triggerAuto && isAutoSyncEnabled()) {
+  if (triggerAuto && !usageOnly && isAutoSyncEnabled()) {
     clearTimeout(window.__autoSyncTimer);
     window.__autoSyncTimer = setTimeout(() => {
       triggerCloudSync(true);
@@ -3666,7 +3724,7 @@ function copyEntry(entryId) {
   item.lastUsedAt = now;
   lastCopiedEntryId = entryId;
   triggerHaptic(10);
-  persistStore(true);
+  persistStore(true, false, true);
 
   writeSystemClipboard(item.title, item.content);
   showToast('已复制：' + item.title);
@@ -4390,6 +4448,30 @@ function updateTopbarSyncIndicator(state) {
   }
 }
 
+function refreshSyncTelemetryBanner() {
+  const modeEl = document.getElementById('syncModeSummary');
+  const revEl = document.getElementById('syncRevisionSummary');
+  const subEl = document.getElementById('syncTelemetrySubline');
+  const statusEl = document.getElementById('syncStatusText');
+  const autoOn = isAutoSyncEnabled();
+  const hasPending = localMutationSeq > lastSyncedMutationSeq;
+  if (modeEl) {
+    modeEl.textContent = autoOn ? '当前模式：自动双向同步' : '当前模式：手动同步';
+  }
+  if (revEl) {
+    const revPart = lastSyncedRevision !== null ? ('云端 r' + lastSyncedRevision) : '未对齐版本';
+    revEl.textContent = hasPending ? (revPart + ' · 本地有待上传') : revPart;
+  }
+  if (subEl) {
+    subEl.textContent = autoOn
+      ? '后台轮询与编辑后将自动先拉取合并，仅本地有改动时推送。'
+      : '仅手动点击时执行：先拉取云端更新与本地合并，再推送本地变更。';
+  }
+  if (statusEl && lastSyncReportText && statusEl.textContent === '尚未执行云端同步') {
+    statusEl.textContent = lastSyncReportText;
+  }
+}
+
 function hydrateSyncInputsFromStorage() {
   const creds = getSyncCredentials();
   const epEl = document.getElementById('syncEndpoint');
@@ -4399,12 +4481,8 @@ function hydrateSyncInputsFromStorage() {
   syncAutoSyncSwitchUI(isAutoSyncEnabled());
   syncAutoUpdateSwitchUI(isAutoUpdateEnabled());
   refreshAppUpdateCardUI();
-  const newCredKey = ep + '|' + tk;
-  if (newCredKey !== lastSyncedCredKey) {
-    lastSyncedCredKey = newCredKey;
-    lastSyncedRevision = null;
-    lastSyncedMutationSeq = -1;
-  }
+  resetSyncedCursorForCreds(creds.ep + '|' + creds.tk);
+  refreshSyncTelemetryBanner();
   updateTopbarSyncIndicator();
 }
 
@@ -4706,12 +4784,10 @@ function applyParsedSyncConfig(cfg, sourceLabel) {
     onToggleAutoSync(true);
     syncAutoSyncSwitchUI(true);
   }
-  const newCredKey = ep + '|' + tk;
-  if (newCredKey !== lastSyncedCredKey) {
-    lastSyncedCredKey = newCredKey;
-    lastSyncedRevision = null;
-    lastSyncedMutationSeq = -1;
-  }
+  const credsNow = getSyncCredentials();
+  resetSyncedCursorForCreds(credsNow.ep + '|' + credsNow.tk);
+  syncAuthPaused = false;
+  refreshSyncTelemetryBanner();
   updateTopbarSyncIndicator();
 
   if (cfg.endpoint) {
@@ -4803,18 +4879,16 @@ function toggleAutoSyncSwitch() {
   }
   onToggleAutoSync(next);
   syncAutoSyncSwitchUI(next);
-  const newCredKey = ep + '|' + tk;
-  if (newCredKey !== lastSyncedCredKey) {
-    lastSyncedCredKey = newCredKey;
-    lastSyncedRevision = null;
-    lastSyncedMutationSeq = -1;
-  }
+  const credsNow = getSyncCredentials();
+  resetSyncedCursorForCreds(credsNow.ep + '|' + credsNow.tk);
+  syncAuthPaused = false;
+  refreshSyncTelemetryBanner();
   updateTopbarSyncIndicator();
   if (next) {
-    showToast('已开启自动同步，正在执行首次同步…');
-    triggerCloudSync(false);
+    showToast('已开启自动同步，正在执行首次双向同步…');
+    triggerCloudSync(false, 'smart');
   } else {
-    showToast('已关闭自动同步');
+    showToast('已关闭自动同步，已切换为手动同步模式');
   }
 }
 
@@ -4875,12 +4949,9 @@ function saveSyncSettings(silent = false) {
     localStorage.setItem('promptpanel_cloud_endpoint', ep);
     localStorage.setItem('promptpanel_cloud_api_key', tk);
   }
-  const newCredKey = ep + '|' + tk;
-  if (newCredKey !== lastSyncedCredKey) {
-    lastSyncedCredKey = newCredKey;
-    lastSyncedRevision = null;
-    lastSyncedMutationSeq = -1;
-  }
+  resetSyncedCursorForCreds(ep + '|' + tk);
+  syncAuthPaused = false;
+  refreshSyncTelemetryBanner();
   updateTopbarSyncIndicator();
   if (!silent) {
     showToast('同步配置已加密保存');
@@ -5056,10 +5127,11 @@ async function testCloudConnection() {
   }
 }
 
-function mergeRemoteEnvelope(remote) {
-  const stats = { pNew: 0, pUpd: 0, eNew: 0, eUpd: 0, conflicts: 0, protectedCount: 0 };
+function mergeRemoteEnvelope(remote, options = {}) {
+  const stats = { pNew: 0, pUpd: 0, eNew: 0, eUpd: 0, eDel: 0, conflicts: 0, protectedCount: 0, orphansMigrated: 0 };
   if (!remote || typeof remote !== 'object') return stats;
 
+  const allowMassDelete = !!(options.allowMassDelete || remote.allowMassDelete || remote.allow_mass_delete);
   normalizeStore();
   const remoteProjects = (remote.projects || []).filter(p => p && p.id).map(normalizeProject);
   const remoteEntries = (remote.entries || []).filter(e => e && e.id).map(normalizeEntry);
@@ -5075,7 +5147,7 @@ function mergeRemoteEnvelope(remote) {
   for (let i = 0; i < store.entries.length; i++) {
     const e = store.entries[i];
     entryById.set(e.id, e);
-    if (!e.deletedAt) localActiveEntries.push(e);
+    if (!e.deletedAt && !(e.isCompleted || e.is_completed)) localActiveEntries.push(e);
   }
   const versionsByEntryId = new Map();
   const versionIdSet = new Set();
@@ -5100,20 +5172,21 @@ function mergeRemoteEnvelope(remote) {
   const localDefault = (store.projects || []).find(p => p.isDefault && !p.deletedAt) || (store.projects || []).find(p => p.isDefault);
   const isSystemProtected = p => !!(p && (p.id === BUILTIN_INBOX_ID || p.isDefault));
 
-  // Anti-data-loss circuit breaker: detect abnormal mass-tombstone deletes
+  // Anti-data-loss circuit breaker: detect abnormal mass-tombstone deletes (excluding completed todos)
   let remoteDeletingCount = 0;
   for (const re of remoteEntries) {
     const local = entryById.get(re.id);
-    if (local && !local.deletedAt && !!re.deletedAt) {
+    if (local && !local.deletedAt && !(local.isCompleted || local.is_completed) && !!re.deletedAt && !(re.isCompleted || re.is_completed)) {
       const rTime = parseIsoEpochMs(re.updatedAt);
       const lTime = parseIsoEpochMs(local.updatedAt);
       if (rTime > lTime) remoteDeletingCount++;
     }
   }
   const localActiveCount = localActiveEntries.length;
-  const shouldBlockMassDeletions =
+  const shouldBlockMassDeletions = !allowMassDelete && (
     (remoteDeletingCount >= 3 && (remoteDeletingCount / Math.max(1, localActiveCount)) >= 0.25) ||
-    (localActiveCount >= 2 && remoteDeletingCount === localActiveCount);
+    (localActiveCount >= 2 && remoteDeletingCount === localActiveCount)
+  );
 
   for (const rp of remoteProjects) {
     if (rp.groupKindRaw === 'inbox' && rp.id !== BUILTIN_INBOX_ID) {
@@ -5200,7 +5273,7 @@ function mergeRemoteEnvelope(remote) {
         const mergedUsed = (lUsed && rUsed)
           ? (parseIsoEpochMs(lUsed) > parseIsoEpochMs(rUsed) ? lUsed : rUsed)
           : (lUsed || rUsed || null);
-        if (isRemoteDeletion && shouldBlockMassDeletions) {
+        if (isRemoteDeletion && shouldBlockMassDeletions && !(local.isCompleted || local.is_completed || re.isCompleted || re.is_completed)) {
           const healedTime = new Date(Math.max(Date.now(), remoteTime + 2000)).toISOString();
           local.useCount = re.useCount;
           local.lastUsedAt = mergedUsed;
@@ -5211,7 +5284,11 @@ function mergeRemoteEnvelope(remote) {
         }
         re.lastUsedAt = mergedUsed;
         Object.assign(local, re);
-        stats.eUpd++;
+        if (isRemoteDeletion) {
+          stats.eDel++;
+        } else {
+          stats.eUpd++;
+        }
       } else {
         if (remoteTime < localTime && hasTextDiff) {
           const vers = versionsByEntryId.get(local.id) || [];
@@ -5252,15 +5329,22 @@ function mergeRemoteEnvelope(remote) {
     }
   }
 
-  // Revive any soft-deleted project that still contains active entries (O(N) via projectById)
+  // Reconcile active entries whose parent project is soft-deleted:
+  // Only system-protected groups revive; non-builtin soft-deleted groups stay deleted and orphan entries migrate to default.
   for (const e of (store.entries || [])) {
     if (e.deletedAt) continue;
     const p = e.projectId ? projectById.get(e.projectId) : null;
     if (p && p.deletedAt) {
-      const revivedTime = new Date(Math.max(Date.now(), parseIsoEpochMs(p.updatedAt) + 2000)).toISOString();
-      p.deletedAt = null;
-      p.updatedAt = revivedTime;
-      stats.protectedCount++;
+      if (isSystemProtected(p)) {
+        const revivedTime = new Date(Math.max(Date.now(), parseIsoEpochMs(p.updatedAt) + 2000)).toISOString();
+        p.deletedAt = null;
+        p.updatedAt = revivedTime;
+        stats.protectedCount++;
+      } else if (fallbackProjectId && fallbackProjectId !== e.projectId) {
+        e.projectId = fallbackProjectId;
+        e.updatedAt = new Date(Math.max(Date.now(), parseIsoEpochMs(e.updatedAt) + 1)).toISOString();
+        stats.orphansMigrated++;
+      }
     }
   }
 
@@ -5284,8 +5368,9 @@ function mergeRemoteEnvelope(remote) {
 let isSyncInFlight = false;
 let pendingFollowUpSync = false;
 let pendingFollowUpSilent = true;
+let pendingFollowUpMode = 'smart';
 
-async function triggerCloudSync(silent = false) {
+async function triggerCloudSync(silent = false, actionMode = 'smart') {
   if (mainSegment === 'settings') saveSyncSettings(true);
   const { ep, tk } = getSyncCredentials();
   if (!ep) {
@@ -5295,21 +5380,28 @@ async function triggerCloudSync(silent = false) {
     }
     return;
   }
-  if (!silent && tk.length < 12) {
-    switchMainSegment('settings');
-    showBanner('请填写不少于 12 位的访问令牌 (Bearer Token)');
+  if (tk.length < 12) {
+    document.getElementById('syncBadgeText').textContent = '待填令牌';
+    if (!silent) {
+      switchMainSegment('settings');
+      showBanner('请填写不少于 12 位的访问令牌 (Bearer Token)');
+    }
     return;
   }
-  const credKey = ep + '|' + tk;
-  if (credKey !== lastSyncedCredKey) {
-    lastSyncedCredKey = credKey;
-    lastSyncedRevision = null;
-    lastSyncedMutationSeq = -1;
+  if (silent && syncAuthPaused) {
+    return;
   }
+  if (!silent) {
+    syncAuthPaused = false;
+  }
+
+  resetSyncedCursorForCreds(ep + '|' + tk);
+
   if (isSyncInFlight) {
     pendingFollowUpSync = true;
     if (!silent) {
       pendingFollowUpSilent = false;
+      pendingFollowUpMode = actionMode;
       showToast('同步正在进行中，将在当前批次完成后立即刷新…');
     }
     return;
@@ -5325,20 +5417,27 @@ async function triggerCloudSync(silent = false) {
   pendingAllowMassDelete = false;
 
   const syncUrl = resolveSyncUrl(ep);
-  const isAutoPoll = silent && !allowMassDelete;
-  const canFastPoll = isAutoPoll && lastSyncedRevision !== null && localMutationSeq === lastSyncedMutationSeq;
+  const isPullOnly = actionMode === 'pull_only';
+  const seqBeforeSync = localMutationSeq;
+  const hasPendingLocalMutations = (seqBeforeSync !== lastSyncedMutationSeq);
+  const isAutoPoll = silent && !allowMassDelete && !isPullOnly;
+  const canFastPoll = isAutoPoll && lastSyncedRevision !== null && !hasPendingLocalMutations;
   const getUrl = canFastPoll
     ? syncUrl + (syncUrl.includes('?') ? '&' : '?') + 'since_revision=' + encodeURIComponent(lastSyncedRevision)
     : syncUrl;
 
-  if (!silent) showToast('正在同步…');
+  document.getElementById('syncBadgeText').textContent = isPullOnly ? '拉取中…' : '同步中…';
+  if (!silent) showToast(isPullOnly ? '正在仅拉取云端更新…' : '正在双向同步…');
 
   try {
     const getRes = await nativeHttpAsync('GET', getUrl, tk, '');
     const getCode = getRes.code;
     const getBody = getRes.body;
     if (getCode === 401 || getCode === 403) {
+      syncAuthPaused = true;
       const authMsg = formatSyncHttpError(getCode, getBody);
+      lastSyncReportText = authMsg;
+      saveSyncRuntimeState();
       document.getElementById('syncStatusText').textContent = authMsg;
       document.getElementById('syncBadgeText').textContent = '鉴权失败';
       updateTopbarSyncIndicator('err');
@@ -5347,7 +5446,9 @@ async function triggerCloudSync(silent = false) {
     }
     if ((getCode < 200 || getCode >= 300) && getCode !== 404) {
       const getErrMsg = formatSyncHttpError(getCode, getBody);
-      document.getElementById('syncStatusText').textContent = '同步失败：' + getErrMsg;
+      lastSyncReportText = '同步失败：' + getErrMsg;
+      saveSyncRuntimeState();
+      document.getElementById('syncStatusText').textContent = lastSyncReportText;
       document.getElementById('syncBadgeText').textContent = getCode > 0 ? ('HTTP ' + getCode) : '连接失败';
       updateTopbarSyncIndicator('err');
       if (!silent) showToast(getErrMsg);
@@ -5359,61 +5460,125 @@ async function triggerCloudSync(silent = false) {
       getEnvelope = JSON.parse(getBody);
       if (canFastPoll && getEnvelope && getEnvelope.unchanged === true) {
         if (getEnvelope.revision != null) lastSyncedRevision = getEnvelope.revision;
-        document.getElementById('syncStatusText').textContent = `上次同步：${new Date().toLocaleTimeString()}（无变更）`;
-        document.getElementById('syncBadgeText').textContent = '已同步';
+        const modeText = isAutoSyncEnabled() ? '自动双向' : '手动模式';
+        const revLabel = lastSyncedRevision != null ? ('r' + lastSyncedRevision) : '--';
+        lastSyncReportText = `${new Date().toLocaleTimeString()} · ${modeText} · 已对齐 (${revLabel}) · 云端无变更，无需上传`;
+        saveSyncRuntimeState();
+        document.getElementById('syncStatusText').textContent = lastSyncReportText;
+        document.getElementById('syncBadgeText').textContent = `已同步 ${revLabel}`;
+        refreshSyncTelemetryBanner();
         updateTopbarSyncIndicator('ok');
         return;
       }
     }
 
-    let s1 = { pNew: 0, pUpd: 0, eNew: 0, eUpd: 0, conflicts: 0, protectedCount: 0 };
+    let s1 = { pNew: 0, pUpd: 0, eNew: 0, eUpd: 0, eDel: 0, conflicts: 0, protectedCount: 0, orphansMigrated: 0 };
     if (getEnvelope) {
-      s1 = mergeRemoteEnvelope(getEnvelope);
+      s1 = mergeRemoteEnvelope(getEnvelope, { allowMassDelete });
       if (getEnvelope.revision != null) lastSyncedRevision = getEnvelope.revision;
     }
     persistStore(false, true);
 
-    const seqBeforePost = localMutationSeq;
-    const postPayload = Object.assign({}, store);
-    if (allowMassDelete) {
-      postPayload.allowMassDelete = true;
-    }
-    const postRes = await nativeHttpAsync('POST', syncUrl, tk, JSON.stringify(postPayload));
-    const postCode = postRes.code;
-    const postBody = postRes.body;
-    if (postCode >= 200 && postCode < 300) {
-      if (postBody) {
-        const postEnvelope = JSON.parse(postBody);
-        if (postEnvelope && postEnvelope.revision != null) {
-          lastSyncedRevision = postEnvelope.revision;
+    const needsHealOrMigrate = (s1.protectedCount > 0 || s1.orphansMigrated > 0);
+    const shouldPush = !isPullOnly && (
+      hasPendingLocalMutations ||
+      (localMutationSeq !== seqBeforeSync) ||
+      needsHealOrMigrate ||
+      allowMassDelete ||
+      (!silent && usageDirty) ||
+      lastSyncedRevision === null ||
+      getCode === 404
+    );
+
+    let pushedFlag = false;
+    if (shouldPush) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const seqBeforePost = localMutationSeq;
+        const postPayload = Object.assign({}, store);
+        if (allowMassDelete) {
+          postPayload.allowMassDelete = true;
         }
-        const s2 = mergeRemoteEnvelope(postEnvelope);
-        s1.pNew += s2.pNew;
-        s1.pUpd += s2.pUpd;
-        s1.eNew += s2.eNew;
-        s1.eUpd += s2.eUpd;
-        s1.conflicts += s2.conflicts;
-        s1.protectedCount += (s2.protectedCount || 0);
-        persistStore(false, true);
+        if (lastSyncedRevision !== null) {
+          postPayload.expectedRevision = lastSyncedRevision;
+          postPayload.strictConflict = true;
+        }
+        const postRes = await nativeHttpAsync('POST', syncUrl, tk, JSON.stringify(postPayload));
+        const postCode = postRes.code;
+        const postBody = postRes.body;
+        if (postCode === 409 && postBody && attempt === 0) {
+          const conflictEnv = JSON.parse(postBody);
+          if (conflictEnv && conflictEnv.revision != null) {
+            lastSyncedRevision = conflictEnv.revision;
+          }
+          const sConflict = mergeRemoteEnvelope(conflictEnv, { allowMassDelete });
+          s1.pNew += sConflict.pNew;
+          s1.pUpd += sConflict.pUpd;
+          s1.eNew += sConflict.eNew;
+          s1.eUpd += sConflict.eUpd;
+          s1.eDel += sConflict.eDel;
+          s1.conflicts += sConflict.conflicts;
+          s1.protectedCount += (sConflict.protectedCount || 0);
+          s1.orphansMigrated += (sConflict.orphansMigrated || 0);
+          persistStore(false, true);
+          continue;
+        }
+        if (postCode >= 200 && postCode < 300) {
+          pushedFlag = true;
+          if (postBody) {
+            const postEnvelope = JSON.parse(postBody);
+            if (postEnvelope && postEnvelope.revision != null) {
+              lastSyncedRevision = postEnvelope.revision;
+            }
+            const s2 = mergeRemoteEnvelope(postEnvelope, { allowMassDelete });
+            s1.pNew += s2.pNew;
+            s1.pUpd += s2.pUpd;
+            s1.eNew += s2.eNew;
+            s1.eUpd += s2.eUpd;
+            s1.eDel += s2.eDel;
+            s1.conflicts += s2.conflicts;
+            s1.protectedCount += (s2.protectedCount || 0);
+            s1.orphansMigrated += (s2.orphansMigrated || 0);
+            persistStore(false, true);
+          }
+          if (localMutationSeq === seqBeforePost) {
+            lastSyncedMutationSeq = seqBeforePost;
+          }
+          usageDirty = false;
+          break;
+        } else {
+          if (postCode === 401 || postCode === 403) {
+            syncAuthPaused = true;
+          }
+          const postErrMsg = formatSyncHttpError(postCode, postBody);
+          lastSyncReportText = '同步失败：' + postErrMsg;
+          saveSyncRuntimeState();
+          document.getElementById('syncStatusText').textContent = lastSyncReportText;
+          document.getElementById('syncBadgeText').textContent = postCode > 0 ? ('HTTP ' + postCode) : '同步失败';
+          updateTopbarSyncIndicator('err');
+          if (!silent) showToast(postErrMsg);
+          return;
+        }
       }
-      if (localMutationSeq === seqBeforePost) {
-        lastSyncedMutationSeq = seqBeforePost;
-      }
-      const protSuffix = s1.protectedCount > 0 ? `，防丢熔断保护 ${s1.protectedCount}` : '';
-      const summary = `上次同步：${new Date().toLocaleTimeString()}（项目 +${s1.pNew}/更${s1.pUpd}，词条 +${s1.eNew}/更${s1.eUpd}，冲突版本保护 ${s1.conflicts}${protSuffix}）`;
-      document.getElementById('syncStatusText').textContent = summary;
-      document.getElementById('syncBadgeText').textContent = '已同步';
-      updateTopbarSyncIndicator('ok');
-      if (!silent) showBanner(summary);
-      render();
-      if (mainSegment === 'settings') renderSettingsView();
-    } else {
-      const postErrMsg = formatSyncHttpError(postCode, postBody);
-      document.getElementById('syncStatusText').textContent = '同步失败：' + postErrMsg;
-      document.getElementById('syncBadgeText').textContent = postCode > 0 ? ('HTTP ' + postCode) : '同步失败';
-      updateTopbarSyncIndicator('err');
-      if (!silent) showToast(postErrMsg);
     }
+
+    const modeText = isAutoSyncEnabled() ? '自动双向' : '手动模式';
+    const revLabel = lastSyncedRevision != null ? ('r' + lastSyncedRevision) : '--';
+    const dirLabel = isPullOnly
+      ? '仅拉取云端'
+      : (pushedFlag ? '双向合并（已推送）' : '仅拉取对齐（本地无变更）');
+    const delSuffix = s1.eDel > 0 ? `/删${s1.eDel}` : '';
+    const protSuffix = s1.protectedCount > 0 ? `，防丢保护 ${s1.protectedCount}` : '';
+    const orphanSuffix = s1.orphansMigrated > 0 ? `，孤儿迁移 ${s1.orphansMigrated}` : '';
+    const summary = `${new Date().toLocaleTimeString()} · ${modeText} · ${dirLabel} (${revLabel})\n拉取：项目 +${s1.pNew}/更${s1.pUpd} · 词条 +${s1.eNew}/更${s1.eUpd}${delSuffix} · 冲突留存 ${s1.conflicts}${protSuffix}${orphanSuffix}`;
+    lastSyncReportText = summary;
+    saveSyncRuntimeState();
+    document.getElementById('syncStatusText').textContent = summary;
+    document.getElementById('syncBadgeText').textContent = `已同步 ${revLabel}`;
+    refreshSyncTelemetryBanner();
+    updateTopbarSyncIndicator('ok');
+    if (!silent) showBanner(summary.replace('\n', ' · '));
+    render();
+    if (mainSegment === 'settings') renderSettingsView();
   } catch (e) {
     updateTopbarSyncIndicator('err');
     if (!silent) showToast('同步数据解析异常：' + e.message);
@@ -5421,9 +5586,11 @@ async function triggerCloudSync(silent = false) {
     isSyncInFlight = false;
     if (pendingFollowUpSync) {
       const nextSilent = pendingFollowUpSilent;
+      const nextMode = pendingFollowUpMode;
       pendingFollowUpSync = false;
       pendingFollowUpSilent = true;
-      setTimeout(() => { triggerCloudSync(nextSilent); }, 150);
+      pendingFollowUpMode = 'smart';
+      setTimeout(() => { triggerCloudSync(nextSilent, nextMode); }, 150);
     }
   }
 }

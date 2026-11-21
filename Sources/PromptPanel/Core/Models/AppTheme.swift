@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// User-facing appearance preference.
@@ -34,6 +35,15 @@ enum AppTheme: String, CaseIterable, Identifiable, Codable {
         case .system: return nil
         case .light:  return .light
         case .dark:   return .dark
+        }
+    }
+
+    /// Maps to AppKit `NSAppearance` for NSWindow/NSPanel chrome; `nil` follows system.
+    var nsAppearance: NSAppearance? {
+        switch self {
+        case .system: return nil
+        case .light:  return NSAppearance(named: .aqua)
+        case .dark:   return NSAppearance(named: .darkAqua)
         }
     }
 

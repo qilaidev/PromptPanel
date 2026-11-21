@@ -81,14 +81,26 @@ final class ProjectRepository: @unchecked Sendable {
         }
     }
 
+    /// Fetch active (non-deleted, non-archived) groups usable as move/migration/edit targets,
+    /// optionally excluding a source project ID.
+    func fetchActiveTargetProjects(excluding excludedProjectId: String? = nil) throws -> [Project] {
+        try fetchAll(includeArchived: false).filter { $0.id != excludedProjectId }
+    }
+
     // MARK: - Write
 
     /// Create a new project or category.
     func create(_ project: Project) throws {
         try dbQueue.write { db in
             var projectToSave = project
+            projectToSave.name = try Self.ensureUniqueActiveName(
+                project.name,
+                excludingId: project.id,
+                in: db
+            )
             projectToSave.deletedAt = nil
             try projectToSave.save(db)
+            try EntryRepository.incrementLocalMutationSeq(in: db, now: projectToSave.updatedAt)
         }
         PPLogger.project.info("Project created: \(project.id) kind=\(project.groupKind.rawValue)")
     }
@@ -96,9 +108,11 @@ final class ProjectRepository: @unchecked Sendable {
     /// Update an existing project.
     func update(_ project: Project) throws {
         var updated = project
-        updated.updatedAt = Date()
+        let now = Date()
+        updated.updatedAt = now
         try dbQueue.write { db in
             try updated.update(db)
+            try EntryRepository.incrementLocalMutationSeq(in: db, now: now)
         }
         PPLogger.project.info("Project updated: \(project.id)")
     }
@@ -109,12 +123,18 @@ final class ProjectRepository: @unchecked Sendable {
             guard var project = try Project.fetchOne(db, key: id), project.deletedAt == nil else {
                 throw RepositoryError.notFound("Project \(id)")
             }
-            project.name = newName
-            if let groupKind, !project.isSystemProtected {
+            guard !project.isSystemProtected else {
+                throw RepositoryError.cannotRenameSystemProject
+            }
+            let validatedName = try Self.ensureUniqueActiveName(newName, excludingId: id, in: db)
+            let now = Date()
+            project.name = validatedName
+            if let groupKind {
                 project.groupKind = groupKind
             }
-            project.updatedAt = Date()
+            project.updatedAt = now
             try project.update(db)
+            try EntryRepository.incrementLocalMutationSeq(in: db, now: now)
         }
         PPLogger.project.info("Project renamed: \(id)")
     }
@@ -128,9 +148,11 @@ final class ProjectRepository: @unchecked Sendable {
             guard !project.isSystemProtected else {
                 throw RepositoryError.cannotArchiveSystemProject
             }
+            let now = Date()
             project.isArchived = isArchived
-            project.updatedAt = Date()
+            project.updatedAt = now
             try project.update(db)
+            try EntryRepository.incrementLocalMutationSeq(in: db, now: now)
         }
         PPLogger.project.info("Project archive state updated: \(id) archived=\(isArchived)")
     }
@@ -144,12 +166,14 @@ final class ProjectRepository: @unchecked Sendable {
             guard !project.isSystemProtected else {
                 throw RepositoryError.cannotModifySystemProjectKind
             }
+            let now = Date()
             project.groupKind = groupKind
             if groupKind == .category {
                 project.isArchived = false
             }
-            project.updatedAt = Date()
+            project.updatedAt = now
             try project.update(db)
+            try EntryRepository.incrementLocalMutationSeq(in: db, now: now)
         }
         PPLogger.project.info("Project group kind updated: \(id) kind=\(groupKind.rawValue)")
     }
@@ -173,6 +197,7 @@ final class ProjectRepository: @unchecked Sendable {
             project.deletedAt = now
             project.updatedAt = now
             try project.update(db)
+            try EntryRepository.incrementLocalMutationSeq(in: db, now: now)
         }
         PPLogger.project.info("Project soft-deleted: \(id)")
     }
@@ -192,6 +217,9 @@ final class ProjectRepository: @unchecked Sendable {
             guard let target = try Project.fetchOne(db, key: toId), target.deletedAt == nil else {
                 throw RepositoryError.notFound("Target project \(toId)")
             }
+            guard !target.isArchived else {
+                throw RepositoryError.cannotMigrateToArchivedProject
+            }
 
             // Migrate active entries
             let now = Date()
@@ -204,8 +232,31 @@ final class ProjectRepository: @unchecked Sendable {
             source.deletedAt = now
             source.updatedAt = now
             try source.update(db)
+            try EntryRepository.incrementLocalMutationSeq(in: db, now: now)
         }
         PPLogger.project.info("Migrated entries from \(fromId) to \(toId) and soft-deleted source project")
+    }
+
+    private static func ensureUniqueActiveName(
+        _ rawName: String,
+        excludingId: String?,
+        in db: Database
+    ) throws -> String {
+        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw RepositoryError.emptyProjectName
+        }
+        let activeProjects = try Project
+            .filter(Project.Columns.deletedAt == nil)
+            .fetchAll(db)
+        let hasConflict = activeProjects.contains { project in
+            project.id != excludingId
+                && project.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(trimmed) == .orderedSame
+        }
+        if hasConflict {
+            throw RepositoryError.duplicateProjectName(trimmed)
+        }
+        return trimmed
     }
 }
 
@@ -213,9 +264,13 @@ final class ProjectRepository: @unchecked Sendable {
 
 enum RepositoryError: LocalizedError {
     case notFound(String)
+    case emptyProjectName
+    case duplicateProjectName(String)
+    case cannotRenameSystemProject
     case cannotDeleteDefault
     case cannotArchiveSystemProject
     case cannotModifySystemProjectKind
+    case cannotMigrateToArchivedProject
     case projectNotEmpty(count: Int)
     case invalidMigrationTarget
 
@@ -223,12 +278,20 @@ enum RepositoryError: LocalizedError {
         switch self {
         case .notFound(let entity):
             return "\(entity) not found"
+        case .emptyProjectName:
+            return "Group name cannot be empty"
+        case .duplicateProjectName(let name):
+            return "A group named \"\(name)\" already exists"
+        case .cannotRenameSystemProject:
+            return "System-protected groups cannot be renamed"
         case .cannotDeleteDefault:
             return "Cannot delete a system-protected group"
         case .cannotArchiveSystemProject:
             return "System-protected groups cannot be archived"
         case .cannotModifySystemProjectKind:
             return "System-protected group kinds cannot be changed"
+        case .cannotMigrateToArchivedProject:
+            return "Cannot migrate entries into an archived project"
         case .projectNotEmpty(let count):
             return "Project still has \(count) entries. Migrate or delete them first."
         case .invalidMigrationTarget:

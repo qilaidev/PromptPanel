@@ -181,6 +181,7 @@ final class MainWindowViewModel: ObservableObject {
     private(set) var cachedActiveProjects: [Project] = []
     private(set) var cachedArchivedProjects: [Project] = []
     private(set) var nonArchivedProjects: [Project] = []
+    private(set) var cachedActiveTargetProjects: [Project] = []
     @Published private(set) var entries: [Entry] = []
     @Published private(set) var displayedEntries: [Entry] = []
     @Published private(set) var recentExecutionLogs: [ExecutionLog] = []
@@ -192,26 +193,38 @@ final class MainWindowViewModel: ObservableObject {
     @Published private(set) var updaterActionTitle: String = "检查更新"
     @Published private(set) var hasPendingAppUpdate: Bool = false
     @Published private(set) var currentProjectId: String = ""
+    private var isRevertingSelectedTab = false
     @Published var selectedTab: Tab = .library {
         didSet {
-            if selectedTab != oldValue {
-                commitPendingInlineChangesIfNeeded()
+            guard !isRevertingSelectedTab, selectedTab != oldValue else { return }
+            if oldValue == .library, !commitPendingInlineChangesIfNeeded() {
+                isRevertingSelectedTab = true
+                selectedTab = oldValue
+                isRevertingSelectedTab = false
             }
         }
     }
     @Published var selectedSettingsArea: SettingsArea = .preferences
+    private var isRevertingSelectedProjectId = false
     @Published var selectedProjectId: String = MainWindowViewModel.allProjectsSelection {
         didSet {
+            guard !isRevertingSelectedProjectId else { return }
             if selectedProjectId != oldValue {
-                commitPendingInlineChangesIfNeeded()
+                if !commitPendingInlineChangesIfNeeded() {
+                    isRevertingSelectedProjectId = true
+                    selectedProjectId = oldValue
+                    isRevertingSelectedProjectId = false
+                    return
+                }
                 quickCapturePreferInbox = false
             }
-            scheduleEntriesRefresh(delayMs: 0)
+            scheduleEntriesRefresh(delayMs: 0, pruneStaleFilters: selectedProjectId != oldValue)
         }
     }
     @Published var entrySearchText: String = "" {
         didSet {
-            scheduleEntriesRefresh(delayMs: Constants.mainWindowSearchDebounceMs)
+            guard oldValue != entrySearchText else { return }
+            scheduleEntriesRefresh(delayMs: Constants.mainWindowSearchDebounceMs, pruneStaleFilters: true)
         }
     }
     @Published var quickCaptureText: String = ""
@@ -315,7 +328,9 @@ final class MainWindowViewModel: ObservableObject {
     private var isSyncingInlineDraftProgrammatically = false
     private var inlineSessionVersionedEntryId: String?
     private var lastInlineVersionSnapshotAtByEntryId: [String: Date] = [:]
+    static let maxInlineVersionSnapshotCacheCount = 200
     private var suppressSelfEntriesReloadCount: Int = 0
+    @Published var isContextDropdownOpen: Bool = false
     @Published var referenceTargetProjectId: String = ""
     @Published var referenceSourceProjectId: String = MainWindowViewModel.allProjectsSelection
     @Published var referenceSearchText: String = ""
@@ -383,12 +398,18 @@ final class MainWindowViewModel: ObservableObject {
     @Published var cloudSyncEndpoint: String = "" {
         didSet {
             guard !isHydratingCloudSyncState, oldValue != cloudSyncEndpoint else { return }
+            isSyncAuthPaused = false
+            lastSyncErrorMessage = nil
+            recomputeSyncBadgeState()
             scheduleCloudSyncSettingsAutoPersist()
         }
     }
     @Published var cloudSyncApiKey: String = "" {
         didSet {
             guard !isHydratingCloudSyncState, oldValue != cloudSyncApiKey else { return }
+            isSyncAuthPaused = false
+            lastSyncErrorMessage = nil
+            recomputeSyncBadgeState()
             scheduleCloudSyncSettingsAutoPersist()
         }
     }
@@ -396,6 +417,14 @@ final class MainWindowViewModel: ObservableObject {
     @Published private(set) var cloudSyncLastStatus: String = "尚未执行云端同步"
     @Published private(set) var cloudSyncConnectionStatus: String = "未检测"
     @Published private(set) var cloudSyncConnectionHealthy: Bool? = nil
+    @Published private(set) var syncBadgeState: SyncBadgeState = .unconfigured
+    @Published private(set) var lastSyncReport: CloudSyncReport? = nil
+    @Published private(set) var hasPendingLocalChanges: Bool = false
+    @Published private(set) var pendingLocalDelta: Int = 0
+    @Published private(set) var cloudRemoteRevision: Int? = nil
+    @Published private(set) var recentSoftDeletedEntries: [SoftDeletedEntryItem] = []
+    @Published private(set) var isSyncAuthPaused: Bool = false
+    private var lastSyncErrorMessage: String? = nil
     private var pendingAutoCloudSyncWorkItem: DispatchWorkItem?
     private var pendingCloudSyncSettingsPersistWorkItem: DispatchWorkItem?
     private var autoCloudSyncPollTimer: DispatchSourceTimer?
@@ -404,7 +433,13 @@ final class MainWindowViewModel: ObservableObject {
     private var lastOpportunisticCloudSyncAt: Date = .distantPast
     private var isHydratingCloudSyncState = false
     private var isApplyingCloudSyncChanges = false
-    private var isCloudSyncInFlight = false
+    private var isCloudSyncInFlight = false {
+        didSet {
+            if oldValue != isCloudSyncInFlight {
+                recomputeSyncBadgeState()
+            }
+        }
+    }
     private let appState: AppState
     private let projectRepository: ProjectRepository
     private let entryRepository: EntryRepository
@@ -433,6 +468,8 @@ final class MainWindowViewModel: ObservableObject {
     private let maintenanceQueue = DispatchQueue(label: "PromptPanel.main-window.maintenance", qos: .userInitiated)
     private let statusQueue = DispatchQueue(label: "PromptPanel.main-window.status", qos: .utility)
     private var pendingEntriesRefreshWorkItem: DispatchWorkItem?
+    private var pendingReferenceSearchWorkItem: DispatchWorkItem?
+    private var pendingVersionRefreshWorkItem: DispatchWorkItem?
     private var entriesRefreshGeneration: Int = 0
     private var referenceRefreshGeneration: Int = 0
     private var isBatchingEntryFilterUpdate = false
@@ -504,6 +541,8 @@ final class MainWindowViewModel: ObservableObject {
 
     deinit {
         pendingEntriesRefreshWorkItem?.cancel()
+        pendingReferenceSearchWorkItem?.cancel()
+        pendingVersionRefreshWorkItem?.cancel()
         pendingInlineAutoSaveWorkItem?.cancel()
         pendingAutoCloudSyncWorkItem?.cancel()
         pendingCloudSyncSettingsPersistWorkItem?.cancel()
@@ -589,7 +628,8 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     func targetProjects(excluding projectId: String) -> [Project] {
-        nonArchivedProjects.filter { $0.id != projectId }
+        let base = cachedActiveTargetProjects.isEmpty ? nonArchivedProjects : cachedActiveTargetProjects
+        return base.filter { $0.id != projectId }
     }
 
     /// Ordered non-archived projects for the top-left context switcher & scroll cycling.
@@ -931,8 +971,11 @@ final class MainWindowViewModel: ObservableObject {
 
     func hasUnsavedInlineChanges(for entry: Entry) -> Bool {
         guard inlineDraftEntryId == entry.id else { return false }
+        let titleChanged = inlineDraftTitle != entry.title
+            && inlineDraftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                != entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let parsedTags = Self.parseNormalizedInlineTags(from: inlineDraftTagsText)
-        return inlineDraftTitle.trimmingCharacters(in: .whitespacesAndNewlines) != entry.title
+        return titleChanged
             || inlineDraftContent != entry.content
             || inlineDraftProjectId != entry.projectId
             || inlineDraftType != entry.type
@@ -952,8 +995,10 @@ final class MainWindowViewModel: ObservableObject {
 
     func hasUnsavedInlineContentChanges(for entry: Entry) -> Bool {
         guard inlineDraftEntryId == entry.id else { return false }
-        return inlineDraftTitle.trimmingCharacters(in: .whitespacesAndNewlines) != entry.title
-            || inlineDraftContent != entry.content
+        let titleChanged = inlineDraftTitle != entry.title
+            && inlineDraftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                != entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return titleChanged || inlineDraftContent != entry.content
     }
 
     @discardableResult
@@ -1026,35 +1071,50 @@ final class MainWindowViewModel: ObservableObject {
         return saved
     }
 
-    func refreshReferenceEntries() {
+    func refreshReferenceEntries(immediate: Bool = false) {
+        pendingReferenceSearchWorkItem?.cancel()
+        pendingReferenceSearchWorkItem = nil
+
         referenceRefreshGeneration += 1
         let generation = referenceRefreshGeneration
         let sourceId = referenceSourceProjectId
         let query = referenceSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let entryRepository = self.entryRepository
         let categoryIds = Set(categoryProjects.map(\.id))
-        entriesLoadQueue.async { [weak self] in
-            let allEntries: [Entry]
-            if sourceId == Self.allProjectsSelection {
-                allEntries = (try? entryRepository.fetchAll()) ?? []
-            } else {
-                allEntries = (try? entryRepository.fetchByProject(sourceId)) ?? []
+        let runLoad: @Sendable () -> Void = { [weak self] in
+            self?.entriesLoadQueue.async { [weak self] in
+                let allEntries: [Entry]
+                if sourceId == Self.allProjectsSelection {
+                    allEntries = (try? entryRepository.fetchAll(excludeArchivedProjects: true)) ?? []
+                } else {
+                    allEntries = (try? entryRepository.fetchByProject(sourceId)) ?? []
+                }
+                var filtered = allEntries.filter { entry in
+                    guard !query.isEmpty else { return true }
+                    return entry.title.localizedCaseInsensitiveContains(query)
+                        || entry.content.localizedCaseInsensitiveContains(query)
+                        || entry.tags.contains(where: { $0.localizedCaseInsensitiveContains(query) })
+                }
+                if sourceId == Self.allProjectsSelection && query.isEmpty && !categoryIds.isEmpty {
+                    let categoryMatches = filtered.filter { categoryIds.contains($0.projectId) }
+                    let otherMatches = filtered.filter { !categoryIds.contains($0.projectId) }
+                    filtered = categoryMatches + otherMatches
+                }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.referenceRefreshGeneration == generation else { return }
+                    if self.referenceEntries != filtered {
+                        self.referenceEntries = filtered
+                    }
+                }
             }
-            var filtered = allEntries.filter { entry in
-                guard !query.isEmpty else { return true }
-                return entry.title.localizedCaseInsensitiveContains(query)
-                    || entry.content.localizedCaseInsensitiveContains(query)
-                    || entry.tags.contains(where: { $0.localizedCaseInsensitiveContains(query) })
-            }
-            if sourceId == Self.allProjectsSelection && query.isEmpty && !categoryIds.isEmpty {
-                let categoryMatches = filtered.filter { categoryIds.contains($0.projectId) }
-                let otherMatches = filtered.filter { !categoryIds.contains($0.projectId) }
-                filtered = categoryMatches + otherMatches
-            }
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.referenceRefreshGeneration == generation else { return }
-                self.referenceEntries = filtered
-            }
+        }
+
+        if immediate {
+            runLoad()
+        } else {
+            let workItem = DispatchWorkItem(block: runLoad)
+            pendingReferenceSearchWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(150), execute: workItem)
         }
     }
 
@@ -1062,18 +1122,35 @@ final class MainWindowViewModel: ObservableObject {
         clipboardPreviewText = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
-    func refreshSelectedEntryVersions() {
+    func refreshSelectedEntryVersions(immediate: Bool = false) {
+        pendingVersionRefreshWorkItem?.cancel()
+        pendingVersionRefreshWorkItem = nil
+
         guard let entryId = selectedEntry?.id else {
-            selectedEntryVersions = []
+            if !selectedEntryVersions.isEmpty {
+                selectedEntryVersions = []
+            }
             return
         }
         let entryRepository = self.entryRepository
-        entriesLoadQueue.async { [weak self] in
-            let versions = (try? entryRepository.fetchVersions(forEntryId: entryId)) ?? []
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.selectedEntry?.id == entryId else { return }
-                self.selectedEntryVersions = versions
+        let runLoad: @Sendable () -> Void = { [weak self] in
+            self?.entriesLoadQueue.async { [weak self] in
+                let versions = (try? entryRepository.fetchVersions(forEntryId: entryId)) ?? []
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.selectedEntry?.id == entryId else { return }
+                    if self.selectedEntryVersions != versions {
+                        self.selectedEntryVersions = versions
+                    }
+                }
             }
+        }
+
+        if immediate {
+            runLoad()
+        } else {
+            let workItem = DispatchWorkItem(block: runLoad)
+            pendingVersionRefreshWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(80), execute: workItem)
         }
     }
 
@@ -1123,14 +1200,20 @@ final class MainWindowViewModel: ObservableObject {
     private func refreshProjectEntryCounts() {
         let entryRepository = self.entryRepository
         entriesLoadQueue.async { [weak self] in
-            guard let counts = try? entryRepository.entryCountByProject() else {
+            guard let allCounts = try? entryRepository.entryCountByProject(excludeArchivedProjects: false),
+                  let activeCounts = try? entryRepository.entryCountByProject(excludeArchivedProjects: true) else {
                 PPLogger.entry.error("Failed to load project entry counts")
                 return
             }
+            let totalActive = activeCounts.values.reduce(0, +)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                self.projectEntryCounts = counts
-                self.totalEntryCount = counts.values.reduce(0, +)
+                if self.projectEntryCounts != allCounts {
+                    self.projectEntryCounts = allCounts
+                }
+                if self.totalEntryCount != totalActive {
+                    self.totalEntryCount = totalActive
+                }
             }
         }
     }
@@ -1139,7 +1222,7 @@ final class MainWindowViewModel: ObservableObject {
         if entryKindFilter == type.rawValue {
             updateEntryFilters(kind: nil, tag: entryTagFilter)
         } else {
-            updateEntryFilters(kind: type.rawValue, tag: nil)
+            updateEntryFilters(kind: type.rawValue, tag: entryTagFilter)
         }
     }
 
@@ -1147,7 +1230,7 @@ final class MainWindowViewModel: ObservableObject {
         if entryTagFilter == tag {
             updateEntryFilters(kind: entryKindFilter, tag: nil)
         } else {
-            updateEntryFilters(kind: nil, tag: tag)
+            updateEntryFilters(kind: entryKindFilter, tag: tag)
         }
     }
 
@@ -1171,38 +1254,56 @@ final class MainWindowViewModel: ObservableObject {
 
     private static let upArrowKeyCode: UInt16 = 126
     private static let downArrowKeyCode: UInt16 = 125
+    private static let commandShiftActionByKeyCode: [UInt16: MainWindowKeyCommand] = [
+        8: .copySelectedEntry,   // Cmd+Shift+C
+        45: .openReferenceWindow // Cmd+Shift+N
+    ]
+    private static let commandActionByKeyCode: [UInt16: MainWindowKeyCommand] = [
+        3: .focusSearch,         // Cmd+F
+        14: .editSelectedEntry,  // Cmd+E
+        45: .createNewEntry,     // Cmd+N
+        1: .saveInlineDraft,     // Cmd+S
+        43: .openSettings        // Cmd+,
+    ]
 
     static func mainWindowKeyCommand(
         keyCode: UInt16 = .max,
         modifierFlags: NSEvent.ModifierFlags,
         charactersIgnoringModifiers: String?
     ) -> MainWindowKeyCommand? {
-        if modifierFlags.isDisjoint(with: [.command, .shift, .option, .control]) {
+        let flags = modifierFlags.intersection([.command, .shift, .option, .control])
+
+        if flags.isEmpty {
             switch keyCode {
             case upArrowKeyCode:
                 return .moveSelectionUp
             case downArrowKeyCode:
                 return .moveSelectionDown
             default:
-                break
+                return nil
             }
         }
 
-        guard modifierFlags.contains(.command) else {
-            return nil
-        }
-        guard modifierFlags.isDisjoint(with: [.option, .control]) else {
-            return nil
-        }
-        let characters = charactersIgnoringModifiers?.lowercased()
-        if modifierFlags.contains(.shift) {
-            switch characters {
+        if flags == [.command, .shift] {
+            if keyCode != .max, let command = commandShiftActionByKeyCode[keyCode] {
+                return command
+            }
+            switch charactersIgnoringModifiers?.lowercased() {
             case "c": return .copySelectedEntry
             case "n": return .openReferenceWindow
             default: return nil
             }
         }
-        switch characters {
+
+        guard flags == [.command] else {
+            return nil
+        }
+
+        if keyCode != .max, let command = commandActionByKeyCode[keyCode] {
+            return command
+        }
+
+        switch charactersIgnoringModifiers?.lowercased() {
         case "f": return .focusSearch
         case "e": return .editSelectedEntry
         case "n": return .createNewEntry
@@ -1233,8 +1334,13 @@ final class MainWindowViewModel: ObservableObject {
 
     @discardableResult
     func handleMainWindowKeyCommand(_ command: MainWindowKeyCommand) -> Bool {
+        guard !isContextDropdownOpen, !isShowingVersionPopover else {
+            return false
+        }
         if command == .openSettings {
-            commitPendingInlineChangesIfNeeded()
+            if selectedTab == .library, !commitPendingInlineChangesIfNeeded() {
+                return true
+            }
             selectedTab = .settings
             return true
         }
@@ -1263,10 +1369,13 @@ final class MainWindowViewModel: ObservableObject {
         case .createNewEntry:
             startCreateEntry()
         case .saveInlineDraft:
-            guard let entry = selectedEntry, hasUnsavedInlineChanges(for: entry) else {
+            guard let entry = selectedEntry else {
                 return false
             }
-            _ = commitInlineChanges(for: entry)
+            if hasUnsavedInlineChanges(for: entry) {
+                _ = commitInlineChanges(for: entry)
+            }
+            return true
         case .openReferenceWindow:
             openReferenceWindow()
         case .openSettings:
@@ -1757,10 +1866,58 @@ final class MainWindowViewModel: ObservableObject {
         if let status = try? cloudSyncService?.lastSyncStatus(), !status.isEmpty {
             cloudSyncLastStatus = status
         }
+        if let report = try? cloudSyncService?.lastSyncReport() {
+            lastSyncReport = report
+        }
+        if let pending = try? cloudSyncService?.pendingSyncState() {
+            hasPendingLocalChanges = pending.hasPendingLocalChanges
+            pendingLocalDelta = pending.pendingDelta
+            cloudRemoteRevision = pending.lastSyncedRevision ?? lastSyncReport?.remoteRevision
+        } else {
+            cloudRemoteRevision = lastSyncReport?.remoteRevision
+        }
         if cloudSyncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             cloudSyncConnectionStatus = "未配置同步地址"
             cloudSyncConnectionHealthy = nil
+            isSyncAuthPaused = false
+            lastSyncErrorMessage = nil
         }
+        recomputeSyncBadgeState()
+    }
+
+    private func recomputeSyncBadgeState() {
+        let trimmedEndpoint = cloudSyncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let nextState: SyncBadgeState
+        if trimmedEndpoint.isEmpty {
+            nextState = .unconfigured
+        } else if isCloudSyncInFlight {
+            nextState = .syncing
+        } else if isSyncAuthPaused {
+            nextState = .error(lastSyncErrorMessage ?? "Token 鉴权失败，请检查同步凭据")
+        } else if cloudSyncConnectionHealthy == false, let errorMsg = lastSyncErrorMessage {
+            nextState = .error(errorMsg)
+        } else if cloudSyncEnabled {
+            if hasPendingLocalChanges {
+                nextState = .autoPending(pendingCount: pendingLocalDelta > 0 ? pendingLocalDelta : nil)
+            } else {
+                nextState = .autoSynced(revision: cloudRemoteRevision)
+            }
+        } else {
+            nextState = .manualIdle(revision: cloudRemoteRevision, hasPending: hasPendingLocalChanges)
+        }
+        if syncBadgeState != nextState {
+            syncBadgeState = nextState
+        }
+    }
+
+    private static func isAuthenticationError(_ error: Error) -> Bool {
+        let message = error.localizedDescription
+        return message.contains("HTTP 401")
+            || message.contains("HTTP 403")
+            || message.contains("401")
+            || message.contains("403")
+            || message.contains("鉴权未通过")
+            || message.contains("访问被拒绝")
     }
 
     private func scheduleCloudSyncSettingsAutoPersist() {
@@ -1778,8 +1935,13 @@ final class MainWindowViewModel: ObservableObject {
 
     func setCloudSyncEnabled(_ isEnabled: Bool) {
         cloudSyncEnabled = isEnabled
+        if isEnabled {
+            isSyncAuthPaused = false
+            lastSyncErrorMessage = nil
+        }
         saveCloudSyncSettings(showBanner: true)
         updateAutoCloudSyncPollTimer()
+        recomputeSyncBadgeState()
         if isEnabled {
             triggerOpportunisticCloudSyncIfNeeded(force: true)
         }
@@ -1887,6 +2049,8 @@ final class MainWindowViewModel: ObservableObject {
             bannerMessage = "云端同步服务未初始化。"
             return
         }
+        isSyncAuthPaused = false
+        lastSyncErrorMessage = nil
         saveCloudSyncSettings()
         let endpoint = cloudSyncEndpoint
         let apiKey = cloudSyncApiKey
@@ -1896,14 +2060,31 @@ final class MainWindowViewModel: ObservableObject {
             do {
                 let report = try await cloudSyncService.testConnection(endpoint: endpoint, apiKey: apiKey)
                 guard let self, !Task.isCancelled else { return }
-                self.cloudSyncConnectionHealthy = report.isReachable && report.authenticated
+                let ok = report.isReachable && report.authenticated
+                self.cloudSyncConnectionHealthy = ok
                 self.cloudSyncConnectionStatus = report.summaryText
+                if ok {
+                    self.isSyncAuthPaused = false
+                    self.lastSyncErrorMessage = nil
+                    self.updateAutoCloudSyncPollTimer()
+                } else if !report.authenticated {
+                    self.isSyncAuthPaused = true
+                    self.lastSyncErrorMessage = report.summaryText
+                    self.updateAutoCloudSyncPollTimer()
+                }
+                self.recomputeSyncBadgeState()
                 self.bannerMessage = report.summaryText
             } catch is CancellationError {
                 return
             } catch {
                 guard let self, !Task.isCancelled else { return }
                 self.cloudSyncConnectionHealthy = false
+                self.lastSyncErrorMessage = error.localizedDescription
+                if Self.isAuthenticationError(error) {
+                    self.isSyncAuthPaused = true
+                    self.updateAutoCloudSyncPollTimer()
+                }
+                self.recomputeSyncBadgeState()
                 self.cloudSyncConnectionStatus = "连接异常：\(error.localizedDescription)"
                 self.bannerMessage = "测试连接失败：\(error.localizedDescription)"
             }
@@ -1923,7 +2104,7 @@ final class MainWindowViewModel: ObservableObject {
         }
     }
 
-    func syncCloudNow() {
+    func syncCloudNow(mode: CloudSyncActionMode = .smartBidirectional) {
         guard let cloudSyncService else {
             bannerMessage = "云端同步服务未初始化。"
             return
@@ -1938,10 +2119,18 @@ final class MainWindowViewModel: ObservableObject {
         }
         pendingAutoCloudSyncWorkItem?.cancel()
         pendingAutoCloudSyncWorkItem = nil
-        saveCloudSyncSettings()
+        isSyncAuthPaused = false
+        lastSyncErrorMessage = nil
+        saveCloudSyncSettings(showBanner: false)
         let endpoint = cloudSyncEndpoint
         let apiKey = cloudSyncApiKey
-        let label = "正在执行云端双向同步…"
+        let label: String = {
+            switch mode {
+            case .smartBidirectional: return "正在执行云端双向同步…"
+            case .pullOnly: return "正在拉取云端更新并合并…"
+            case .forcePushLocal: return "正在强制推送本机快照覆盖云端…"
+            }
+        }()
         isCloudSyncInFlight = true
         activeMaintenanceTask = label
         bannerMessage = label
@@ -1952,31 +2141,89 @@ final class MainWindowViewModel: ObservableObject {
                 self?.activeCloudSyncTask = nil
             }
             do {
-                let summary = try await cloudSyncService.syncNow(
+                let report = try await cloudSyncService.syncWithReport(
                     endpoint: endpoint,
                     apiKey: apiKey,
-                    forceFullSync: true
+                    actionMode: mode,
+                    forceFullSync: true,
+                    isAutoSync: false
                 )
                 guard let self, !Task.isCancelled else { return }
                 self.isApplyingCloudSyncChanges = true
                 defer { self.isApplyingCloudSyncChanges = false }
                 self.cloudSyncConnectionHealthy = true
+                self.isSyncAuthPaused = false
+                self.lastSyncErrorMessage = nil
+                self.lastSyncReport = report
                 self.refreshCloudSyncState()
+                self.updateAutoCloudSyncPollTimer()
                 self.refreshOperationalStatus()
                 self.notifyProjectsChanged()
                 NotificationCenter.default.post(name: .entriesDidChange, object: nil)
                 self.refreshSelectedEntryVersions()
-                let guardInfo = summary.totalProtectedCount > 0
-                    ? "，已触发防丢熔断保护 \(summary.protectedEntriesCount) 条词条/\(summary.protectedProjectsCount) 个分组并回填云端"
-                    : ""
-                self.bannerMessage = "云端同步成功：项目 +\(summary.projectsCreated)/更\(summary.projectsUpdated)，词条 +\(summary.entriesCreated)/更\(summary.entriesUpdated)，冲突版本保护 \(summary.conflictsPreservedInVersions) 处\(guardInfo)。"
+                self.refreshRecentSoftDeletedEntries()
+                self.bannerMessage = report.summaryText
             } catch is CancellationError {
                 return
             } catch {
                 guard let self else { return }
                 self.cloudSyncConnectionHealthy = false
+                self.lastSyncErrorMessage = error.localizedDescription
+                if Self.isAuthenticationError(error) {
+                    self.isSyncAuthPaused = true
+                    self.updateAutoCloudSyncPollTimer()
+                }
+                self.recomputeSyncBadgeState()
                 self.bannerMessage = error.localizedDescription
             }
+        }
+    }
+
+    func pullCloudOnly() {
+        syncCloudNow(mode: .pullOnly)
+    }
+
+    func forcePushLocalToCloud() {
+        syncCloudNow(mode: .forcePushLocal)
+    }
+
+    func refreshRecentSoftDeletedEntries() {
+        guard let cloudSyncService else {
+            if !recentSoftDeletedEntries.isEmpty {
+                recentSoftDeletedEntries = []
+            }
+            return
+        }
+        entriesLoadQueue.async { [weak self] in
+            let items = (try? cloudSyncService.fetchRecentSoftDeletedEntries(withinDays: 30)) ?? []
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if self.recentSoftDeletedEntries != items {
+                    self.recentSoftDeletedEntries = items
+                }
+            }
+        }
+    }
+
+    func restoreSoftDeletedEntries(ids: [String]) {
+        let uniqueIds = Array(Set(ids))
+        guard !uniqueIds.isEmpty, let cloudSyncService else { return }
+        do {
+            let restored = try cloudSyncService.restoreSoftDeletedEntries(ids: uniqueIds)
+            if restored > 0 {
+                notifyProjectsChanged()
+                NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+                refreshProjectEntryCounts()
+                refreshCloudSyncState()
+                refreshRecentSoftDeletedEntries()
+                scheduleAutoCloudSyncIfNeeded()
+                bannerMessage = "已从回收站恢复 \(restored) 条词条。"
+            } else {
+                bannerMessage = "未找到可恢复的词条。"
+            }
+        } catch {
+            PPLogger.entry.error("Failed to restore soft-deleted entries: \(error.localizedDescription)")
+            bannerMessage = "恢复词条失败：\(error.localizedDescription)"
         }
     }
 
@@ -2037,7 +2284,7 @@ final class MainWindowViewModel: ObservableObject {
 
     private func updateAutoCloudSyncPollTimer() {
         let trimmedEndpoint = cloudSyncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard cloudSyncEnabled, !trimmedEndpoint.isEmpty, cloudSyncService != nil else {
+        guard cloudSyncEnabled, !trimmedEndpoint.isEmpty, cloudSyncService != nil, !isSyncAuthPaused else {
             autoCloudSyncPollTimer?.cancel()
             autoCloudSyncPollTimer = nil
             return
@@ -2050,6 +2297,26 @@ final class MainWindowViewModel: ObservableObject {
         }
         timer.resume()
         autoCloudSyncPollTimer = timer
+    }
+
+    private func refreshPendingSyncStateAsync() {
+        guard let cloudSyncService else { return }
+        statusQueue.async { [weak self] in
+            guard let pending = try? cloudSyncService.pendingSyncState() else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if self.hasPendingLocalChanges != pending.hasPendingLocalChanges {
+                    self.hasPendingLocalChanges = pending.hasPendingLocalChanges
+                }
+                if self.pendingLocalDelta != pending.pendingDelta {
+                    self.pendingLocalDelta = pending.pendingDelta
+                }
+                if let rev = pending.lastSyncedRevision, self.cloudRemoteRevision != rev {
+                    self.cloudRemoteRevision = rev
+                }
+                self.recomputeSyncBadgeState()
+            }
+        }
     }
 
     private var hasActiveDirtyInlineDraft: Bool {
@@ -2066,6 +2333,7 @@ final class MainWindowViewModel: ObservableObject {
 
     func triggerOpportunisticCloudSyncIfNeeded(force: Bool = false, minIntervalSeconds: TimeInterval = 18) {
         guard cloudSyncEnabled,
+              !isSyncAuthPaused,
               !isApplyingCloudSyncChanges,
               !isCloudSyncInFlight,
               activeMaintenanceTask == nil,
@@ -2086,7 +2354,7 @@ final class MainWindowViewModel: ObservableObject {
     }
 
     private func performSilentCloudSync(cloudSyncService: CloudSyncService, endpoint: String, apiKey: String) {
-        guard activeMaintenanceTask == nil, !isCloudSyncInFlight else { return }
+        guard activeMaintenanceTask == nil, !isCloudSyncInFlight, !isSyncAuthPaused else { return }
         isCloudSyncInFlight = true
         lastOpportunisticCloudSyncAt = Date()
         activeCloudSyncTask = Task { @MainActor [weak self] in
@@ -2095,32 +2363,58 @@ final class MainWindowViewModel: ObservableObject {
                 self?.activeCloudSyncTask = nil
             }
             do {
-                let summary = try await cloudSyncService.syncNow(endpoint: endpoint, apiKey: apiKey)
+                let report = try await cloudSyncService.syncWithReport(
+                    endpoint: endpoint,
+                    apiKey: apiKey,
+                    actionMode: .smartBidirectional,
+                    forceFullSync: false,
+                    isAutoSync: true
+                )
                 guard let self, !Task.isCancelled else { return }
+                self.isSyncAuthPaused = false
+                self.lastSyncErrorMessage = nil
                 self.cloudSyncConnectionHealthy = true
+                self.lastSyncReport = report
                 self.refreshCloudSyncState()
-                if summary.hasAnyLocalMutation {
+                let hasPulledChanges = report.pulledProjectsCreated > 0
+                    || report.pulledProjectsUpdated > 0
+                    || report.pulledEntriesCreated > 0
+                    || report.pulledEntriesUpdated > 0
+                    || report.pulledDeletionsCount > 0
+                    || report.orphansMigrated > 0
+                if hasPulledChanges {
                     self.isApplyingCloudSyncChanges = true
                     defer { self.isApplyingCloudSyncChanges = false }
                     self.notifyProjectsChanged()
                     NotificationCenter.default.post(name: .entriesDidChange, object: nil)
                     self.refreshSelectedEntryVersions()
+                    self.refreshRecentSoftDeletedEntries()
                 }
-                if summary.totalProtectedCount > 0 {
+                if report.protectedEntriesCount > 0 || report.protectedProjectsCount > 0 {
                     self.refreshOperationalStatus()
-                    self.bannerMessage = "防丢保护已触发：已拦截云端异常删除 \(summary.protectedEntriesCount) 条词条/\(summary.protectedProjectsCount) 个分组，并从本地自动恢复云端数据。"
+                    self.bannerMessage = "防丢保护已触发：已拦截云端异常删除 \(report.protectedEntriesCount) 条词条/\(report.protectedProjectsCount) 个分组，并从本地自动恢复云端数据。"
                 }
             } catch is CancellationError {
                 return
             } catch {
                 PPLogger.app.error("Auto cloud sync failed: \(error.localizedDescription)")
-                self?.cloudSyncConnectionHealthy = false
+                guard let self else { return }
+                self.cloudSyncConnectionHealthy = false
+                self.lastSyncErrorMessage = error.localizedDescription
+                if Self.isAuthenticationError(error) {
+                    self.isSyncAuthPaused = true
+                    self.updateAutoCloudSyncPollTimer()
+                    self.bannerMessage = "云端同步鉴权失败（\(error.localizedDescription)），已暂停自动轮询，请检查同步 Token 后重试。"
+                }
+                self.recomputeSyncBadgeState()
             }
         }
     }
 
     private func scheduleAutoCloudSyncIfNeeded() {
+        refreshPendingSyncStateAsync()
         guard cloudSyncEnabled,
+              !isSyncAuthPaused,
               !isApplyingCloudSyncChanges,
               let cloudSyncService else {
             return
@@ -2138,9 +2432,21 @@ final class MainWindowViewModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: workItem)
     }
 
+    func flushPendingChangesBeforeTermination() {
+        _ = commitPendingInlineChangesIfNeeded()
+        if pendingCloudSyncSettingsPersistWorkItem != nil {
+            saveCloudSyncSettings(showBanner: false)
+        }
+        cancelPendingBackgroundTasks()
+    }
+
     func cancelPendingBackgroundTasks() {
         pendingEntriesRefreshWorkItem?.cancel()
         pendingEntriesRefreshWorkItem = nil
+        pendingReferenceSearchWorkItem?.cancel()
+        pendingReferenceSearchWorkItem = nil
+        pendingVersionRefreshWorkItem?.cancel()
+        pendingVersionRefreshWorkItem = nil
         pendingInlineAutoSaveWorkItem?.cancel()
         pendingInlineAutoSaveWorkItem = nil
         pendingAutoCloudSyncWorkItem?.cancel()
@@ -2325,6 +2631,15 @@ final class MainWindowViewModel: ObservableObject {
             projectDraft = nil
             notifyProjectsChanged()
             return true
+        } catch RepositoryError.duplicateProjectName(let existingName) {
+            bannerMessage = "已存在同名分组「\(existingName)」，请使用其他名称。"
+            return false
+        } catch RepositoryError.emptyProjectName {
+            bannerMessage = "名称不能为空。"
+            return false
+        } catch RepositoryError.cannotRenameSystemProject {
+            bannerMessage = "系统内置分组不可重命名。"
+            return false
         } catch {
             PPLogger.project.error("Failed to save project draft: \(error.localizedDescription)")
             bannerMessage = "保存失败，请重试。"
@@ -2371,6 +2686,12 @@ final class MainWindowViewModel: ObservableObject {
             bannerMessage = "请先选择要删除的项目。"
             return
         }
+        requestDeleteProject(project)
+    }
+
+    /// Requests deletion confirmation for a specific project (e.g. from sidebar context menu)
+    /// without mutating `selectedProjectId` before the user confirms.
+    func requestDeleteProject(_ project: Project) {
         guard !project.isSystemProtected else {
             bannerMessage = project.isDefault ? "通用项目不能删除。" : "系统内置分组不能删除。"
             return
@@ -2378,18 +2699,20 @@ final class MainWindowViewModel: ObservableObject {
 
         do {
             let entryCount = try projectRepository.entryCount(forProjectId: project.id)
-            if entryCount == 0 {
-                try projectRepository.delete(id: project.id)
-                handleProjectDeletionFallback(deletedProjectId: project.id, replacementProjectId: appState.defaultProjectId)
-                notifyProjectsChanged()
-                bannerMessage = "项目已删除。"
-            } else if let targetProjectId = projects.first(where: { $0.id != project.id })?.id {
-                deleteProjectState = ProjectDeletionState(
-                    project: project,
-                    entryCount: entryCount,
-                    targetProjectId: targetProjectId
-                )
+            let activeTargets = (try? projectRepository.fetchActiveTargetProjects(excluding: project.id))
+                ?? targetProjects(excluding: project.id)
+            let defaultTargetId = activeTargets.first(where: { $0.id == appState.defaultProjectId })?.id
+                ?? activeTargets.first?.id
+                ?? ""
+            if entryCount > 0 && defaultTargetId.isEmpty {
+                bannerMessage = "没有可用的活跃迁移目标。"
+                return
             }
+            deleteProjectState = ProjectDeletionState(
+                project: project,
+                entryCount: entryCount,
+                targetProjectId: defaultTargetId
+            )
         } catch {
             PPLogger.project.error("Failed to request project deletion: \(error.localizedDescription)")
             bannerMessage = "删除项目失败，请重试。"
@@ -2402,16 +2725,29 @@ final class MainWindowViewModel: ObservableObject {
         }
 
         do {
-            try projectRepository.migrateAndDelete(fromId: state.project.id, toId: state.targetProjectId)
-            handleProjectDeletionFallback(deletedProjectId: state.project.id, replacementProjectId: state.targetProjectId)
+            let replacementId: String?
+            if state.entryCount == 0 {
+                try projectRepository.delete(id: state.project.id)
+                replacementId = appState.defaultProjectId
+                bannerMessage = "项目「\(state.project.name)」已删除。"
+            } else {
+                try projectRepository.migrateAndDelete(fromId: state.project.id, toId: state.targetProjectId)
+                replacementId = state.targetProjectId
+                bannerMessage = "项目已删除，词条已迁移。"
+            }
+            handleProjectDeletionFallback(deletedProjectId: state.project.id, replacementProjectId: replacementId)
             deleteProjectState = nil
             notifyProjectsChanged()
-            NotificationCenter.default.post(name: .entriesDidChange, object: nil)
-            bannerMessage = "项目已删除，词条已迁移。"
+            if state.entryCount > 0 {
+                NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+            }
             return true
+        } catch RepositoryError.cannotMigrateToArchivedProject {
+            bannerMessage = "不能将词条迁移到已归档项目。"
+            return false
         } catch {
             PPLogger.project.error("Failed to migrate and delete project: \(error.localizedDescription)")
-            bannerMessage = "项目迁移删除失败，请重试。"
+            bannerMessage = "项目删除失败，请重试。"
             return false
         }
     }
@@ -2839,24 +3175,6 @@ final class MainWindowViewModel: ObservableObject {
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         )
 
-        let updated = Entry(
-            id: entry.id,
-            projectId: projectId,
-            title: trimmedTitle,
-            content: content,
-            type: type,
-            isPinned: isPinned,
-            isCompleted: isCompleted,
-            sortOrder: entry.sortOrder,
-            useCount: entry.useCount,
-            lastUsedAt: entry.lastUsedAt,
-            createdAt: entry.createdAt,
-            updatedAt: Date(),
-            deletedAt: entry.deletedAt,
-            sourceEntryId: entry.sourceEntryId,
-            tags: parsedTags
-        )
-
         let didChangeContent = entry.title != trimmedTitle || entry.content != content
         let projectChanged = entry.projectId != projectId
         let shouldRecordVersion = shouldRecordInlineVersionSnapshot(
@@ -2865,10 +3183,33 @@ final class MainWindowViewModel: ObservableObject {
             didChangeContent: didChangeContent
         )
         do {
-            try entryRepository.update(updated, changeNote: changeNote, recordVersion: shouldRecordVersion)
+            let saveResult = try entryRepository.updateEditableFields(
+                id: entry.id,
+                title: trimmedTitle,
+                content: content,
+                type: type,
+                projectId: projectId,
+                tags: parsedTags,
+                isPinned: isPinned,
+                isCompleted: isCompleted,
+                changeNote: changeNote,
+                recordVersion: shouldRecordVersion
+            )
+            let updated: Entry
+            switch saveResult {
+            case .deletedOrMissing:
+                pendingInlineAutoSaveWorkItem?.cancel()
+                pendingInlineAutoSaveWorkItem = nil
+                inlineAutoSaveState = .idle
+                bannerMessage = "该词条已在其他位置或云端同步中删除，无法继续保存。"
+                NotificationCenter.default.post(name: .entriesDidChange, object: nil)
+                return false
+            case .updated(let persisted):
+                updated = persisted
+            }
             if shouldRecordVersion && didChangeContent {
                 inlineSessionVersionedEntryId = updated.id
-                lastInlineVersionSnapshotAtByEntryId[updated.id] = Date()
+                recordInlineVersionSnapshotTimestamp(for: updated.id)
             }
 
             let hadEntryInMemory: Bool
@@ -2904,7 +3245,7 @@ final class MainWindowViewModel: ObservableObject {
             }
 
             if shouldRecordVersion && didChangeContent {
-                refreshSelectedEntryVersions()
+                refreshSelectedEntryVersions(immediate: true)
             }
             return true
         } catch {
@@ -2913,6 +3254,17 @@ final class MainWindowViewModel: ObservableObject {
                 bannerMessage = "保存修改失败，请重试。"
             }
             return false
+        }
+    }
+
+    private func recordInlineVersionSnapshotTimestamp(for entryId: String, now: Date = Date()) {
+        lastInlineVersionSnapshotAtByEntryId[entryId] = now
+        if lastInlineVersionSnapshotAtByEntryId.count > Self.maxInlineVersionSnapshotCacheCount {
+            let excess = lastInlineVersionSnapshotAtByEntryId.count - Self.maxInlineVersionSnapshotCacheCount
+            let oldest = lastInlineVersionSnapshotAtByEntryId.sorted { $0.value < $1.value }.prefix(excess)
+            for (staleId, _) in oldest {
+                lastInlineVersionSnapshotAtByEntryId.removeValue(forKey: staleId)
+            }
         }
     }
 
@@ -2939,16 +3291,23 @@ final class MainWindowViewModel: ObservableObject {
         if projectChanged {
             refreshProjectEntryCounts()
         }
+        refreshReferenceEntries()
         scheduleAutoCloudSyncIfNeeded()
     }
 
     func restoreEntryVersion(_ version: EntryVersion) {
+        pendingInlineAutoSaveWorkItem?.cancel()
+        pendingInlineAutoSaveWorkItem = nil
         do {
             let restored = try entryRepository.restoreVersion(versionId: version.id)
+            if let idx = entries.firstIndex(where: { $0.id == restored.id }) {
+                entries[idx] = restored
+            }
             selectedEntryId = restored.id
             syncInlineDraft(with: restored, force: true)
+            inlineAutoSaveState = .idle
             NotificationCenter.default.post(name: .entriesDidChange, object: nil)
-            refreshSelectedEntryVersions()
+            refreshSelectedEntryVersions(immediate: true)
             bannerMessage = "已恢复至历史版本 v\(version.versionNumber)。"
         } catch {
             PPLogger.entry.error("Failed to restore entry version: \(error.localizedDescription)")
@@ -3088,7 +3447,16 @@ final class MainWindowViewModel: ObservableObject {
                 guard let self, self.suppressSelfEntriesReloadCount == 0 else { return }
                 self.scheduleEntriesRefresh(delayMs: 0)
                 self.refreshProjectEntryCounts()
+                self.refreshReferenceEntries()
                 self.scheduleAutoCloudSyncIfNeeded()
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .entryUsageDidChange)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.scheduleEntriesRefresh(delayMs: 0)
+                self.refreshReferenceEntries()
             }
             .store(in: &cancellables)
 
@@ -3118,6 +3486,7 @@ final class MainWindowViewModel: ObservableObject {
     private func loadProjects() {
         do {
             projects = try projectRepository.fetchAll()
+            cachedActiveTargetProjects = (try? projectRepository.fetchActiveTargetProjects()) ?? nonArchivedProjects
             projectNamesById = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0.name) })
             if selectedProjectId == Self.allProjectsSelection {
                 return
@@ -3128,13 +3497,14 @@ final class MainWindowViewModel: ObservableObject {
         } catch {
             PPLogger.project.error("Failed to load projects: \(error.localizedDescription)")
             projects = []
+            cachedActiveTargetProjects = []
             projectNamesById = [:]
             selectedProjectId = Self.allProjectsSelection
             bannerMessage = "加载项目列表失败。"
         }
     }
 
-    private func scheduleEntriesRefresh(delayMs: Int) {
+    private func scheduleEntriesRefresh(delayMs: Int, pruneStaleFilters: Bool = false) {
         pendingEntriesRefreshWorkItem?.cancel()
         pendingEntriesRefreshWorkItem = nil
 
@@ -3155,9 +3525,14 @@ final class MainWindowViewModel: ObservableObject {
                     let entries: [Entry]
                     if selectedProjectId == allProjectsSelection {
                         if entrySearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, inlineTagFilter == nil {
-                            entries = try entryRepository.fetchAll()
+                            entries = try entryRepository.fetchAll(excludeArchivedProjects: true)
                         } else {
-                            entries = try entryRepository.searchAll(query: entrySearchText, tag: inlineTagFilter)
+                            entries = try entryRepository.searchAll(
+                                query: entrySearchText,
+                                tag: inlineTagFilter,
+                                excludeArchivedProjects: true,
+                                limit: nil
+                            )
                         }
                     } else if entrySearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, inlineTagFilter == nil {
                         entries = try entryRepository.fetchByProject(selectedProjectId)
@@ -3165,7 +3540,8 @@ final class MainWindowViewModel: ObservableObject {
                         entries = try entryRepository.search(
                             query: entrySearchText,
                             projectIds: [selectedProjectId],
-                            tag: inlineTagFilter
+                            tag: inlineTagFilter,
+                            limit: nil
                         )
                     }
                     result = .success(entries)
@@ -3182,6 +3558,20 @@ final class MainWindowViewModel: ObservableObject {
                     case .success(let entries):
                         self.entries = entries
                         self.refreshEntryFacets()
+                        if pruneStaleFilters {
+                            self.isBatchingEntryFilterUpdate = true
+                            if let kind = self.entryKindFilter,
+                               !entries.contains(where: { $0.type == kind }) {
+                                self.entryKindFilter = nil
+                            }
+                            if let tag = self.entryTagFilter,
+                               !entries.contains(where: { entry in
+                                   entry.tags.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame })
+                               }) {
+                                self.entryTagFilter = nil
+                            }
+                            self.isBatchingEntryFilterUpdate = false
+                        }
                         self.refreshDisplayedEntries()
                     case .failure(let error):
                         PPLogger.entry.error("Failed to load entries: \(error.localizedDescription)")

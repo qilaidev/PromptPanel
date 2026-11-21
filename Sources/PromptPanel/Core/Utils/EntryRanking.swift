@@ -61,7 +61,7 @@ enum EntryRanking {
     }
 
     static func score(useCount: Int, lastUsedAt: Date?, now: Date) -> Double {
-        guard let lastUsedAt else {
+        guard useCount > 0, let lastUsedAt else {
             return neverUsedScore
         }
         // A negative age (a clock that moved backwards, or an imported future timestamp)
@@ -71,17 +71,34 @@ enum EntryRanking {
         return Double(useCount) * pow(2, -ageDays / halfLifeDays)
     }
 
+    static func score(useCount: Int, lastUsedAt: Date?, nowTimestamp: TimeInterval) -> Double {
+        guard useCount > 0, let lastUsedAt else {
+            return neverUsedScore
+        }
+        let ageDays = max((nowTimestamp - lastUsedAt.timeIntervalSince1970) / 86_400, 0)
+        return Double(useCount) * pow(2, -ageDays / halfLifeDays)
+    }
+
     /// `score` as a SQLite scalar function: `pp_frecency(use_count, last_used_at, now)`.
     ///
-    /// `now` is passed in rather than read from the clock inside the function so a query is
-    /// reproducible and the tests can pin it.
+    /// `now` may be bound as an epoch `Double` (O(1) fast path, avoiding per-row ISO-8601
+    /// string parsing) or a `Date`. Rows with `use_count <= 0` or `NULL last_used_at`
+    /// short-circuit before parsing `last_used_at`.
     static let databaseFunction = DatabaseFunction(
         sqlFunctionName,
         argumentCount: 3,
         pure: true
     ) { values in
         let useCount = Int.fromDatabaseValue(values[0]) ?? 0
-        let lastUsedAt = Date.fromDatabaseValue(values[1])
+        guard useCount > 0, !values[1].isNull else {
+            return neverUsedScore
+        }
+        guard let lastUsedAt = Date.fromDatabaseValue(values[1]) else {
+            return neverUsedScore
+        }
+        if let nowTimestamp = Double.fromDatabaseValue(values[2]) {
+            return score(useCount: useCount, lastUsedAt: lastUsedAt, nowTimestamp: nowTimestamp)
+        }
         guard let now = Date.fromDatabaseValue(values[2]) else {
             return neverUsedScore
         }

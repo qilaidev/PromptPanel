@@ -14,6 +14,7 @@ enum Migrations {
         registerV6RetireEntrySortOrder(migrator: &migrator)
         registerV7WorkspaceVersionsAndSync(migrator: &migrator)
         registerV8FTSTrigramAndNarrowUpdateTrigger(migrator: &migrator)
+        registerV9EntryTagsIndexTable(migrator: &migrator)
     }
 
     // MARK: - V1: Initial Schema
@@ -297,6 +298,42 @@ enum Migrations {
                 """)
 
             try db.execute(sql: "INSERT INTO entries_fts(entries_fts) VALUES('rebuild')")
+        }
+    }
+
+    // MARK: - V9: Indexed entry_tags Junction Table (Eliminates Per-Row JSON Tag Decoding)
+
+    private static func registerV9EntryTagsIndexTable(migrator: inout DatabaseMigrator) {
+        migrator.registerMigration("v9_entry_tags_index_table") { db in
+            PPLogger.database.info("Running migration: v9_entry_tags_index_table")
+
+            try db.execute(sql: """
+                CREATE TABLE IF NOT EXISTS entry_tags (
+                    entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+                    tag_lower TEXT NOT NULL,
+                    PRIMARY KEY (entry_id, tag_lower)
+                )
+                """)
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_entry_tags_tag_lower
+                ON entry_tags(tag_lower, entry_id)
+                """)
+
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT id, tags FROM entries WHERE tags IS NOT NULL AND tags <> '' AND tags <> '[]'"
+            )
+            for row in rows {
+                let entryId: String = row["id"]
+                let rawTags: String? = row["tags"]
+                let tags = EntryTagsCodec.decode(rawTags)
+                for tag in tags {
+                    try db.execute(
+                        sql: "INSERT OR IGNORE INTO entry_tags (entry_id, tag_lower) VALUES (?, ?)",
+                        arguments: [entryId, tag.lowercased()]
+                    )
+                }
+            }
         }
     }
 }

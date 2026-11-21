@@ -275,13 +275,65 @@ final class PanelService {
         return onPanelKeyEvent(event)
     }
 
-    /// True when the focused editor holds a non-empty selection. ⌘C must keep
-    /// its "copy the highlighted text" meaning in that case.
+    /// True when the focused editor or preview overlay holds a non-empty selection. ⌘C must keep
+    /// its "copy the highlighted text" meaning in that case instead of copying the whole entry.
     static func hasActiveTextSelection(in window: NSWindow?) -> Bool {
-        guard let textView = window?.firstResponder as? NSTextView else {
+        guard let window else {
             return false
         }
-        return textView.selectedRange().length > 0
+        if let textView = window.firstResponder as? NSTextView,
+           textView.selectedRange().length > 0 {
+            return true
+        }
+        if let control = window.firstResponder as? NSControl,
+           let editor = control.currentEditor() as? NSTextView,
+           editor.selectedRange().length > 0 {
+            return true
+        }
+        if let responderView = window.firstResponder as? NSView,
+           let selectedText = responderView.accessibilitySelectedText(),
+           !selectedText.isEmpty {
+            return true
+        }
+        if containsNonEmptySelection(in: window.contentView) {
+            return true
+        }
+        for childWindow in window.childWindows ?? [] where childWindow.isVisible {
+            if let textView = childWindow.firstResponder as? NSTextView,
+               textView.selectedRange().length > 0 {
+                return true
+            }
+            if let responderView = childWindow.firstResponder as? NSView,
+               let selectedText = responderView.accessibilitySelectedText(),
+               !selectedText.isEmpty {
+                return true
+            }
+            if containsNonEmptySelection(in: childWindow.contentView) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func containsNonEmptySelection(in rootView: NSView?) -> Bool {
+        guard let rootView, !rootView.isHiddenOrHasHiddenAncestor else {
+            return false
+        }
+        if let textView = rootView as? NSTextView,
+           textView.selectedRange().length > 0 {
+            return true
+        }
+        if String(describing: type(of: rootView)).contains("Text"),
+           let selectedText = rootView.accessibilitySelectedText(),
+           !selectedText.isEmpty {
+            return true
+        }
+        for subview in rootView.subviews {
+            if containsNonEmptySelection(in: subview) {
+                return true
+            }
+        }
+        return false
     }
 
     private func configureWindowButtons(for panel: NSPanel) {

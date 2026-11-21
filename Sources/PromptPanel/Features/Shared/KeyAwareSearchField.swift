@@ -17,16 +17,8 @@ struct KeyAwareSearchField: NSViewRepresentable {
     func makeNSView(context: Context) -> PromptSearchField {
         let field = PromptSearchField()
         field.delegate = context.coordinator
-        field.placeholderAttributedString = NSAttributedString(
-            string: placeholder,
-            attributes: [
-                .foregroundColor: NSColor.labelColor.withAlphaComponent(0.46)
-            ]
-        )
-        // Must match the SwiftUI placeholder drawn on top of this field
-        // (`Design.TextSize.title`), otherwise the text jumps a point when the
-        // user starts typing.
         field.font = .systemFont(ofSize: Design.TextSize.title.rawValue)
+        field.updatePlaceholder(placeholder)
         field.sendsSearchStringImmediately = true
         field.sendsWholeSearchString = false
         // Arrow keys, Tab scope cycling, and Return variants. ⌘-combinations and
@@ -82,6 +74,7 @@ struct KeyAwareSearchField: NSViewRepresentable {
            nsView.stringValue != text || nsView.currentEditor()?.string != text {
             nsView.setDisplayedText(text)
         }
+        nsView.updatePlaceholder(placeholder)
 
         context.coordinator.onMoveSelection = onMoveSelection
         context.coordinator.onSubmit = onSubmit
@@ -168,9 +161,11 @@ struct KeyAwareSearchField: NSViewRepresentable {
                 } else if flags == [.option] {
                     onQuickCreateTodo?()
                     return true
+                } else if flags.isEmpty {
+                    onSubmit?()
+                    return true
                 }
-                onSubmit?()
-                return true
+                return false
             case #selector(NSResponder.cancelOperation(_:)):
                 onEscape?()
                 return true
@@ -233,7 +228,7 @@ struct KeyAwareSearchField: NSViewRepresentable {
                     _ = field.window?.makeFirstResponder(field)
                 }
                 if let editor = field.currentEditor() as? NSTextView {
-                    editor.insertionPointColor = NSColor(srgbRed: 0.49, green: 0.55, blue: 0.97, alpha: 1.0)
+                    editor.insertionPointColor = Constants.VisualStyle.accentNSColor
                 }
                 let endLocation = (field.stringValue as NSString).length
                 field.currentEditor()?.selectedRange = NSRange(location: endLocation, length: 0)
@@ -339,6 +334,7 @@ extension PanelFocusResult {
 
 final class PromptSearchField: NSSearchField {
     var keyHandler: ((NSEvent) -> Bool)?
+    private var rawPlaceholder: String = ""
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -348,6 +344,32 @@ final class PromptSearchField: NSSearchField {
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         configureAppearance()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyAppearance(isFocused: currentEditor() != nil)
+        applyPlaceholderAttributes()
+    }
+
+    func updatePlaceholder(_ placeholder: String) {
+        guard rawPlaceholder != placeholder else { return }
+        rawPlaceholder = placeholder
+        applyPlaceholderAttributes()
+    }
+
+    private func applyPlaceholderAttributes() {
+        if rawPlaceholder.isEmpty {
+            placeholderAttributedString = nil
+            return
+        }
+        placeholderAttributedString = NSAttributedString(
+            string: rawPlaceholder,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: Design.TextSize.title.rawValue),
+                .foregroundColor: NSColor(Constants.VisualStyle.textTertiary)
+            ]
+        )
     }
 
     override func keyDown(with event: NSEvent) {
@@ -431,7 +453,7 @@ final class PromptSearchField: NSSearchField {
 
     private func applyAppearance(isFocused: Bool) {
         if let editor = currentEditor() as? NSTextView {
-            editor.insertionPointColor = NSColor(srgbRed: 0.49, green: 0.55, blue: 0.97, alpha: 1.0)
+            editor.insertionPointColor = Constants.VisualStyle.accentNSColor
         }
         guard let layer else {
             return

@@ -1,6 +1,41 @@
 import AppKit
+import Carbon.HIToolbox
 import KeyboardShortcuts
 import SwiftUI
+
+/// Coordinates global hotkey recording across all `HotkeyRecorderModel` instances
+/// so switching between chips or deallocating an old chip never races on
+/// `KeyboardShortcuts.isEnabled`.
+@MainActor
+final class HotkeyRecordingCoordinator {
+    static let shared = HotkeyRecordingCoordinator()
+
+    private weak var activeModel: HotkeyRecorderModel?
+    private var activeToken: ObjectIdentifier?
+
+    private init() {}
+
+    func beginRecording(_ model: HotkeyRecorderModel) {
+        let token = ObjectIdentifier(model)
+        if let current = activeModel, current !== model {
+            current.cancelFromCoordinator()
+        }
+        activeModel = model
+        activeToken = token
+        KeyboardShortcuts.isEnabled = false
+    }
+
+    func endRecording(_ model: HotkeyRecorderModel) {
+        endRecording(token: ObjectIdentifier(model))
+    }
+
+    func endRecording(token: ObjectIdentifier) {
+        guard activeToken == token else { return }
+        activeModel = nil
+        activeToken = nil
+        KeyboardShortcuts.isEnabled = true
+    }
+}
 
 /// Records the global toggle-panel hotkey using only `KeyboardShortcuts`' public,
 /// non-UI API.
@@ -12,11 +47,6 @@ import SwiftUI
 /// symlink) leaves the bundle with unsealed root contents, which makes `codesign --verify`
 /// exit non-zero; Gatekeeper then blocks the downloaded app and Sparkle refuses to install
 /// it as an update. Driving the shortcut store directly keeps the bundle sealed.
-///
-/// What we give up versus the library's recorder: its "this shortcut is already used by the
-/// <x> menu item / by the system" alerts. macOS silently keeps the existing owner of such a
-/// shortcut, so the user-visible symptom is a hotkey that does nothing — the hint text and
-/// the FAQ both tell the user to pick another combination in that case.
 @MainActor
 final class HotkeyRecorderModel: ObservableObject {
     /// What the event monitor extracts from an `NSEvent`. NSEvent is explicitly non-Sendable,
@@ -64,6 +94,17 @@ final class HotkeyRecorderModel: ObservableObject {
     private nonisolated static let escapeKeyCode: UInt16 = 53
     private nonisolated static let clearKeyCodes: Set<UInt16> = [51, 117]
 
+    /// Terminal control chords that must never be hijacked globally (e.g. Ctrl+C SIGINT,
+    /// Ctrl+D EOF, Ctrl+Z SIGTSTP, Ctrl+\ SIGQUIT, plus line-editing chords).
+    private nonisolated static let terminalReservedControlKeys: Set<KeyboardShortcuts.Key> = [
+        .c, .d, .z, .backslash, .u, .k, .l, .w, .a, .e, .r, .s, .q
+    ]
+
+    /// Standard macOS editing/app shortcuts reserved regardless of menu population.
+    private nonisolated static let systemStandardCommandKeys: Set<KeyboardShortcuts.Key> = [
+        .c, .v, .x, .a, .q, .w, .h, .m
+    ]
+
     /// Pure decision function for a recorded keystroke, so the accept/reject/cancel/clear
     /// rules are unit-testable without synthesising real key events end to end.
     nonisolated static func outcome(for stroke: KeyStroke) -> RecordingOutcome {
@@ -99,6 +140,164 @@ final class HotkeyRecorderModel: ObservableObject {
             .isEmpty
     }
 
+    /// True if `shortcut` is a terminal-reserved control chord (including `Ctrl+C`,
+    /// `Ctrl+D`, `Ctrl+Z`, `Ctrl+\`, etc.) that must never be bound globally.
+    nonisolated static func isTerminalReserved(_ shortcut: KeyboardShortcuts.Shortcut) -> Bool {
+        guard let key = shortcut.key else { return false }
+        let mods = shortcut.modifiers.intersection([.command, .control, .option, .shift])
+        if mods == [.control], terminalReservedControlKeys.contains(key) {
+            return true
+        }
+        if mods == [.control, .shift], (key == .c || key == .d || key == .z || key == .backslash) {
+            return true
+        }
+        return false
+    }
+
+    /// Checks whether `shortcut` conflicts with terminal reserved keys, macOS system
+    /// shortcuts, the app's main menu, or another PromptPanel global hotkey binding.
+    static func conflictReason(
+        for shortcut: KeyboardShortcuts.Shortcut,
+        excluding excludedName: KeyboardShortcuts.Name? = nil
+    ) -> String? {
+        if isTerminalReserved(shortcut) {
+            return "\(shortcut.description) 为终端/系统保留键，禁止绑定"
+        }
+
+        let mods = shortcut.modifiers.intersection([.command, .control, .option, .shift])
+        if mods == [.command], let key = shortcut.key, systemStandardCommandKeys.contains(key) {
+            return "\(shortcut.description) 为系统通用快捷键，禁止绑定"
+        }
+
+        if isTakenBySystem(shortcut) {
+            return "\(shortcut.description) 已被系统快捷键占用"
+        }
+
+        if let menuItem = matchingMainMenuItem(for: shortcut) {
+            let itemTitle = menuItem.title.isEmpty ? "菜单栏项目" : menuItem.title
+            return "\(shortcut.description) 已用于菜单「\(itemTitle)」"
+        }
+
+        if let excludedName,
+           let owner = GlobalHotkeyAction.conflict(for: shortcut, excluding: excludedName) {
+            return "\(shortcut.description) 已用于「\(owner.title)」"
+        }
+
+        return nil
+    }
+
+    nonisolated static func isTakenBySystem(_ shortcut: KeyboardShortcuts.Shortcut) -> Bool {
+        if shortcut == KeyboardShortcuts.Shortcut(.f12, modifiers: []) {
+            return false
+        }
+        var shortcutsUnmanaged: Unmanaged<CFArray>?
+        guard
+            CopySymbolicHotKeys(&shortcutsUnmanaged) == noErr,
+            let shortcuts = shortcutsUnmanaged?.takeRetainedValue() as? [[String: Any]]
+        else {
+            return false
+        }
+        return shortcuts.contains { dict in
+            guard
+                (dict[kHISymbolicHotKeyEnabled] as? Bool) == true,
+                let carbonKeyCode = dict[kHISymbolicHotKeyCode] as? Int,
+                let carbonModifiers = dict[kHISymbolicHotKeyModifiers] as? Int
+            else {
+                return false
+            }
+            return KeyboardShortcuts.Shortcut(
+                carbonKeyCode: carbonKeyCode,
+                carbonModifiers: carbonModifiers
+            ) == shortcut
+        }
+    }
+
+    private static func matchingMainMenuItem(for shortcut: KeyboardShortcuts.Shortcut) -> NSMenuItem? {
+        guard let mainMenu = NSApp.mainMenu,
+              let keyChar = menuKeyEquivalentCharacter(for: shortcut) else {
+            return nil
+        }
+        return findMenuItem(in: mainMenu, keyCharacter: keyChar, modifiers: shortcut.modifiers)
+    }
+
+    private static func findMenuItem(
+        in menu: NSMenu,
+        keyCharacter: String,
+        modifiers: NSEvent.ModifierFlags
+    ) -> NSMenuItem? {
+        for item in menu.items {
+            var itemKey = item.keyEquivalent
+            var itemMods = item.keyEquivalentModifierMask
+            if !itemKey.isEmpty, itemKey.lowercased() != itemKey {
+                itemKey = itemKey.lowercased()
+                itemMods.insert(.shift)
+            }
+            if !itemKey.isEmpty,
+               itemKey == keyCharacter,
+               itemMods.intersection([.command, .control, .option, .shift]) == modifiers.intersection([.command, .control, .option, .shift]) {
+                return item
+            }
+            if let submenu = item.submenu,
+               let match = findMenuItem(in: submenu, keyCharacter: keyCharacter, modifiers: modifiers) {
+                return match
+            }
+        }
+        return nil
+    }
+
+    private static func menuKeyEquivalentCharacter(for shortcut: KeyboardShortcuts.Shortcut) -> String? {
+        if let key = shortcut.key {
+            switch key {
+            case .space: return " "
+            case .return: return "\r"
+            case .tab: return "\t"
+            case .delete: return String(UnicodeScalar(NSBackspaceCharacter)!)
+            case .deleteForward: return String(UnicodeScalar(NSDeleteCharacter)!)
+            case .escape: return "\u{1b}"
+            case .f1: return String(UnicodeScalar(NSF1FunctionKey)!)
+            case .f2: return String(UnicodeScalar(NSF2FunctionKey)!)
+            case .f3: return String(UnicodeScalar(NSF3FunctionKey)!)
+            case .f4: return String(UnicodeScalar(NSF4FunctionKey)!)
+            case .f5: return String(UnicodeScalar(NSF5FunctionKey)!)
+            case .f6: return String(UnicodeScalar(NSF6FunctionKey)!)
+            case .f7: return String(UnicodeScalar(NSF7FunctionKey)!)
+            case .f8: return String(UnicodeScalar(NSF8FunctionKey)!)
+            case .f9: return String(UnicodeScalar(NSF9FunctionKey)!)
+            case .f10: return String(UnicodeScalar(NSF10FunctionKey)!)
+            case .f11: return String(UnicodeScalar(NSF11FunctionKey)!)
+            case .f12: return String(UnicodeScalar(NSF12FunctionKey)!)
+            default: break
+            }
+        }
+
+        guard
+            let source = TISCopyCurrentASCIICapableKeyboardLayoutInputSource()?.takeRetainedValue(),
+            let layoutDataPointer = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)
+        else {
+            return nil
+        }
+        let layoutData = unsafeBitCast(layoutDataPointer, to: CFData.self)
+        guard let ptr = CFDataGetBytePtr(layoutData) else { return nil }
+        let keyLayout = UnsafeRawPointer(ptr).assumingMemoryBound(to: UCKeyboardLayout.self)
+        var deadKeyState: UInt32 = 0
+        var length = 0
+        var chars = [UniChar](repeating: 0, count: 4)
+        let err = UCKeyTranslate(
+            keyLayout,
+            UInt16(shortcut.carbonKeyCode),
+            UInt16(kUCKeyActionDisplay),
+            0,
+            UInt32(LMGetKbdType()),
+            OptionBits(kUCKeyTranslateNoDeadKeysBit),
+            &deadKeyState,
+            4,
+            &length,
+            &chars
+        )
+        guard err == noErr, length > 0 else { return nil }
+        return String(utf16CodeUnits: chars, count: length).lowercased()
+    }
+
     /// `NSEvent.SpecialKey.isFunctionKey` lives inside KeyboardShortcuts and is internal, so
     /// keep our own list. These are the keys macOS lets an app claim on their own.
     private nonisolated static let functionKeys: Set<NSEvent.SpecialKey> = [
@@ -117,7 +316,7 @@ final class HotkeyRecorderModel: ObservableObject {
 
     @Published private(set) var isRecording = false
     @Published private(set) var shortcutDescription: String?
-    /// Set when the last keystroke was refused because another binding owns it.
+    /// Set when the last keystroke was refused because another binding or system rule owns it.
     @Published private(set) var conflictMessage: String?
 
     private var eventMonitor: Any?
@@ -132,21 +331,18 @@ final class HotkeyRecorderModel: ObservableObject {
     }
 
     deinit {
-        // `stopRecording` is main-actor isolated and deinit is not, so tear the monitor down
-        // directly. Leaving a local monitor installed would keep swallowing key events for
-        // the rest of the session, and leaving `KeyboardShortcuts.isEnabled` false would
-        // permanently disable the global hotkey.
         if let eventMonitor {
             NSEvent.removeMonitor(eventMonitor)
-            Task { @MainActor in
-                KeyboardShortcuts.isEnabled = true
-            }
+        }
+        let token = ObjectIdentifier(self)
+        Task { @MainActor in
+            HotkeyRecordingCoordinator.shared.endRecording(token: token)
         }
     }
 
     var displayText: String {
         if isRecording {
-            return conflictMessage ?? "按下快捷键…"
+            return "按下快捷键…"
         }
         return shortcutDescription ?? "未设置"
     }
@@ -173,17 +369,11 @@ final class HotkeyRecorderModel: ObservableObject {
             return
         }
 
-        // The current hotkey is registered with Carbon, which consumes the event before any
-        // local monitor sees it. Without this the user could never re-record the combination
-        // they already have, and recording would toggle the panel instead.
-        KeyboardShortcuts.isEnabled = false
+        HotkeyRecordingCoordinator.shared.beginRecording(self)
         isRecording = true
         conflictMessage = nil
 
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
-            // The monitor runs on the main thread, but its closure is not main-actor typed and
-            // NSEvent is non-Sendable — so reduce the event to plain values here and hop with
-            // those only.
             let stroke = KeyStroke(event: event)
             guard let self else {
                 return event
@@ -191,13 +381,23 @@ final class HotkeyRecorderModel: ObservableObject {
             MainActor.assumeIsolated {
                 self.apply(outcome: Self.outcome(for: stroke))
             }
-            // Always swallow the event while recording so it never reaches the UI behind us.
             return nil
         }
     }
 
     func stopRecording() {
         stopRecording(notify: true)
+    }
+
+    /// Called by `HotkeyRecordingCoordinator` when another recorder starts.
+    /// Does not touch `KeyboardShortcuts.isEnabled` because the new recorder owns it.
+    fileprivate func cancelFromCoordinator() {
+        if let eventMonitor {
+            NSEvent.removeMonitor(eventMonitor)
+            self.eventMonitor = nil
+        }
+        isRecording = false
+        conflictMessage = nil
     }
 
     private func stopRecording(notify: Bool) {
@@ -209,7 +409,7 @@ final class HotkeyRecorderModel: ObservableObject {
             self.eventMonitor = nil
         }
         isRecording = false
-        KeyboardShortcuts.isEnabled = true
+        HotkeyRecordingCoordinator.shared.endRecording(self)
         if notify {
             notifyBindingsChanged()
         }
@@ -223,16 +423,15 @@ final class HotkeyRecorderModel: ObservableObject {
         case .cleared:
             clearShortcut()
         case .rejected:
-            // Keep recording so the user can just try another combination.
+            conflictMessage = "需搭配 ⌘ / ⌥ / ⌃ 修饰键或功能键"
             NSSound.beep()
         case .recorded(let carbonKeyCode, let carbonModifiers):
             let shortcut = KeyboardShortcuts.Shortcut(
                 carbonKeyCode: carbonKeyCode,
                 carbonModifiers: carbonModifiers
             )
-            if let owner = GlobalHotkeyAction.conflict(for: shortcut, excluding: name) {
-                // Keep recording: one keypress must never fire two actions.
-                conflictMessage = "\(shortcut.description) 已用于「\(owner.title)」"
+            if let reason = Self.conflictReason(for: shortcut, excluding: name) {
+                conflictMessage = reason
                 NSSound.beep()
                 return
             }
@@ -251,11 +450,21 @@ struct HotkeyRecorderField: View {
     @StateObject private var model: HotkeyRecorderModel
     private let autoStartRecording: Bool
     private let showsClearButton: Bool
+    private let showsInlineConflict: Bool
+    private let onConflictChange: ((String?) -> Void)?
 
-    init(name: KeyboardShortcuts.Name, autoStartRecording: Bool = false, showsClearButton: Bool = true) {
+    init(
+        name: KeyboardShortcuts.Name,
+        autoStartRecording: Bool = false,
+        showsClearButton: Bool = true,
+        showsInlineConflict: Bool = true,
+        onConflictChange: ((String?) -> Void)? = nil
+    ) {
         _model = StateObject(wrappedValue: HotkeyRecorderModel(name: name))
         self.autoStartRecording = autoStartRecording
         self.showsClearButton = showsClearButton
+        self.showsInlineConflict = showsInlineConflict
+        self.onConflictChange = onConflictChange
     }
 
     private var isConflict: Bool {
@@ -263,55 +472,78 @@ struct HotkeyRecorderField: View {
     }
 
     var body: some View {
-        HStack(spacing: 2) {
-            Button {
-                model.toggleRecording()
-            } label: {
-                Text(model.displayText)
-                    .font(.ui(.body, weight: .medium, mono: !model.isRecording && model.shortcutDescription != nil))
-                    .foregroundStyle(
-                        isConflict
-                            ? Constants.VisualStyle.danger
-                            : (model.isRecording ? Constants.VisualStyle.accent : Constants.VisualStyle.text)
-                    )
-                    .lineLimit(1)
-                    .frame(minWidth: 56, minHeight: Constants.Layout.compactControlHeight)
-                    .padding(.horizontal, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(
-                                isConflict
-                                    ? Constants.VisualStyle.dangerDim
-                                    : (model.isRecording ? Constants.VisualStyle.accentDim : Constants.VisualStyle.inputFill)
-                            )
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .strokeBorder(
-                                model.isRecording
-                                    ? Constants.VisualStyle.accentBorder
-                                    : Constants.VisualStyle.border,
-                                lineWidth: Constants.Layout.hairline
-                            )
-                    )
-                    .roundedHitTarget(cornerRadius: 6)
-            }
-            .buttonStyle(.plain)
-            .help(model.isRecording ? "按下想要的组合键，Esc 取消，Delete 清除" : "点击后按下新的组合键")
-
-            if showsClearButton, model.shortcutDescription != nil, !model.isRecording {
+        VStack(alignment: .trailing, spacing: 4) {
+            HStack(spacing: 2) {
                 Button {
-                    model.clearShortcut()
+                    model.toggleRecording()
                 } label: {
-                    Image(systemName: "xmark")
-                        .font(.icon(.micro, weight: .semibold))
-                        .foregroundStyle(Constants.VisualStyle.textTertiary)
-                        .frame(width: 16, height: 16)
-                        .hoverHighlight(cornerRadius: 4)
-                        .roundedHitTarget(cornerRadius: 4)
+                    Text(model.displayText)
+                        .font(.ui(.body, weight: .medium, mono: !model.isRecording && model.shortcutDescription != nil))
+                        .foregroundStyle(
+                            isConflict
+                                ? Constants.VisualStyle.danger
+                                : (model.isRecording ? Constants.VisualStyle.accent : Constants.VisualStyle.text)
+                        )
+                        .lineLimit(1)
+                        .frame(minWidth: 64, minHeight: Constants.Layout.compactControlHeight)
+                        .padding(.horizontal, 9)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(
+                                    isConflict
+                                        ? Constants.VisualStyle.dangerDim
+                                        : (model.isRecording ? Constants.VisualStyle.accentDim : Constants.VisualStyle.inputFill)
+                                )
+                        )
+                        .hoverHighlight(cornerRadius: 6, isEnabled: !model.isRecording)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .strokeBorder(
+                                    isConflict
+                                        ? Constants.VisualStyle.danger.opacity(0.45)
+                                        : (model.isRecording ? Constants.VisualStyle.accentBorder : Constants.VisualStyle.border),
+                                    lineWidth: model.isRecording ? 1 : Constants.Layout.hairline
+                                )
+                        )
+                        .roundedHitTarget(cornerRadius: 6)
                 }
-                .buttonStyle(.plain)
-                .help("移除这个快捷键")
+                .buttonStyle(PPInteractiveButtonStyle(cornerRadius: 6))
+                .help(model.isRecording ? "按下想要的组合键，Esc 取消，Delete 清除" : "点击后按下新的组合键")
+
+                if showsClearButton, model.shortcutDescription != nil, !model.isRecording {
+                    Button {
+                        model.clearShortcut()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.icon(.micro, weight: .semibold))
+                            .foregroundStyle(Constants.VisualStyle.textTertiary)
+                            .frame(width: Constants.Layout.compactControlHeight - 2, height: Constants.Layout.compactControlHeight)
+                            .hoverHighlight(cornerRadius: 5)
+                            .roundedHitTarget(cornerRadius: 5)
+                    }
+                    .buttonStyle(PPInteractiveButtonStyle(cornerRadius: 5))
+                    .help("移除这个快捷键")
+                }
+            }
+
+            if showsInlineConflict, let conflict = model.conflictMessage, model.isRecording {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.icon(.micro))
+                    Text(conflict)
+                        .font(.ui(.caption))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(Constants.VisualStyle.danger)
+                .frame(maxWidth: 240, alignment: .trailing)
+            }
+        }
+        .onChange(of: model.conflictMessage) { _, newValue in
+            onConflictChange?(model.isRecording ? newValue : nil)
+        }
+        .onChange(of: model.isRecording) { _, isRecording in
+            if !isRecording {
+                onConflictChange?(nil)
             }
         }
         .onAppear {
@@ -320,6 +552,7 @@ struct HotkeyRecorderField: View {
             }
         }
         .onDisappear {
+            onConflictChange?(nil)
             model.stopRecording()
         }
     }
@@ -378,44 +611,86 @@ final class HotkeyBindingsModel: ObservableObject {
 /// All bindings of one global action as removable chips plus an add button.
 struct MultiHotkeyBindingsField: View {
     @StateObject private var model: HotkeyBindingsModel
+    private var _activeConflicts = SwiftUI.State<[String: String]>(initialValue: [:])
+
+    private var activeConflicts: [String: String] {
+        get { _activeConflicts.wrappedValue }
+        nonmutating set { _activeConflicts.wrappedValue = newValue }
+    }
 
     init(action: GlobalHotkeyAction) {
         _model = StateObject(wrappedValue: HotkeyBindingsModel(action: action))
     }
 
-    var body: some View {
-        HStack(spacing: Design.Space.sm) {
-            if model.visibleNames.isEmpty {
-                Text("未设置")
-                    .font(.ui(.body))
-                    .foregroundStyle(Constants.VisualStyle.textQuaternary)
-            }
-            ForEach(model.visibleNames, id: \.rawValue) { name in
-                HotkeyRecorderField(name: name, autoStartRecording: name == model.pendingName)
-                    .id(name.rawValue)
-            }
-            if model.canAddBinding {
-                Button {
-                    model.addBinding()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.icon(.small, weight: .semibold))
-                        .foregroundStyle(Constants.VisualStyle.textSecondary)
-                        .frame(width: Constants.Layout.compactControlHeight, height: Constants.Layout.compactControlHeight)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .strokeBorder(
-                                    Constants.VisualStyle.borderStrong,
-                                    style: StrokeStyle(lineWidth: 1, dash: [3, 2])
-                                )
-                        )
-                        .hoverHighlight(cornerRadius: 6)
-                        .roundedHitTarget(cornerRadius: 6)
-                }
-                .buttonStyle(.plain)
-                .help(model.filledNames.isEmpty ? "添加快捷键" : "再添加一个快捷键（最多 \(GlobalHotkeyAction.maxBindings) 个）")
+    private var currentConflictMessage: String? {
+        for name in model.visibleNames {
+            if let message = activeConflicts[name.rawValue] {
+                return message
             }
         }
-        .fixedSize()
+        return nil
+    }
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            HStack(spacing: Design.Space.sm) {
+                if model.visibleNames.isEmpty {
+                    Text("未设置")
+                        .font(.ui(.body))
+                        .foregroundStyle(Constants.VisualStyle.textTertiary)
+                }
+                ForEach(model.visibleNames, id: \.rawValue) { name in
+                    HotkeyRecorderField(
+                        name: name,
+                        autoStartRecording: name == model.pendingName,
+                        showsInlineConflict: false,
+                        onConflictChange: { message in
+                            if let message {
+                                activeConflicts[name.rawValue] = message
+                            } else {
+                                activeConflicts.removeValue(forKey: name.rawValue)
+                            }
+                        }
+                    )
+                    .id(name.rawValue)
+                }
+                if model.canAddBinding {
+                    Button {
+                        model.addBinding()
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.icon(.small, weight: .semibold))
+                            .foregroundStyle(Constants.VisualStyle.textSecondary)
+                            .frame(width: Constants.Layout.compactControlHeight, height: Constants.Layout.compactControlHeight)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .strokeBorder(
+                                        Constants.VisualStyle.borderStrong,
+                                        style: StrokeStyle(lineWidth: 1, dash: [3, 2])
+                                    )
+                            )
+                            .hoverHighlight(cornerRadius: 6)
+                            .roundedHitTarget(cornerRadius: 6)
+                    }
+                    .buttonStyle(PPInteractiveButtonStyle(cornerRadius: 6))
+                    .help(model.filledNames.isEmpty ? "添加快捷键" : "再添加一个快捷键（最多 \(GlobalHotkeyAction.maxBindings) 个）")
+                }
+            }
+            .fixedSize()
+
+            if let conflict = currentConflictMessage {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.icon(.micro))
+                    Text(conflict)
+                        .font(.ui(.caption))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.trailing)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(Constants.VisualStyle.danger)
+                .frame(maxWidth: 260, alignment: .trailing)
+            }
+        }
     }
 }

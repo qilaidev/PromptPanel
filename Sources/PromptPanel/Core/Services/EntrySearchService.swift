@@ -25,13 +25,15 @@ final class EntrySearchService: @unchecked Sendable {
         query: String,
         currentProjectId: String,
         defaultProjectId: String?,
-        tag: String? = nil
+        tag: String? = nil,
+        limit: Int? = nil
     ) throws -> SearchResult {
         let scoped = try search(
             query: query,
             currentProjectId: currentProjectId,
             defaultProjectId: defaultProjectId,
-            tag: tag
+            tag: tag,
+            limit: limit
         )
         guard currentProjectId != Self.allProjectsScopeId else {
             return SearchResult(entries: scoped, isGlobalFallback: false)
@@ -43,7 +45,8 @@ final class EntrySearchService: @unchecked Sendable {
         let globalMatches = try entryRepository.searchAll(
             query: normalizedQuery,
             tag: tag,
-            excludeArchivedProjects: true
+            excludeArchivedProjects: true,
+            limit: limit
         )
         return SearchResult(entries: globalMatches, isGlobalFallback: !globalMatches.isEmpty)
     }
@@ -52,7 +55,8 @@ final class EntrySearchService: @unchecked Sendable {
         query: String,
         currentProjectId: String,
         defaultProjectId: String?,
-        tag: String? = nil
+        tag: String? = nil,
+        limit: Int? = nil
     ) throws -> [Entry] {
         let startTime = DispatchTime.now().uptimeNanoseconds
         let currentId = currentProjectId
@@ -70,25 +74,31 @@ final class EntrySearchService: @unchecked Sendable {
                 results = try entryRepository.searchAll(
                     query: normalizedQuery,
                     tag: tag,
-                    excludeArchivedProjects: true
+                    excludeArchivedProjects: true,
+                    limit: limit
                 )
             } else if currentId == defaultId {
                 scope = "default_only"
                 includesDefaultProject = false
                 if normalizedQuery.isEmpty, tag == nil {
-                    results = try entryRepository.fetchByProject(currentId)
+                    results = try entryRepository.fetchByProjects([currentId], limit: limit)
                 } else {
                     results = try entryRepository.search(
                         query: normalizedQuery,
                         projectIds: [currentId],
                         currentProjectId: currentId,
-                        tag: tag
+                        tag: tag,
+                        limit: limit
                     )
                 }
             } else if normalizedQuery.isEmpty, tag == nil {
                 scope = "mixed_browse"
                 includesDefaultProject = true
-                results = try entryRepository.fetchMixed(currentProjectId: currentId, defaultProjectId: defaultId)
+                results = try entryRepository.fetchMixed(
+                    currentProjectId: currentId,
+                    defaultProjectId: defaultId,
+                    limit: limit
+                )
             } else {
                 scope = "mixed_search"
                 includesDefaultProject = true
@@ -96,7 +106,8 @@ final class EntrySearchService: @unchecked Sendable {
                     query: normalizedQuery,
                     currentProjectId: currentId,
                     defaultProjectId: defaultId,
-                    tag: tag
+                    tag: tag,
+                    limit: limit
                 )
             }
 

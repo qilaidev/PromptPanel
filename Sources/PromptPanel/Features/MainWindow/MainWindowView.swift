@@ -4,15 +4,20 @@ import SwiftUI
 
 struct MainWindowView: View {
     @ObservedObject var viewModel: MainWindowViewModel
-    private var _isContextDropdownOpen = SwiftUI.State(initialValue: false)
+    private var _isSyncPopoverOpen = SwiftUI.State(initialValue: false)
 
     init(viewModel: MainWindowViewModel) {
         self.viewModel = viewModel
     }
 
     private var isContextDropdownOpen: Bool {
-        get { _isContextDropdownOpen.wrappedValue }
-        nonmutating set { _isContextDropdownOpen.wrappedValue = newValue }
+        get { viewModel.isContextDropdownOpen }
+        nonmutating set { viewModel.isContextDropdownOpen = newValue }
+    }
+
+    private var isSyncPopoverOpen: Bool {
+        get { _isSyncPopoverOpen.wrappedValue }
+        nonmutating set { _isSyncPopoverOpen.wrappedValue = newValue }
     }
 
     var body: some View {
@@ -32,6 +37,7 @@ struct MainWindowView: View {
                         )
                         .padding(.horizontal, 16)
                         .padding(.top, Design.Space.md)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                     }
 
                     Group {
@@ -43,6 +49,7 @@ struct MainWindowView: View {
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .transaction { $0.animation = nil }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(!isContextDropdownOpen)
@@ -71,6 +78,7 @@ struct MainWindowView: View {
                     .padding(.leading, Design.Space.lg)
                     .padding(.top, Constants.Layout.headerHeight + 4)
                     .zIndex(20)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .topLeading)))
             }
         }
         .preferredColorScheme(viewModel.appTheme.preferredColorScheme)
@@ -79,15 +87,22 @@ struct MainWindowView: View {
             minWidth: Constants.MainWindowLayout.minContentSize.width,
             minHeight: Constants.MainWindowLayout.minContentSize.height
         )
-        .transaction { $0.animation = nil }
+        .animation(.easeOut(duration: 0.14), value: isContextDropdownOpen)
+        .animation(.easeOut(duration: 0.14), value: viewModel.bannerMessage != nil)
         .onChange(of: viewModel.selectedTab) { _, _ in
             if isContextDropdownOpen {
                 closeContextDropdownImmediately()
+            }
+            if isSyncPopoverOpen {
+                isSyncPopoverOpen = false
             }
         }
         .onDisappear {
             if isContextDropdownOpen {
                 closeContextDropdownImmediately()
+            }
+            if isSyncPopoverOpen {
+                isSyncPopoverOpen = false
             }
         }
         .sheet(isPresented: Binding(
@@ -108,7 +123,7 @@ struct MainWindowView: View {
             if let draftBinding = entryDraftBinding {
                 EntryEditorSheet(
                     draft: draftBinding,
-                    projects: viewModel.projectOptions,
+                    projects: viewModel.targetProjects(excluding: ""),
                     onSave: viewModel.saveEntryDraft
                 )
             }
@@ -120,7 +135,7 @@ struct MainWindowView: View {
             if let deletionBinding = deleteProjectBinding {
                 ProjectMigrationSheet(
                     state: deletionBinding,
-                    targets: viewModel.projectOptions.filter { $0.id != deletionBinding.wrappedValue.project.id },
+                    targets: viewModel.targetProjects(excluding: deletionBinding.wrappedValue.project.id),
                     onConfirm: viewModel.confirmDeleteProject
                 )
             }
@@ -155,7 +170,9 @@ struct MainWindowView: View {
 
                 Spacer(minLength: 0)
 
-                SettingsPillButton("参考窗口", systemImage: "rectangle.split.2x1") {
+                headerSyncCapsule
+
+                PPActionButton("参考窗口", systemImage: "rectangle.split.2x1", variant: .secondary, size: .compact) {
                     if isContextDropdownOpen {
                         closeContextDropdownImmediately()
                     }
@@ -184,6 +201,146 @@ struct MainWindowView: View {
         )
     }
 
+    private var headerSyncCapsule: some View {
+        HStack(spacing: 1) {
+            Button {
+                if isContextDropdownOpen {
+                    closeContextDropdownImmediately()
+                }
+                if viewModel.syncBadgeState == .unconfigured {
+                    viewModel.selectedTab = .settings
+                    viewModel.selectedSettingsArea = .preferences
+                } else {
+                    viewModel.syncCloudNow()
+                }
+            } label: {
+                SyncStatusBadge(state: viewModel.syncBadgeState, compact: true)
+            }
+            .buttonStyle(PPInteractiveButtonStyle(cornerRadius: 6))
+            .help(
+                viewModel.syncBadgeState == .unconfigured
+                    ? "前往设置配置多设备云端同步"
+                    : "点击立即执行智能双向同步（先拉取云端合并，再推送本地变更）"
+            )
+            .contextMenu {
+                if viewModel.syncBadgeState != .unconfigured {
+                    Button("立即双向同步") {
+                        viewModel.syncCloudNow()
+                    }
+                    Button("仅拉取云端合并到本地") {
+                        viewModel.pullCloudOnly()
+                    }
+                    Divider()
+                }
+                Button("打开同步设置") {
+                    viewModel.selectedTab = .settings
+                    viewModel.selectedSettingsArea = .preferences
+                }
+            }
+
+            if viewModel.syncBadgeState != .unconfigured {
+                Button {
+                    if isContextDropdownOpen {
+                        closeContextDropdownImmediately()
+                    }
+                    isSyncPopoverOpen.toggle()
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.icon(.nano, weight: .semibold))
+                        .foregroundStyle(Constants.VisualStyle.textTertiary)
+                        .frame(width: 18, height: 22)
+                        .hoverHighlight(cornerRadius: 5)
+                        .roundedHitTarget(cornerRadius: 5)
+                }
+                .buttonStyle(PPInteractiveButtonStyle(cornerRadius: 5))
+                .help("查看同步详情与模式")
+                .popover(isPresented: Binding(
+                    get: { isSyncPopoverOpen },
+                    set: { isSyncPopoverOpen = $0 }
+                ), arrowEdge: .bottom) {
+                    headerSyncPopover
+                }
+            }
+        }
+    }
+
+    private var headerSyncPopover: some View {
+        VStack(alignment: .leading, spacing: Design.Space.md) {
+            HStack(spacing: Design.Space.sm) {
+                SyncStatusBadge(state: viewModel.syncBadgeState, compact: false)
+                Spacer(minLength: 8)
+                Text(viewModel.cloudSyncEnabled ? "自动双向同步" : "手动同步")
+                    .font(.ui(.caption, weight: .medium))
+                    .foregroundStyle(Constants.VisualStyle.textSecondary)
+            }
+
+            Rectangle()
+                .fill(Constants.VisualStyle.divider)
+                .frame(height: Constants.Layout.hairline)
+
+            if let report = viewModel.lastSyncReport {
+                VStack(alignment: .leading, spacing: 4) {
+                    syncPopoverRow(label: "上次同步", value: EntryDateFormat.full(report.syncedAt))
+                    syncPopoverRow(label: "执行方向", value: report.direction.displayName)
+                    if let rev = report.remoteRevision ?? viewModel.cloudRemoteRevision {
+                        syncPopoverRow(label: "云端版本", value: "r\(rev)")
+                    }
+                    syncPopoverRow(
+                        label: "拉取统计",
+                        value: "分组 +\(report.pulledProjectsCreated)/更\(report.pulledProjectsUpdated) · 词条 +\(report.pulledEntriesCreated)/更\(report.pulledEntriesUpdated)/删\(report.pulledDeletionsCount)"
+                    )
+                    syncPopoverRow(
+                        label: "推送统计",
+                        value: report.pushedChangesCount > 0 ? "已推送 \(report.pushedChangesCount) 项" : (report.skippedPushReason ?? "本地无新变更")
+                    )
+                    if report.conflictsPreserved > 0 {
+                        syncPopoverRow(label: "冲突留存", value: "\(report.conflictsPreserved) 处（已存历史版本）")
+                    }
+                    if let error = report.errorMessage, !error.isEmpty {
+                        Text(error)
+                            .font(.ui(.caption))
+                            .foregroundStyle(Constants.VisualStyle.danger)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            } else {
+                Text(viewModel.cloudSyncLastStatus)
+                    .font(.ui(.caption))
+                    .foregroundStyle(Constants.VisualStyle.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: Design.Space.sm) {
+                PPActionButton("立即同步", systemImage: "arrow.triangle.2.circlepath", variant: .primary, size: .compact) {
+                    isSyncPopoverOpen = false
+                    viewModel.syncCloudNow()
+                }
+                PPActionButton("打开设置", systemImage: "slider.horizontal.3", variant: .secondary, size: .compact) {
+                    isSyncPopoverOpen = false
+                    viewModel.selectedTab = .settings
+                    viewModel.selectedSettingsArea = .preferences
+                }
+            }
+        }
+        .padding(Design.Space.xl)
+        .frame(width: 310)
+        .background(Constants.VisualStyle.surfaceRaised)
+    }
+
+    private func syncPopoverRow(label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Design.Space.sm) {
+            Text(label)
+                .font(.ui(.caption))
+                .foregroundStyle(Constants.VisualStyle.textTertiary)
+                .frame(width: 56, alignment: .leading)
+            Text(value)
+                .font(.ui(.caption, weight: .medium))
+                .foregroundStyle(Constants.VisualStyle.text)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     private var contextSwitcherPill: some View {
         Button {
             isContextDropdownOpen.toggle()
@@ -196,6 +353,8 @@ struct MainWindowView: View {
                     .font(.ui(.caption, weight: .medium))
                     .foregroundStyle(isContextDropdownOpen ? Constants.VisualStyle.text : Constants.VisualStyle.textSecondary)
                     .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 168, alignment: .leading)
                 Image(systemName: isContextDropdownOpen ? "chevron.up" : "chevron.down")
                     .font(.icon(.micro, weight: .semibold))
                     .foregroundStyle(isContextDropdownOpen ? Constants.VisualStyle.accent : Constants.VisualStyle.textTertiary)
@@ -216,7 +375,7 @@ struct MainWindowView: View {
             .hoverHighlight(cornerRadius: 6, isEnabled: !isContextDropdownOpen)
             .roundedHitTarget(cornerRadius: 6)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PPInteractiveButtonStyle(cornerRadius: 6))
         .help("点击切换当前快捷面板分组")
     }
 
@@ -273,11 +432,7 @@ struct MainWindowView: View {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .fill(Constants.VisualStyle.surfaceRaised)
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(Constants.VisualStyle.borderStrong, lineWidth: Constants.Layout.hairline)
-        )
-        .shadow(color: Color.black.opacity(0.22), radius: 16, x: 0, y: 8)
+        .themedShadow(.popover, cornerRadius: 9)
     }
 
     private func dropdownSectionTitle(_ title: String) -> some View {
@@ -468,7 +623,7 @@ private struct EntryEditorSheet: View {
                         .focused($focusedField, equals: .title)
                 }
 
-                HStack(alignment: .top, spacing: Design.Space.lg) {
+                HStack(alignment: .bottom, spacing: Design.Space.lg) {
                     SheetField(label: "所属项目") {
                         Picker("", selection: $draft.projectId) {
                             ForEach(projects) { project in
@@ -496,8 +651,7 @@ private struct EntryEditorSheet: View {
                             .font(.ui(.title, weight: .medium))
                     }
                     .toggleStyle(.checkbox)
-                    // Sits level with the pickers, below their field labels.
-                    .padding(.top, 21)
+                    .frame(height: 22, alignment: .center)
 
                     Spacer(minLength: 0)
                 }
@@ -540,8 +694,8 @@ private struct EntryEditorSheet: View {
                 TextEditor(text: $draft.content)
                     .font(.ui(.title))
                     .scrollContentBackground(.hidden)
-                    .padding(.horizontal, Design.Space.xs)
-                    .padding(.vertical, 3)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 6)
                     .background(Constants.VisualStyle.surface)
                     .focused($focusedField, equals: .content)
 
@@ -549,8 +703,9 @@ private struct EntryEditorSheet: View {
                     Text("粘贴或输入要记录/执行的内容")
                         .font(.ui(.title))
                         .foregroundStyle(Constants.VisualStyle.textQuaternary)
-                        .padding(.horizontal, Design.Space.md)
-                        .padding(.vertical, Design.Space.sm)
+                        // NSTextView adds 5pt default lineFragmentPadding inside TextEditor.
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
                         .allowsHitTesting(false)
                 }
             }

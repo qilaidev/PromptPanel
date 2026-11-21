@@ -173,8 +173,15 @@ struct CloudSyncEnvelope: Codable, Equatable {
     let entries: [Entry]
     let versions: [EntryVersion]
     let revision: Int?
+    let serverRevision: Int?
+    let serverTime: Date?
     let unchanged: Bool?
     let allowMassDelete: Bool?
+    let expectedRevision: Int?
+    let strictConflict: Bool?
+    let forceOverwrite: Bool?
+    let conflict: Bool?
+    let rebased: Bool?
 
     init(
         schemaVersion: Int = CloudSyncEnvelope.currentSchemaVersion,
@@ -184,8 +191,15 @@ struct CloudSyncEnvelope: Codable, Equatable {
         entries: [Entry],
         versions: [EntryVersion],
         revision: Int? = nil,
+        serverRevision: Int? = nil,
+        serverTime: Date? = nil,
         unchanged: Bool? = nil,
-        allowMassDelete: Bool? = nil
+        allowMassDelete: Bool? = nil,
+        expectedRevision: Int? = nil,
+        strictConflict: Bool? = nil,
+        forceOverwrite: Bool? = nil,
+        conflict: Bool? = nil,
+        rebased: Bool? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.deviceId = deviceId
@@ -194,8 +208,15 @@ struct CloudSyncEnvelope: Codable, Equatable {
         self.entries = entries
         self.versions = versions
         self.revision = revision
+        self.serverRevision = serverRevision
+        self.serverTime = serverTime
         self.unchanged = unchanged
         self.allowMassDelete = allowMassDelete
+        self.expectedRevision = expectedRevision
+        self.strictConflict = strictConflict
+        self.forceOverwrite = forceOverwrite
+        self.conflict = conflict
+        self.rebased = rebased
     }
 
     enum CodingKeys: String, CodingKey {
@@ -206,15 +227,27 @@ struct CloudSyncEnvelope: Codable, Equatable {
         case entries
         case versions
         case revision
+        case serverRevision
+        case serverTime
         case unchanged
         case allowMassDelete
+        case expectedRevision
+        case strictConflict
+        case forceOverwrite
+        case conflict
+        case rebased
     }
 
     private enum SnakeCodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
         case deviceId = "device_id"
         case exportedAt = "exported_at"
+        case serverRevision = "server_revision"
+        case serverTime = "server_time"
         case allowMassDelete = "allow_mass_delete"
+        case expectedRevision = "expected_revision"
+        case strictConflict = "strict_conflict"
+        case forceOverwrite = "force_overwrite"
     }
 
     init(from decoder: Decoder) throws {
@@ -230,7 +263,9 @@ struct CloudSyncEnvelope: Codable, Equatable {
             || container.contains(.entries)
             || container.contains(.versions)
             || container.contains(.revision)
+            || container.contains(.serverRevision)
             || container.contains(.unchanged)
+            || container.contains(.conflict)
         guard hasRecognizedEnvelopeKey else {
             throw DecodingError.dataCorrupted(
                 DecodingError.Context(
@@ -256,9 +291,21 @@ struct CloudSyncEnvelope: Codable, Equatable {
         self.entries = try container.decodeIfPresent([Entry].self, forKey: .entries) ?? []
         self.versions = try container.decodeIfPresent([EntryVersion].self, forKey: .versions) ?? []
         self.revision = try? container.decodeIfPresent(Int.self, forKey: .revision)
+        self.serverRevision = (try? container.decodeIfPresent(Int.self, forKey: .serverRevision))
+            ?? (try? snakeContainer.decodeIfPresent(Int.self, forKey: .serverRevision))
+        self.serverTime = (try? container.decodeIfPresent(Date.self, forKey: .serverTime))
+            ?? (try? snakeContainer.decodeIfPresent(Date.self, forKey: .serverTime))
         self.unchanged = try? container.decodeIfPresent(Bool.self, forKey: .unchanged)
         self.allowMassDelete = (try? container.decodeIfPresent(Bool.self, forKey: .allowMassDelete))
             ?? (try? snakeContainer.decodeIfPresent(Bool.self, forKey: .allowMassDelete))
+        self.expectedRevision = (try? container.decodeIfPresent(Int.self, forKey: .expectedRevision))
+            ?? (try? snakeContainer.decodeIfPresent(Int.self, forKey: .expectedRevision))
+        self.strictConflict = (try? container.decodeIfPresent(Bool.self, forKey: .strictConflict))
+            ?? (try? snakeContainer.decodeIfPresent(Bool.self, forKey: .strictConflict))
+        self.forceOverwrite = (try? container.decodeIfPresent(Bool.self, forKey: .forceOverwrite))
+            ?? (try? snakeContainer.decodeIfPresent(Bool.self, forKey: .forceOverwrite))
+        self.conflict = try? container.decodeIfPresent(Bool.self, forKey: .conflict)
+        self.rebased = try? container.decodeIfPresent(Bool.self, forKey: .rebased)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -272,6 +319,15 @@ struct CloudSyncEnvelope: Codable, Equatable {
         if allowMassDelete == true {
             try container.encode(true, forKey: .allowMassDelete)
         }
+        if let expectedRevision {
+            try container.encode(expectedRevision, forKey: .expectedRevision)
+        }
+        if strictConflict == true {
+            try container.encode(true, forKey: .strictConflict)
+        }
+        if forceOverwrite == true {
+            try container.encode(true, forKey: .forceOverwrite)
+        }
     }
 }
 
@@ -280,11 +336,18 @@ struct CloudSyncSummary: Equatable, Sendable {
     let projectsUpdated: Int
     let entriesCreated: Int
     let entriesUpdated: Int
+    let entriesDeleted: Int
     let mergedUsageUpdates: Int
     let mergedVersions: Int
     let conflictsPreservedInVersions: Int
+    let orphansMigrated: Int
     let protectedEntriesCount: Int
     let protectedProjectsCount: Int
+    let pushedChangesCount: Int
+    let remoteRevision: Int?
+    let actionMode: CloudSyncActionMode
+    let direction: CloudSyncDirection
+    let report: CloudSyncReport?
     let syncedAt: Date
 
     init(
@@ -292,22 +355,36 @@ struct CloudSyncSummary: Equatable, Sendable {
         projectsUpdated: Int,
         entriesCreated: Int,
         entriesUpdated: Int,
+        entriesDeleted: Int = 0,
         mergedUsageUpdates: Int = 0,
         mergedVersions: Int = 0,
         conflictsPreservedInVersions: Int,
+        orphansMigrated: Int = 0,
         protectedEntriesCount: Int = 0,
         protectedProjectsCount: Int = 0,
+        pushedChangesCount: Int = 0,
+        remoteRevision: Int? = nil,
+        actionMode: CloudSyncActionMode = .smartBidirectional,
+        direction: CloudSyncDirection = .bidirectional,
+        report: CloudSyncReport? = nil,
         syncedAt: Date
     ) {
         self.projectsCreated = projectsCreated
         self.projectsUpdated = projectsUpdated
         self.entriesCreated = entriesCreated
         self.entriesUpdated = entriesUpdated
+        self.entriesDeleted = entriesDeleted
         self.mergedUsageUpdates = mergedUsageUpdates
         self.mergedVersions = mergedVersions
         self.conflictsPreservedInVersions = conflictsPreservedInVersions
+        self.orphansMigrated = orphansMigrated
         self.protectedEntriesCount = protectedEntriesCount
         self.protectedProjectsCount = protectedProjectsCount
+        self.pushedChangesCount = pushedChangesCount
+        self.remoteRevision = remoteRevision
+        self.actionMode = actionMode
+        self.direction = direction
+        self.report = report
         self.syncedAt = syncedAt
     }
 
@@ -320,9 +397,11 @@ struct CloudSyncSummary: Equatable, Sendable {
             || projectsUpdated > 0
             || entriesCreated > 0
             || entriesUpdated > 0
+            || entriesDeleted > 0
             || mergedUsageUpdates > 0
             || mergedVersions > 0
             || conflictsPreservedInVersions > 0
+            || orphansMigrated > 0
             || totalProtectedCount > 0
     }
 }
@@ -368,6 +447,7 @@ final class CloudSyncService: @unchecked Sendable {
     private let syncLock = NSLock()
     private var isSyncOperationInFlight = false
     private var armedAllowMassDelete = false
+    private var cachedDeviceId: String?
 
     init(
         dbQueue: DatabaseQueue,
@@ -411,36 +491,123 @@ final class CloudSyncService: @unchecked Sendable {
     // MARK: - Device & Sync Metadata
 
     func deviceId() throws -> String {
-        try dbQueue.write { db in
+        syncLock.lock()
+        if let cached = cachedDeviceId, !cached.isEmpty {
+            syncLock.unlock()
+            return cached
+        }
+        syncLock.unlock()
+
+        if let existing = try dbQueue.read({ db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT value FROM sync_metadata WHERE key = ?",
+                arguments: [SyncMetadataKey.deviceId]
+            )
+        }), !existing.isEmpty {
+            syncLock.lock()
+            cachedDeviceId = existing
+            syncLock.unlock()
+            return existing
+        }
+
+        let resolved = try dbQueue.write { db -> String in
             if let existing = try String.fetchOne(
                 db,
-                sql: "SELECT value FROM sync_metadata WHERE key = 'device_id'"
+                sql: "SELECT value FROM sync_metadata WHERE key = ?",
+                arguments: [SyncMetadataKey.deviceId]
             ), !existing.isEmpty {
                 return existing
             }
             let generated = "mac-\(UUID().uuidString.prefix(8).lowercased())"
             try db.execute(
-                sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('device_id', ?, ?)",
-                arguments: [generated, Date()]
+                sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES (?, ?, ?)",
+                arguments: [SyncMetadataKey.deviceId, generated, Date()]
             )
             return generated
         }
+        syncLock.lock()
+        cachedDeviceId = resolved
+        syncLock.unlock()
+        return resolved
     }
 
     func lastSyncStatus() throws -> String? {
         try dbQueue.read { db in
             try String.fetchOne(
                 db,
-                sql: "SELECT value FROM sync_metadata WHERE key = 'last_sync_summary'"
+                sql: "SELECT value FROM sync_metadata WHERE key = ?",
+                arguments: [SyncMetadataKey.lastSyncSummary]
             )
         }
+    }
+
+    func lastSyncReport() throws -> CloudSyncReport? {
+        guard let rawJSON = try dbQueue.read({ db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT value FROM sync_metadata WHERE key = ?",
+                arguments: [SyncMetadataKey.lastSyncReportJson]
+            )
+        }), let data = rawJSON.data(using: .utf8), !data.isEmpty else {
+            return nil
+        }
+        return try? Self.makeDecoder().decode(CloudSyncReport.self, from: data)
+    }
+
+    func pendingSyncState() throws -> (
+        hasPendingLocalChanges: Bool,
+        hasUsageChanges: Bool,
+        pendingDelta: Int,
+        localSeq: Int,
+        lastSyncedSeq: Int,
+        lastSyncedRevision: Int?
+    ) {
+        try dbQueue.read { db in
+            let localSeq = Self.fetchIntMeta(db, key: SyncMetadataKey.localMutationSeq) ?? 0
+            let lastSyncedSeq = Self.fetchIntMeta(db, key: SyncMetadataKey.lastSyncedMutationSeq) ?? 0
+            let lastRev = Self.fetchIntMeta(db, key: SyncMetadataKey.lastSyncedRevision)
+            let lastContentFP = Self.fetchStringMeta(db, key: SyncMetadataKey.lastSyncedContentFingerprint)
+            let currentContentFP = try Self.computeLocalContentFingerprint(in: db)
+            let usageDirty = Self.fetchStringMeta(db, key: SyncMetadataKey.usageDirty) == "1"
+            let seqDelta = max(0, localSeq - lastSyncedSeq)
+            let hasContentChanges = seqDelta > 0
+                || (lastContentFP != nil && lastContentFP != currentContentFP)
+            return (
+                hasPendingLocalChanges: hasContentChanges,
+                hasUsageChanges: usageDirty,
+                pendingDelta: max(seqDelta, hasContentChanges ? 1 : 0),
+                localSeq: localSeq,
+                lastSyncedSeq: lastSyncedSeq,
+                lastSyncedRevision: lastRev
+            )
+        }
+    }
+
+    private static func fetchStringMeta(_ db: Database, key: String) -> String? {
+        try? String.fetchOne(db, sql: "SELECT value FROM sync_metadata WHERE key = ?", arguments: [key])
+    }
+
+    private static func fetchIntMeta(_ db: Database, key: String) -> Int? {
+        guard let raw = fetchStringMeta(db, key: key) else { return nil }
+        return Int(raw.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private static func saveMeta(_ db: Database, key: String, value: String, date: Date) throws {
+        try db.execute(
+            sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES (?, ?, ?)",
+            arguments: [key, value, date]
+        )
     }
 
     // MARK: - Envelope Export & Merge
 
     func buildLocalEnvelope(
         exportedAt: Date = Date(),
-        allowMassDelete: Bool = false
+        allowMassDelete: Bool = false,
+        expectedRevision: Int? = nil,
+        strictConflict: Bool = false,
+        forceOverwrite: Bool = false
     ) throws -> CloudSyncEnvelope {
         let currentDeviceId = try deviceId()
         return try dbQueue.read { db in
@@ -459,7 +626,10 @@ final class CloudSyncService: @unchecked Sendable {
                 projects: projects,
                 entries: entries,
                 versions: versions,
-                allowMassDelete: allowMassDelete ? true : nil
+                allowMassDelete: allowMassDelete ? true : nil,
+                expectedRevision: expectedRevision,
+                strictConflict: strictConflict ? true : nil,
+                forceOverwrite: forceOverwrite ? true : nil
             )
         }
     }
@@ -493,16 +663,47 @@ final class CloudSyncService: @unchecked Sendable {
         }
     }
 
+    private static func computeLocalContentFingerprint(in db: Database) throws -> String {
+        let row = try Row.fetchOne(
+            db,
+            sql: """
+                SELECT
+                    (SELECT COUNT(*) FROM projects) AS p_count,
+                    (SELECT COALESCE(MAX(updated_at), '') FROM projects) AS p_max_upd,
+                    (SELECT COUNT(*) FROM entries) AS e_count,
+                    (SELECT COALESCE(MAX(updated_at), '') FROM entries) AS e_max_upd,
+                    (SELECT COUNT(*) FROM entry_versions) AS v_count,
+                    (SELECT COALESCE(MAX(created_at), '') FROM entry_versions) AS v_max_created
+                """
+        )
+        guard let row else { return "empty" }
+        let pCount: Int = row["p_count"]
+        let pMaxUpd: String = row["p_max_upd"]
+        let eCount: Int = row["e_count"]
+        let eMaxUpd: String = row["e_max_upd"]
+        let vCount: Int = row["v_count"]
+        let vMaxCreated: String = row["v_max_created"]
+        return "\(pCount)|\(pMaxUpd)|\(eCount)|\(eMaxUpd)|\(vCount)|\(vMaxCreated)"
+    }
+
+    func computeLocalContentFingerprint() throws -> String {
+        try dbQueue.read { db in
+            try Self.computeLocalContentFingerprint(in: db)
+        }
+    }
+
     /// Merges a remote sync envelope into the local database using Last-Write-Wins on `updatedAt`,
     /// while automatically archiving any overwritten local entry content into `entry_versions`,
     /// blocking abnormal mass-tombstone wipes via a high-water-mark circuit breaker, and
-    /// rescuing active entries whose parent project was soft-deleted remotely.
+    /// migrating active entries whose parent project was soft-deleted remotely to the active default group.
     @discardableResult
     func mergeRemoteEnvelope(
         _ envelope: CloudSyncEnvelope,
         allowMassDeletions: Bool = false,
         syncedAt: Date = Date()
     ) throws -> CloudSyncSummary {
+        let effectiveAllowMassDeletions = allowMassDeletions || (envelope.allowMassDelete == true)
+
         // Pre-flight inspection (read-only) to evaluate circuit breaker & throttled backup triggers
         let preflight = try dbQueue.read { db -> (
             localActiveEntries: Int,
@@ -516,10 +717,12 @@ final class CloudSyncService: @unchecked Sendable {
             let localEntries = try Entry.fetchAll(db)
             let localEntriesById = Dictionary(uniqueKeysWithValues: localEntries.map { ($0.id, $0) })
 
-            let localActiveEntries = localEntries.filter { $0.deletedAt == nil }.count
+            // Exclude completed todos from mass-deletion breaker to match server semantics
+            let localActiveEntries = localEntries.filter { $0.deletedAt == nil && !$0.isCompleted }.count
             let highWaterRaw = try String.fetchOne(
                 db,
-                sql: "SELECT value FROM sync_metadata WHERE key = 'high_water_active_entries'"
+                sql: "SELECT value FROM sync_metadata WHERE key = ?",
+                arguments: [SyncMetadataKey.highWaterActiveEntries]
             )
             let highWaterEntries = max(Int(highWaterRaw ?? "") ?? 0, localActiveEntries)
 
@@ -544,7 +747,10 @@ final class CloudSyncService: @unchecked Sendable {
                 if let localEntry = localEntriesById[remoteEntry.id] {
                     if remoteEntry.updatedAt > localEntry.updatedAt {
                         remoteHasMutatingChanges = true
-                        if localEntry.deletedAt == nil && remoteEntry.deletedAt != nil {
+                        if localEntry.deletedAt == nil
+                            && !localEntry.isCompleted
+                            && remoteEntry.deletedAt != nil
+                            && !remoteEntry.isCompleted {
                             remoteDeletingEntries += 1
                         }
                     }
@@ -563,7 +769,7 @@ final class CloudSyncService: @unchecked Sendable {
         }
 
         let shouldBlockMassDeletions: Bool = {
-            guard !allowMassDeletions else { return false }
+            guard !effectiveAllowMassDeletions else { return false }
             let active = preflight.localActiveEntries
             let deleting = preflight.remoteDeletingEntries
             if deleting >= Constants.syncMassDeleteMinEntryCount,
@@ -597,24 +803,31 @@ final class CloudSyncService: @unchecked Sendable {
         var projectsUpdated = 0
         var entriesCreated = 0
         var entriesUpdated = 0
+        var entriesDeleted = 0
         var mergedUsageUpdates = 0
         var mergedVersions = 0
         var conflictsPreserved = 0
+        var orphansMigrated = 0
         var protectedEntriesCount = 0
         var protectedProjectsCount = 0
 
         try dbQueue.write { db in
+            // One-shot preload to eliminate N+1 SQL queries inside merge loops
+            var projectsById = Dictionary(uniqueKeysWithValues: try Project.fetchAll(db).map { ($0.id, $0) })
+            var entriesById = Dictionary(uniqueKeysWithValues: try Entry.fetchAll(db).map { ($0.id, $0) })
+            let allVersions = try EntryVersion.fetchAll(db)
+            var versionsByEntryId: [String: [EntryVersion]] = Dictionary(grouping: allVersions, by: \.entryId)
+            var versionIds = Set(allVersions.map(\.id))
+
             var remappedProjectIds: [String: String] = [:]
-            let localDefaultProject = try Project
-                .filter(Project.Columns.isDefault == true)
-                .fetchOne(db)
-            let localInboxProject = try Project
-                .filter(Project.Columns.groupKind == Project.GroupKind.inbox.rawValue)
-                .fetchOne(db)
+            let localDefaultProject = projectsById.values.first { $0.isDefault && $0.deletedAt == nil }
+                ?? projectsById.values.first { $0.isDefault }
+            let localInboxProject = projectsById.values.first { $0.groupKind == .inbox && $0.deletedAt == nil }
+                ?? projectsById.values.first { $0.groupKind == .inbox }
 
             // 1. Merge Projects
             for remoteProject in envelope.projects {
-                if let localProject = try Project.fetchOne(db, key: remoteProject.id) {
+                if let localProject = projectsById[remoteProject.id] {
                     if remoteProject.updatedAt > localProject.updatedAt {
                         var merged = remoteProject
                         if localProject.isSystemProtected {
@@ -623,15 +836,16 @@ final class CloudSyncService: @unchecked Sendable {
                             merged.isArchived = false
                             merged.deletedAt = nil
                         } else if localProject.deletedAt == nil && remoteProject.deletedAt != nil && shouldBlockMassDeletions {
-                            // Anti-data-loss circuit breaker: preserve local active project and bump updatedAt to heal cloud
                             merged = localProject
                             merged.deletedAt = nil
                             merged.updatedAt = max(syncedAt, remoteProject.updatedAt.addingTimeInterval(1))
                             try merged.update(db)
+                            projectsById[merged.id] = merged
                             protectedProjectsCount += 1
                             continue
                         }
                         try merged.update(db)
+                        projectsById[merged.id] = merged
                         projectsUpdated += 1
                     }
                 } else if remoteProject.isDefault, let localDefault = localDefaultProject {
@@ -639,45 +853,48 @@ final class CloudSyncService: @unchecked Sendable {
                 } else if remoteProject.groupKind == .inbox, let localInbox = localInboxProject {
                     remappedProjectIds[remoteProject.id] = localInbox.id
                 } else {
-                    try remoteProject.insert(db)
-                    if remoteProject.deletedAt == nil {
+                    var toInsert = remoteProject
+                    if toInsert.isSystemProtected && toInsert.deletedAt != nil {
+                        toInsert.deletedAt = nil
+                    }
+                    try toInsert.insert(db)
+                    projectsById[toInsert.id] = toInsert
+                    if toInsert.deletedAt == nil {
                         projectsCreated += 1
                     }
                 }
             }
 
-            let allProjectIds = Set(try String.fetchAll(db, sql: "SELECT id FROM projects"))
-            let fallbackProjectId = localDefaultProject?.id ?? Constants.inboxProjectId
+            let activeDefault = projectsById.values.first { $0.isDefault && $0.deletedAt == nil }
+                ?? projectsById.values.first { $0.deletedAt == nil }
+            let fallbackProjectId = activeDefault?.id ?? localDefaultProject?.id ?? Constants.inboxProjectId
+
+            func recordVersionInMemoryAndDB(_ version: EntryVersion) throws {
+                try version.insert(db)
+                versionIds.insert(version.id)
+                versionsByEntryId[version.entryId, default: []].append(version)
+            }
 
             // 2. Merge Entries with Conflict-to-Version-History & Mass-Deletion Circuit Breaker protection
             for var remoteEntry in envelope.entries {
                 if let mappedId = remappedProjectIds[remoteEntry.projectId] {
                     remoteEntry.projectId = mappedId
-                } else if !allProjectIds.contains(remoteEntry.projectId) {
+                } else if projectsById[remoteEntry.projectId] == nil && remoteEntry.deletedAt == nil {
                     remoteEntry.projectId = fallbackProjectId
                     remoteEntry.updatedAt = max(syncedAt, remoteEntry.updatedAt.addingTimeInterval(0.001))
                 }
 
-                if let localEntry = try Entry.fetchOne(db, key: remoteEntry.id) {
+                if let localEntry = entriesById[remoteEntry.id] {
                     if remoteEntry.updatedAt > localEntry.updatedAt {
                         let isRemoteDeletion = localEntry.deletedAt == nil && remoteEntry.deletedAt != nil
                         let hasContentConflict = localEntry.content != remoteEntry.content
                             || localEntry.title != remoteEntry.title
 
                         if hasContentConflict || isRemoteDeletion {
-                            let maxVer = try Int.fetchOne(
-                                db,
-                                sql: "SELECT COALESCE(MAX(version_number), 0) FROM entry_versions WHERE entry_id = ?",
-                                arguments: [localEntry.id]
-                            ) ?? 0
+                            let existingVersions = versionsByEntryId[localEntry.id] ?? []
+                            var nextVersion = existingVersions.map(\.versionNumber).max() ?? 0
+                            let latestLocalSnapshot = existingVersions.max { $0.versionNumber < $1.versionNumber }
 
-                            // Ensure local state is snapshotted before applying remote overwrite or deletion
-                            let latestLocalSnapshot = try EntryVersion
-                                .filter(EntryVersion.Columns.entryId == localEntry.id)
-                                .order(EntryVersion.Columns.versionNumber.desc)
-                                .fetchOne(db)
-
-                            var nextVersion = maxVer
                             if latestLocalSnapshot?.content != localEntry.content || latestLocalSnapshot?.title != localEntry.title {
                                 nextVersion += 1
                                 let localBackup = EntryVersion(
@@ -688,7 +905,7 @@ final class CloudSyncService: @unchecked Sendable {
                                     changeNote: isRemoteDeletion ? "云端同步删除前本地版本自动留存" : "云端同步前本地版本自动留存",
                                     createdAt: localEntry.updatedAt
                                 )
-                                try localBackup.insert(db)
+                                try recordVersionInMemoryAndDB(localBackup)
                                 conflictsPreserved += 1
                             }
 
@@ -702,11 +919,10 @@ final class CloudSyncService: @unchecked Sendable {
                                     changeNote: "云端同步更新 (\(envelope.deviceId))",
                                     createdAt: remoteEntry.updatedAt
                                 )
-                                try remoteSnapshot.insert(db)
+                                try recordVersionInMemoryAndDB(remoteSnapshot)
                             }
                         }
 
-                        // Keep the higher usage count and more recent lastUsedAt across devices
                         let mergedUseCount = max(localEntry.useCount, remoteEntry.useCount)
                         let mergedLastUsedAt: Date? = {
                             if let localUsed = localEntry.lastUsedAt {
@@ -718,17 +934,20 @@ final class CloudSyncService: @unchecked Sendable {
                             return remoteEntry.lastUsedAt
                         }()
 
-                        if isRemoteDeletion && shouldBlockMassDeletions {
-                            // Circuit breaker tripped: block remote mass tombstone and bump updatedAt so local heals cloud on push
+                        let isCompletedTodo = localEntry.isCompleted || remoteEntry.isCompleted
+                        if isRemoteDeletion && shouldBlockMassDeletions && !isCompletedTodo {
                             var healedLocal = localEntry
                             healedLocal.deletedAt = nil
                             healedLocal.useCount = mergedUseCount
                             healedLocal.lastUsedAt = mergedLastUsedAt
                             healedLocal.updatedAt = max(syncedAt, remoteEntry.updatedAt.addingTimeInterval(1))
-                            if !allProjectIds.contains(healedLocal.projectId) {
+                            if let parent = projectsById[healedLocal.projectId], parent.deletedAt != nil, !parent.isSystemProtected {
+                                healedLocal.projectId = fallbackProjectId
+                            } else if projectsById[healedLocal.projectId] == nil {
                                 healedLocal.projectId = fallbackProjectId
                             }
                             try healedLocal.update(db)
+                            entriesById[healedLocal.id] = healedLocal
                             protectedEntriesCount += 1
                             continue
                         }
@@ -736,14 +955,21 @@ final class CloudSyncService: @unchecked Sendable {
                         remoteEntry.useCount = mergedUseCount
                         remoteEntry.lastUsedAt = mergedLastUsedAt
                         try remoteEntry.update(db)
+                        try EntryRepository.syncTagsIndex(
+                            entryId: remoteEntry.id,
+                            tags: remoteEntry.deletedAt == nil ? remoteEntry.tags : [],
+                            in: db
+                        )
+                        entriesById[remoteEntry.id] = remoteEntry
                         entriesUpdated += 1
+                        if isRemoteDeletion {
+                            entriesDeleted += 1
+                        }
                     } else {
                         let hasContentConflict = localEntry.content != remoteEntry.content
                             || localEntry.title != remoteEntry.title
                         if hasContentConflict {
-                            let existingVersions = try EntryVersion
-                                .filter(EntryVersion.Columns.entryId == localEntry.id)
-                                .fetchAll(db)
+                            let existingVersions = versionsByEntryId[localEntry.id] ?? []
                             let alreadyRecorded = existingVersions.contains {
                                 $0.content == remoteEntry.content && $0.title == remoteEntry.title
                             }
@@ -757,7 +983,7 @@ final class CloudSyncService: @unchecked Sendable {
                                     changeNote: "云端并发历史版本自动留存 (\(envelope.deviceId))",
                                     createdAt: remoteEntry.updatedAt
                                 )
-                                try remoteHistoricalSnapshot.insert(db)
+                                try recordVersionInMemoryAndDB(remoteHistoricalSnapshot)
                                 conflictsPreserved += 1
                             }
                         }
@@ -781,18 +1007,17 @@ final class CloudSyncService: @unchecked Sendable {
                         }
                         if didUpdateUsage {
                             try updatedLocal.update(db)
+                            entriesById[updatedLocal.id] = updatedLocal
                             mergedUsageUpdates += 1
                         }
                     }
                 } else {
                     try remoteEntry.insert(db)
+                    entriesById[remoteEntry.id] = remoteEntry
                     if remoteEntry.deletedAt == nil {
+                        try EntryRepository.syncTagsIndex(entryId: remoteEntry.id, tags: remoteEntry.tags, in: db)
                         entriesCreated += 1
-
-                        let existingVerCount = try EntryVersion
-                            .filter(EntryVersion.Columns.entryId == remoteEntry.id)
-                            .fetchCount(db)
-                        if existingVerCount == 0 {
+                        if (versionsByEntryId[remoteEntry.id] ?? []).isEmpty {
                             let initialSnapshot = EntryVersion(
                                 entryId: remoteEntry.id,
                                 versionNumber: 1,
@@ -801,89 +1026,77 @@ final class CloudSyncService: @unchecked Sendable {
                                 changeNote: "从云端同步拉取 (\(envelope.deviceId))",
                                 createdAt: remoteEntry.createdAt
                             )
-                            try initialSnapshot.insert(db)
+                            try recordVersionInMemoryAndDB(initialSnapshot)
                         }
                     }
                 }
             }
 
-            // 3. Rescue Orphan Active Entries & Revive Non-Empty Soft-Deleted Projects
-            // In PromptPanel, a project cannot legitimately be deleted while it still holds active entries.
-            // If any active entry points to a soft-deleted project after merge, revive that project so its
-            // entries never become hidden/orphaned, and bump updatedAt so the revived project heals the cloud.
-            let projectIdsWithActiveEntries = try String.fetchAll(
-                db,
-                sql: "SELECT DISTINCT project_id FROM entries WHERE deleted_at IS NULL"
-            )
-            for pid in projectIdsWithActiveEntries {
-                if var project = try Project.fetchOne(db, key: pid) {
+            // 3. Reconcile active entries whose parent project is soft-deleted or missing:
+            // System-protected groups heal; non-builtin soft-deleted groups stay deleted
+            // and their orphaned active entries migrate to the active default group.
+            for (entryId, var entry) in entriesById where entry.deletedAt == nil {
+                if var project = projectsById[entry.projectId] {
                     if project.deletedAt != nil {
-                        project.deletedAt = nil
-                        project.updatedAt = max(syncedAt, project.updatedAt.addingTimeInterval(1))
-                        try project.update(db)
-                        protectedProjectsCount += 1
+                        if project.isSystemProtected {
+                            project.deletedAt = nil
+                            project.updatedAt = max(syncedAt, project.updatedAt.addingTimeInterval(1))
+                            try project.update(db)
+                            projectsById[project.id] = project
+                            protectedProjectsCount += 1
+                        } else if fallbackProjectId != entry.projectId {
+                            entry.projectId = fallbackProjectId
+                            entry.updatedAt = max(syncedAt, entry.updatedAt.addingTimeInterval(0.001))
+                            try entry.update(db)
+                            entriesById[entryId] = entry
+                            orphansMigrated += 1
+                        }
                     }
-                } else {
-                    let healedAt = syncedAt
-                    try db.execute(
-                        sql: "UPDATE entries SET project_id = ?, updated_at = ? WHERE project_id = ? AND deleted_at IS NULL",
-                        arguments: [fallbackProjectId, healedAt, pid]
-                    )
+                } else if fallbackProjectId != entry.projectId {
+                    entry.projectId = fallbackProjectId
+                    entry.updatedAt = max(syncedAt, entry.updatedAt.addingTimeInterval(0.001))
+                    try entry.update(db)
+                    entriesById[entryId] = entry
+                    orphansMigrated += 1
                 }
             }
 
-            // 4. Merge Explicit Remote Version History
+            // 4. Merge Explicit Remote Version History (in-memory O(1) lookups)
             for remoteVersion in envelope.versions {
-                guard try Entry.fetchOne(db, key: remoteVersion.entryId) != nil else { continue }
-                let existsById = try EntryVersion.fetchOne(db, key: remoteVersion.id) != nil
-                if !existsById {
-                    let existingVersions = try EntryVersion
-                        .filter(EntryVersion.Columns.entryId == remoteVersion.entryId)
-                        .fetchAll(db)
-                    let existsByNumber = existingVersions.contains { $0.versionNumber == remoteVersion.versionNumber }
-                    if !existsByNumber {
-                        try remoteVersion.insert(db)
+                guard entriesById[remoteVersion.entryId] != nil else { continue }
+                guard !versionIds.contains(remoteVersion.id) else { continue }
+                let existingVersions = versionsByEntryId[remoteVersion.entryId] ?? []
+                let existsByNumber = existingVersions.contains { $0.versionNumber == remoteVersion.versionNumber }
+                if !existsByNumber {
+                    try recordVersionInMemoryAndDB(remoteVersion)
+                    mergedVersions += 1
+                } else {
+                    let alreadyHasSameText = existingVersions.contains {
+                        $0.content == remoteVersion.content && $0.title == remoteVersion.title
+                    }
+                    if !alreadyHasSameText {
+                        let maxVer = existingVersions.map(\.versionNumber).max() ?? 0
+                        var renumbered = remoteVersion
+                        renumbered.versionNumber = maxVer + 1
+                        try recordVersionInMemoryAndDB(renumbered)
                         mergedVersions += 1
-                    } else {
-                        let alreadyHasSameText = existingVersions.contains {
-                            $0.content == remoteVersion.content && $0.title == remoteVersion.title
-                        }
-                        if !alreadyHasSameText {
-                            let maxVer = existingVersions.map(\.versionNumber).max() ?? 0
-                            var renumbered = remoteVersion
-                            renumbered.versionNumber = maxVer + 1
-                            try renumbered.insert(db)
-                            mergedVersions += 1
-                        }
                     }
                 }
             }
 
             // 5. Persist High-Water Mark & Sync Metadata
-            let currentActiveEntries = try Entry.filter(Entry.Columns.deletedAt == nil).fetchCount(db)
-            let currentActiveProjects = try Project.filter(Project.Columns.deletedAt == nil).fetchCount(db)
+            let currentActiveEntries = entriesById.values.filter { $0.deletedAt == nil }.count
+            let currentActiveProjects = projectsById.values.filter { $0.deletedAt == nil }.count
             let updatedHighWater = max(preflight.highWaterEntries, currentActiveEntries)
-            try db.execute(
-                sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('high_water_active_entries', ?, ?)",
-                arguments: [String(updatedHighWater), syncedAt]
-            )
-            try db.execute(
-                sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('last_synced_active_entries', ?, ?)",
-                arguments: [String(currentActiveEntries), syncedAt]
-            )
-            try db.execute(
-                sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('last_synced_active_projects', ?, ?)",
-                arguments: [String(currentActiveProjects), syncedAt]
-            )
+            try Self.saveMeta(db, key: SyncMetadataKey.highWaterActiveEntries, value: String(updatedHighWater), date: syncedAt)
+            try Self.saveMeta(db, key: SyncMetadataKey.lastSyncedActiveEntries, value: String(currentActiveEntries), date: syncedAt)
+            try Self.saveMeta(db, key: SyncMetadataKey.lastSyncedActiveProjects, value: String(currentActiveProjects), date: syncedAt)
 
             let protectionSuffix = (protectedEntriesCount + protectedProjectsCount) > 0
                 ? "，防丢拦截保护 \(protectedEntriesCount) 条/\(protectedProjectsCount) 组"
                 : ""
             let summaryText = "上次同步：\(Self.summaryFormatter.string(from: syncedAt))（项目 +\(projectsCreated)/更\(projectsUpdated)，词条 +\(entriesCreated)/更\(entriesUpdated)，冲突版本保护 \(conflictsPreserved)\(protectionSuffix)）"
-            try db.execute(
-                sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('last_sync_summary', ?, ?)",
-                arguments: [summaryText, syncedAt]
-            )
+            try Self.saveMeta(db, key: SyncMetadataKey.lastSyncSummary, value: summaryText, date: syncedAt)
         }
 
         return CloudSyncSummary(
@@ -891,13 +1104,78 @@ final class CloudSyncService: @unchecked Sendable {
             projectsUpdated: projectsUpdated,
             entriesCreated: entriesCreated,
             entriesUpdated: entriesUpdated,
+            entriesDeleted: entriesDeleted,
             mergedUsageUpdates: mergedUsageUpdates,
             mergedVersions: mergedVersions,
             conflictsPreservedInVersions: conflictsPreserved,
+            orphansMigrated: orphansMigrated,
             protectedEntriesCount: protectedEntriesCount,
             protectedProjectsCount: protectedProjectsCount,
+            remoteRevision: envelope.serverRevision ?? envelope.revision,
             syncedAt: syncedAt
         )
+    }
+
+    // MARK: - Trash (Recent 30 Days Soft-Deleted Entries) & Targeted Restore
+
+    func fetchRecentSoftDeletedEntries(withinDays days: Int = 30) throws -> [SoftDeletedEntryItem] {
+        let cutoffDate = Date().addingTimeInterval(-TimeInterval(max(1, days) * 86_400))
+        return try dbQueue.read { db in
+            let projects = try Project.fetchAll(db)
+            let projectNames = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0.name) })
+            let deletedEntries = try Entry
+                .filter(Entry.Columns.deletedAt != nil && Entry.Columns.deletedAt >= cutoffDate)
+                .order(Entry.Columns.deletedAt.desc)
+                .fetchAll(db)
+
+            return deletedEntries.compactMap { entry in
+                guard let deletedAt = entry.deletedAt else { return nil }
+                return SoftDeletedEntryItem(
+                    id: entry.id,
+                    title: entry.title,
+                    previewLine: entry.previewLine,
+                    projectId: entry.projectId,
+                    projectName: projectNames[entry.projectId] ?? Constants.defaultProjectName,
+                    type: entry.type,
+                    deletedAt: deletedAt,
+                    updatedAt: entry.updatedAt
+                )
+            }
+        }
+    }
+
+    @discardableResult
+    func restoreSoftDeletedEntries(ids: [String], restoredAt: Date = Date()) throws -> Int {
+        let uniqueIds = Array(Set(ids)).filter { !$0.isEmpty }
+        guard !uniqueIds.isEmpty else { return 0 }
+        return try dbQueue.write { db in
+            let activeProjects = try Project
+                .filter(Project.Columns.deletedAt == nil)
+                .fetchAll(db)
+            let activeProjectIds = Set(activeProjects.map(\.id))
+            let fallbackProjectId = activeProjects.first(where: \.isDefault)?.id
+                ?? activeProjects.first?.id
+                ?? Constants.inboxProjectId
+
+            var restoredCount = 0
+            for id in uniqueIds {
+                guard var entry = try Entry.fetchOne(db, key: id), entry.deletedAt != nil else { continue }
+                entry.deletedAt = nil
+                entry.updatedAt = max(restoredAt, entry.updatedAt.addingTimeInterval(1))
+                if !activeProjectIds.contains(entry.projectId) {
+                    entry.projectId = fallbackProjectId
+                }
+                try entry.update(db)
+                try EntryRepository.syncTagsIndex(entryId: entry.id, tags: entry.tags, in: db)
+                restoredCount += 1
+            }
+
+            if restoredCount > 0 {
+                let currentSeq = Self.fetchIntMeta(db, key: SyncMetadataKey.localMutationSeq) ?? 0
+                try Self.saveMeta(db, key: SyncMetadataKey.localMutationSeq, value: String(currentSeq + 1), date: restoredAt)
+            }
+            return restoredCount
+        }
     }
 
     // MARK: - Local Soft-Delete & History Self-Healing Recovery
@@ -940,6 +1218,7 @@ final class CloudSyncService: @unchecked Sendable {
                     entry.projectId = fallbackProjectId
                 }
                 try entry.update(db)
+                try EntryRepository.syncTagsIndex(entryId: entry.id, tags: entry.tags, in: db)
                 entriesRestored += 1
             }
 
@@ -1126,24 +1405,82 @@ final class CloudSyncService: @unchecked Sendable {
     func syncNow(
         endpoint: String,
         apiKey: String,
+        actionMode: CloudSyncActionMode = .smartBidirectional,
         allowMassDelete: Bool = false,
-        forceFullSync: Bool = false
+        forceFullSync: Bool = false,
+        isAutoSync: Bool = false
     ) async throws -> CloudSyncSummary {
         try acquireSyncSlot()
         defer { releaseSyncSlot() }
         return try await syncNowUnlocked(
             endpoint: endpoint,
             apiKey: apiKey,
+            actionMode: actionMode,
             allowMassDelete: allowMassDelete,
-            forceFullSync: forceFullSync
+            forceFullSync: forceFullSync,
+            isAutoSync: isAutoSync
+        )
+    }
+
+    func syncWithReport(
+        endpoint: String,
+        apiKey: String,
+        actionMode: CloudSyncActionMode = .smartBidirectional,
+        allowMassDelete: Bool = false,
+        forceFullSync: Bool = false,
+        isAutoSync: Bool = false
+    ) async throws -> CloudSyncReport {
+        let summary = try await syncNow(
+            endpoint: endpoint,
+            apiKey: apiKey,
+            actionMode: actionMode,
+            allowMassDelete: allowMassDelete,
+            forceFullSync: forceFullSync,
+            isAutoSync: isAutoSync
+        )
+        if let report = summary.report {
+            return report
+        }
+        if let stored = try lastSyncReport() {
+            return stored
+        }
+        let devId = (try? deviceId()) ?? "mac-local"
+        let pending = try? pendingSyncState()
+        return CloudSyncReport(
+            schemaVersion: CloudSyncEnvelope.currentSchemaVersion,
+            isAutoSync: isAutoSync,
+            modeLabel: isAutoSync ? "自动同步" : "手动模式",
+            actionMode: actionMode,
+            direction: summary.direction,
+            channelKind: endpoint.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("http") ? "https" : "local-file",
+            deviceId: devId,
+            remoteRevision: summary.remoteRevision,
+            pulledProjectsCreated: summary.projectsCreated,
+            pulledProjectsUpdated: summary.projectsUpdated,
+            pulledEntriesCreated: summary.entriesCreated,
+            pulledEntriesUpdated: summary.entriesUpdated,
+            pulledDeletionsCount: summary.entriesDeleted,
+            pushedChangesCount: summary.pushedChangesCount,
+            skippedPushReason: nil,
+            conflictsPreserved: summary.conflictsPreservedInVersions,
+            orphansMigrated: summary.orphansMigrated,
+            protectedEntriesCount: summary.protectedEntriesCount,
+            protectedProjectsCount: summary.protectedProjectsCount,
+            hasPendingLocalChanges: pending?.hasPendingLocalChanges ?? false,
+            pendingLocalMutationDelta: pending?.pendingDelta ?? 0,
+            syncedAt: summary.syncedAt,
+            errorMessage: nil,
+            summaryText: (try? lastSyncStatus()) ?? ""
         )
     }
 
     private func syncNowUnlocked(
         endpoint: String,
         apiKey: String,
+        actionMode: CloudSyncActionMode = .smartBidirectional,
         allowMassDelete: Bool = false,
-        forceFullSync: Bool = false
+        forceFullSync: Bool = false,
+        isAutoSync: Bool = false
     ) async throws -> CloudSyncSummary {
         let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -1152,7 +1489,7 @@ final class CloudSyncService: @unchecked Sendable {
 
         let armedMassDelete = consumeArmedAllowMassDelete()
         let pendingMassDelete = try hasPendingAllowMassDelete()
-        let effectiveAllowMassDelete = allowMassDelete || armedMassDelete || pendingMassDelete
+        let effectiveAllowMassDelete = allowMassDelete || armedMassDelete || pendingMassDelete || (actionMode == .forcePushLocal)
 
         if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") {
             guard var components = URLComponents(string: trimmed) else {
@@ -1170,8 +1507,10 @@ final class CloudSyncService: @unchecked Sendable {
             return try await syncViaHTTP(
                 url: url,
                 apiKey: apiKey,
+                actionMode: actionMode,
                 allowMassDelete: effectiveAllowMassDelete,
-                forceFullSync: forceFullSync
+                forceFullSync: forceFullSync,
+                isAutoSync: isAutoSync
             )
         } else {
             let fileURL: URL
@@ -1184,7 +1523,9 @@ final class CloudSyncService: @unchecked Sendable {
             return try syncViaFile(
                 fileURL: fileURL,
                 apiKey: apiKey,
-                allowMassDelete: effectiveAllowMassDelete
+                actionMode: actionMode,
+                allowMassDelete: effectiveAllowMassDelete,
+                isAutoSync: isAutoSync
             )
         }
     }
@@ -1193,7 +1534,8 @@ final class CloudSyncService: @unchecked Sendable {
         try dbQueue.read { db in
             let raw = try String.fetchOne(
                 db,
-                sql: "SELECT value FROM sync_metadata WHERE key = 'pending_allow_mass_delete'"
+                sql: "SELECT value FROM sync_metadata WHERE key = ?",
+                arguments: [SyncMetadataKey.pendingAllowMassDelete]
             )
             return raw == "1"
         }
@@ -1204,233 +1546,708 @@ final class CloudSyncService: @unchecked Sendable {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
+    private static func fileTargetKey(url: URL, apiKey: String) -> String {
+        let digest = SHA256.hash(data: Data("file:\(url.standardizedFileURL.path)|\(apiKey)".utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private struct LocalSyncCursorState {
+        let localSeq: Int
+        let lastSyncedSeq: Int
+        let lastSyncedRevision: Int?
+        let lastSyncedTargetKey: String?
+        let lastSyncedContentFP: String?
+        let lastSyncedStateFP: String?
+        let usageDirty: Bool
+        let currentContentFP: String
+        let currentStateFP: String
+    }
+
+    private func readLocalSyncCursorState() throws -> LocalSyncCursorState {
+        try dbQueue.read { db in
+            let localSeq = Self.fetchIntMeta(db, key: SyncMetadataKey.localMutationSeq) ?? 0
+            let lastSyncedSeq = Self.fetchIntMeta(db, key: SyncMetadataKey.lastSyncedMutationSeq) ?? 0
+            let lastRev = Self.fetchIntMeta(db, key: SyncMetadataKey.lastSyncedRevision)
+            let lastTarget = Self.fetchStringMeta(db, key: SyncMetadataKey.lastSyncedTargetKey)
+            let lastContentFP = Self.fetchStringMeta(db, key: SyncMetadataKey.lastSyncedContentFingerprint)
+            let lastStateFP = Self.fetchStringMeta(db, key: SyncMetadataKey.lastSyncedFingerprint)
+            let usageDirty = Self.fetchStringMeta(db, key: SyncMetadataKey.usageDirty) == "1"
+            let currentContentFP = try Self.computeLocalContentFingerprint(in: db)
+            let row = try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT
+                        (SELECT COUNT(*) FROM projects) AS p_count,
+                        (SELECT COALESCE(MAX(updated_at), '') FROM projects) AS p_max_upd,
+                        (SELECT COUNT(*) FROM entries) AS e_count,
+                        (SELECT COALESCE(MAX(updated_at), '') FROM entries) AS e_max_upd,
+                        (SELECT COALESCE(MAX(last_used_at), '') FROM entries) AS e_max_used,
+                        (SELECT COALESCE(SUM(use_count), 0) FROM entries) AS e_sum_use,
+                        (SELECT COUNT(*) FROM entry_versions) AS v_count,
+                        (SELECT COALESCE(MAX(created_at), '') FROM entry_versions) AS v_max_created
+                    """
+            )
+            let currentStateFP: String = {
+                guard let row else { return "empty" }
+                let pCount: Int = row["p_count"]
+                let pMaxUpd: String = row["p_max_upd"]
+                let eCount: Int = row["e_count"]
+                let eMaxUpd: String = row["e_max_upd"]
+                let eMaxUsed: String = row["e_max_used"]
+                let eSumUse: Int = row["e_sum_use"]
+                let vCount: Int = row["v_count"]
+                let vMaxCreated: String = row["v_max_created"]
+                return "\(pCount)|\(pMaxUpd)|\(eCount)|\(eMaxUpd)|\(eMaxUsed)|\(eSumUse)|\(vCount)|\(vMaxCreated)"
+            }()
+            return LocalSyncCursorState(
+                localSeq: localSeq,
+                lastSyncedSeq: lastSyncedSeq,
+                lastSyncedRevision: lastRev,
+                lastSyncedTargetKey: lastTarget,
+                lastSyncedContentFP: lastContentFP,
+                lastSyncedStateFP: lastStateFP,
+                usageDirty: usageDirty,
+                currentContentFP: currentContentFP,
+                currentStateFP: currentStateFP
+            )
+        }
+    }
+
+    private func buildAndPersistReport(
+        isAutoSync: Bool,
+        actionMode: CloudSyncActionMode,
+        direction: CloudSyncDirection,
+        channelKind: String,
+        deviceId: String,
+        remoteRevision: Int?,
+        summary: CloudSyncSummary,
+        pushedChangesCount: Int,
+        skippedPushReason: String?,
+        targetKey: String,
+        advanceSyncCursorToSeq: Int?,
+        advanceSyncContentFP: String?,
+        advanceSyncStateFP: String?,
+        clearUsageDirty: Bool,
+        clearPendingMassDelete: Bool,
+        errorMessage: String? = nil
+    ) throws -> CloudSyncReport {
+        let encoder = Self.makeEncoder()
+        return try dbQueue.write { db in
+            if let seq = advanceSyncCursorToSeq {
+                try Self.saveMeta(db, key: SyncMetadataKey.lastSyncedMutationSeq, value: String(seq), date: summary.syncedAt)
+            }
+            if let fp = advanceSyncContentFP {
+                try Self.saveMeta(db, key: SyncMetadataKey.lastSyncedContentFingerprint, value: fp, date: summary.syncedAt)
+            }
+            if let sfp = advanceSyncStateFP {
+                try Self.saveMeta(db, key: SyncMetadataKey.lastSyncedFingerprint, value: sfp, date: summary.syncedAt)
+            }
+            try Self.saveMeta(db, key: SyncMetadataKey.lastSyncedTargetKey, value: targetKey, date: summary.syncedAt)
+            if let rev = remoteRevision {
+                try Self.saveMeta(db, key: SyncMetadataKey.lastSyncedRevision, value: String(rev), date: summary.syncedAt)
+            }
+            if clearUsageDirty {
+                try Self.saveMeta(db, key: SyncMetadataKey.usageDirty, value: "0", date: summary.syncedAt)
+            }
+            if clearPendingMassDelete {
+                try db.execute(
+                    sql: "DELETE FROM sync_metadata WHERE key IN (?, 'pending_user_delete_count')",
+                    arguments: [SyncMetadataKey.pendingAllowMassDelete]
+                )
+            }
+
+            let localSeqNow = Self.fetchIntMeta(db, key: SyncMetadataKey.localMutationSeq) ?? 0
+            let syncedSeqNow = Self.fetchIntMeta(db, key: SyncMetadataKey.lastSyncedMutationSeq) ?? 0
+            let lastContentFPNow = Self.fetchStringMeta(db, key: SyncMetadataKey.lastSyncedContentFingerprint)
+            let currentContentFPNow = try Self.computeLocalContentFingerprint(in: db)
+            let seqDelta = max(0, localSeqNow - syncedSeqNow)
+            let hasPending = seqDelta > 0 || (lastContentFPNow != nil && lastContentFPNow != currentContentFPNow)
+
+            let delSuffix = summary.entriesDeleted > 0 ? "/删\(summary.entriesDeleted)" : ""
+            let protectionSuffix = summary.totalProtectedCount > 0
+                ? "，防丢保护 \(summary.protectedEntriesCount) 条/\(summary.protectedProjectsCount) 组"
+                : ""
+            let orphanSuffix = summary.orphansMigrated > 0
+                ? "，孤儿迁移 \(summary.orphansMigrated)"
+                : ""
+            let revSuffix = remoteRevision.map { "r\($0)" } ?? "--"
+            let pushDesc = pushedChangesCount > 0
+                ? "推送 \(pushedChangesCount) 项"
+                : (skippedPushReason ?? "未推送")
+            let summaryText: String
+            if let errorMessage, !errorMessage.isEmpty {
+                summaryText = "同步异常（\(Self.summaryFormatter.string(from: summary.syncedAt))）：\(errorMessage)"
+            } else if direction == .alignedNoChange {
+                summaryText = "上次同步：\(Self.summaryFormatter.string(from: summary.syncedAt))（\(direction.displayName) · \(revSuffix)）"
+            } else {
+                summaryText = "上次同步：\(Self.summaryFormatter.string(from: summary.syncedAt))（\(direction.displayName) · \(revSuffix) · 项目 +\(summary.projectsCreated)/更\(summary.projectsUpdated)，词条 +\(summary.entriesCreated)/更\(summary.entriesUpdated)\(delSuffix)，\(pushDesc)，冲突留存 \(summary.conflictsPreservedInVersions)\(protectionSuffix)\(orphanSuffix)）"
+            }
+            try Self.saveMeta(db, key: SyncMetadataKey.lastSyncSummary, value: summaryText, date: summary.syncedAt)
+
+            let report = CloudSyncReport(
+                schemaVersion: CloudSyncEnvelope.currentSchemaVersion,
+                isAutoSync: isAutoSync,
+                modeLabel: isAutoSync ? "自动同步" : "手动模式",
+                actionMode: actionMode,
+                direction: direction,
+                channelKind: channelKind,
+                deviceId: deviceId,
+                remoteRevision: remoteRevision,
+                pulledProjectsCreated: summary.projectsCreated,
+                pulledProjectsUpdated: summary.projectsUpdated,
+                pulledEntriesCreated: summary.entriesCreated,
+                pulledEntriesUpdated: summary.entriesUpdated,
+                pulledDeletionsCount: summary.entriesDeleted,
+                pushedChangesCount: pushedChangesCount,
+                skippedPushReason: skippedPushReason,
+                conflictsPreserved: summary.conflictsPreservedInVersions,
+                orphansMigrated: summary.orphansMigrated,
+                protectedEntriesCount: summary.protectedEntriesCount,
+                protectedProjectsCount: summary.protectedProjectsCount,
+                hasPendingLocalChanges: hasPending,
+                pendingLocalMutationDelta: max(seqDelta, hasPending ? 1 : 0),
+                syncedAt: summary.syncedAt,
+                errorMessage: errorMessage,
+                summaryText: summaryText
+            )
+            if let reportData = try? encoder.encode(report),
+               let reportJSON = String(data: reportData, encoding: .utf8) {
+                try Self.saveMeta(db, key: SyncMetadataKey.lastSyncReportJson, value: reportJSON, date: summary.syncedAt)
+            }
+            return report
+        }
+    }
+
+    private func coordinatedReadFile(at fileURL: URL) throws -> (data: Data?, modDate: Date?, sha256: String?) {
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        var coordError: NSError?
+        var readResult: Result<(Data?, Date?, String?), Error> = .success((nil, nil, nil))
+
+        coordinator.coordinate(readingItemAt: fileURL, options: .withoutChanges, error: &coordError) { actualURL in
+            do {
+                guard FileManager.default.fileExists(atPath: actualURL.path) else {
+                    readResult = .success((nil, nil, nil))
+                    return
+                }
+                let data = try Data(contentsOf: actualURL)
+                let attrs = try? FileManager.default.attributesOfItem(atPath: actualURL.path)
+                let modDate = attrs?[.modificationDate] as? Date
+                let hash = Self.sha256Hex(data)
+                readResult = .success((data, modDate, hash))
+            } catch {
+                readResult = .failure(error)
+            }
+        }
+        if let coordError {
+            throw CloudSyncError.networkFailure(coordError.localizedDescription)
+        }
+        return try readResult.get()
+    }
+
     private func syncViaFile(
         fileURL: URL,
         apiKey: String = "",
-        allowMassDelete: Bool = false
+        actionMode: CloudSyncActionMode = .smartBidirectional,
+        allowMassDelete: Bool = false,
+        isAutoSync: Bool = false
     ) throws -> CloudSyncSummary {
         let encoder = Self.makeEncoder()
         let decoder = Self.makeDecoder()
-        let summary: CloudSyncSummary
+        let devId = try deviceId()
+        let targetKey = Self.fileTargetKey(url: fileURL, apiKey: apiKey)
+        let preCursor = try readLocalSyncCursorState()
+        let hasLocalChangesBeforeSync = (preCursor.localSeq != preCursor.lastSyncedSeq)
+            || (preCursor.lastSyncedTargetKey != targetKey)
+            || (preCursor.lastSyncedContentFP == nil)
+            || (preCursor.currentContentFP != preCursor.lastSyncedContentFP)
 
-        if FileManager.default.fileExists(atPath: fileURL.path) {
-            let rawData = try Data(contentsOf: fileURL)
-            if !rawData.isEmpty {
-                do {
-                    let openedData = try CloudSyncCrypto.openEnvelopeData(rawData, apiKey: apiKey)
-                    let remoteEnvelope = try decoder.decode(CloudSyncEnvelope.self, from: openedData)
-                    summary = try mergeRemoteEnvelope(remoteEnvelope, allowMassDeletions: allowMassDelete)
-                } catch let syncErr as CloudSyncError {
-                    throw syncErr
-                } catch {
-                    throw CloudSyncError.invalidPayload(
-                        Self.friendlyPayloadErrorMessage(for: rawData, underlyingError: error)
-                    )
-                }
-            } else {
-                summary = try mergeRemoteEnvelope(buildLocalEnvelope(), allowMassDeletions: allowMassDelete)
-            }
-        } else {
-            let parentDir = fileURL.deletingLastPathComponent()
+        let parentDir = fileURL.deletingLastPathComponent()
+        if !FileManager.default.fileExists(atPath: parentDir.path) {
             try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
-            summary = try mergeRemoteEnvelope(buildLocalEnvelope(), allowMassDeletions: allowMassDelete)
         }
 
-        let mergedEnvelope = try buildLocalEnvelope(allowMassDelete: allowMassDelete)
-        let encoded = try encoder.encode(mergedEnvelope)
-        let sealed = try CloudSyncCrypto.sealEnvelopeData(encoded, apiKey: apiKey)
-        try sealed.write(to: fileURL, options: .atomic)
-        if allowMassDelete {
-            try dbQueue.write { db in
-                try db.execute(sql: "DELETE FROM sync_metadata WHERE key = 'pending_allow_mass_delete'")
-            }
-        }
-        return summary
-    }
-
-    private func syncViaHTTP(
-        url: URL,
-        apiKey: String,
-        allowMassDelete: Bool = false,
-        forceFullSync: Bool = false
-    ) async throws -> CloudSyncSummary {
-        let encoder = Self.makeEncoder()
-        let decoder = Self.makeDecoder()
-        let targetKey = Self.syncTargetKey(url: url, apiKey: apiKey)
-        let currentFingerprint = try computeLocalStateFingerprint()
-
-        let storedPollState = try await dbQueue.read { db -> (revision: Int?, fingerprint: String?) in
-            let storedTarget = try String.fetchOne(
-                db,
-                sql: "SELECT value FROM sync_metadata WHERE key = 'last_synced_target_key'"
-            )
-            guard storedTarget == targetKey else {
-                return (nil, nil)
-            }
-            let revRaw = try String.fetchOne(
-                db,
-                sql: "SELECT value FROM sync_metadata WHERE key = 'last_synced_revision'"
-            )
-            let fp = try String.fetchOne(
-                db,
-                sql: "SELECT value FROM sync_metadata WHERE key = 'last_synced_fingerprint'"
-            )
-            return (revRaw.flatMap(Int.init), fp)
-        }
-
-        let canUseFastPoll = !forceFullSync
-            && !allowMassDelete
-            && storedPollState.revision != nil
-            && storedPollState.fingerprint == currentFingerprint
-
-        let getURL: URL = {
-            guard canUseFastPoll,
-                  let rev = storedPollState.revision,
-                  var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-                return url
-            }
-            var items = comps.queryItems ?? []
-            items.removeAll { $0.name == "since_revision" }
-            items.append(URLQueryItem(name: "since_revision", value: String(rev)))
-            comps.queryItems = items
-            return comps.url ?? url
-        }()
-
-        // 1. Pull remote envelope (GET)
-        var getRequest = URLRequest(url: getURL, timeoutInterval: 15)
-        getRequest.httpMethod = "GET"
-        getRequest.setValue("application/json", forHTTPHeaderField: "Accept")
-        if !apiKey.isEmpty {
-            getRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-            getRequest.setValue("aes-256-gcm+gzip", forHTTPHeaderField: "X-PromptPanel-Cipher")
-        }
-
-        let (getData, getResponse) = try await performAsyncRequest(getRequest)
-        if let httpResponse = getResponse as? HTTPURLResponse {
-            if httpResponse.statusCode == 401 {
-                throw CloudSyncError.networkFailure("Token 鉴权未通过 (HTTP 401)，请确认已填写不少于 12 位的专属 Token")
-            }
-            if !(200..<300).contains(httpResponse.statusCode) && httpResponse.statusCode != 404 {
-                throw CloudSyncError.networkFailure(
-                    Self.friendlyHTTPErrorMessage(statusCode: httpResponse.statusCode, responseData: getData)
-                )
-            }
-        }
-
+        let initialRead = try coordinatedReadFile(at: fileURL)
+        var baselineHash = initialRead.sha256
         var summary: CloudSyncSummary
-        var remoteRevision: Int?
-        if let httpResponse = getResponse as? HTTPURLResponse,
-           (200..<300).contains(httpResponse.statusCode),
-           !getData.isEmpty {
+        var remoteHadFewerActiveEntries = false
+        let remoteWasMissingOrEmpty = (initialRead.data == nil || initialRead.data?.isEmpty == true)
+
+        if actionMode == .forcePushLocal {
+            summary = CloudSyncSummary(
+                projectsCreated: 0,
+                projectsUpdated: 0,
+                entriesCreated: 0,
+                entriesUpdated: 0,
+                conflictsPreservedInVersions: 0,
+                actionMode: actionMode,
+                direction: .forcedLocalOverwrite,
+                syncedAt: Date()
+            )
+        } else if let rawData = initialRead.data, !rawData.isEmpty {
             do {
-                let openedGetData = try CloudSyncCrypto.openEnvelopeData(getData, apiKey: apiKey)
-                let remoteEnvelope = try decoder.decode(CloudSyncEnvelope.self, from: openedGetData)
-                remoteRevision = remoteEnvelope.revision
-                if canUseFastPoll && remoteEnvelope.unchanged == true {
-                    return CloudSyncSummary(
-                        projectsCreated: 0,
-                        projectsUpdated: 0,
-                        entriesCreated: 0,
-                        entriesUpdated: 0,
-                        mergedUsageUpdates: 0,
-                        mergedVersions: 0,
-                        conflictsPreservedInVersions: 0,
-                        syncedAt: Date()
-                    )
+                let openedData = try CloudSyncCrypto.openEnvelopeData(rawData, apiKey: apiKey)
+                let remoteEnvelope = try decoder.decode(CloudSyncEnvelope.self, from: openedData)
+                let localActiveCount = try dbQueue.read { db in
+                    try Entry.filter(Entry.Columns.deletedAt == nil).fetchCount(db)
                 }
+                let remoteActiveCount = remoteEnvelope.entries.filter { $0.deletedAt == nil }.count
+                remoteHadFewerActiveEntries = remoteActiveCount < localActiveCount
                 summary = try mergeRemoteEnvelope(remoteEnvelope, allowMassDeletions: allowMassDelete)
             } catch let syncErr as CloudSyncError {
                 throw syncErr
             } catch {
                 throw CloudSyncError.invalidPayload(
-                    Self.friendlyPayloadErrorMessage(for: getData, underlyingError: error)
+                    Self.friendlyPayloadErrorMessage(for: rawData, underlyingError: error)
                 )
             }
         } else {
             summary = try mergeRemoteEnvelope(buildLocalEnvelope(), allowMassDeletions: allowMassDelete)
         }
 
-        // 2. Push merged envelope (POST) and reconcile any concurrent server-merged delta
-        let mergedEnvelope = try buildLocalEnvelope(allowMassDelete: allowMassDelete)
-        var postRequest = URLRequest(url: url, timeoutInterval: 15)
-        postRequest.httpMethod = "POST"
-        postRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        postRequest.setValue("application/json", forHTTPHeaderField: "Accept")
-        if !apiKey.isEmpty {
-            postRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-            postRequest.setValue("aes-256-gcm+gzip", forHTTPHeaderField: "X-PromptPanel-Cipher")
-        }
-        let rawPostBody = try encoder.encode(mergedEnvelope)
-        postRequest.httpBody = try CloudSyncCrypto.sealEnvelopeData(rawPostBody, apiKey: apiKey)
+        let postMergeCursor = try readLocalSyncCursorState()
+        let needsHealPush = (summary.totalProtectedCount > 0) || (summary.orphansMigrated > 0)
+        let hadConcurrentEdit = (postMergeCursor.localSeq != preCursor.localSeq)
+        let shouldWriteFile = actionMode != .pullOnly && (
+            actionMode == .forcePushLocal
+                || remoteWasMissingOrEmpty
+                || remoteHadFewerActiveEntries
+                || hasLocalChangesBeforeSync
+                || hadConcurrentEdit
+                || needsHealPush
+                || allowMassDelete
+                || (!isAutoSync && (preCursor.usageDirty || postMergeCursor.usageDirty))
+                || (preCursor.lastSyncedStateFP != postMergeCursor.currentStateFP && !isAutoSync)
+        )
 
-        let (postData, postResponse) = try await performAsyncRequest(postRequest)
-        if let httpResponse = postResponse as? HTTPURLResponse,
-           !(200..<300).contains(httpResponse.statusCode) {
-            throw CloudSyncError.networkFailure(
-                Self.friendlyHTTPErrorMessage(statusCode: httpResponse.statusCode, responseData: postData)
-            )
-        }
-        if !postData.isEmpty {
-            do {
-                let openedPostData = try CloudSyncCrypto.openEnvelopeData(postData, apiKey: apiKey)
-                let serverMergedEnvelope = try decoder.decode(CloudSyncEnvelope.self, from: openedPostData)
-                if let rev = serverMergedEnvelope.revision {
-                    remoteRevision = rev
+        var pushedChangesCount = 0
+        var skippedReason: String? = actionMode == .pullOnly ? "仅拉取模式" : nil
+
+        if shouldWriteFile {
+            let coordinator = NSFileCoordinator(filePresenter: nil)
+            var coordError: NSError?
+            var writeResult: Result<Int, Error> = .success(0)
+
+            coordinator.coordinate(
+                readingItemAt: fileURL,
+                options: .withoutChanges,
+                writingItemAt: fileURL,
+                options: .forReplacing,
+                error: &coordError
+            ) { readURL, writeURL in
+                do {
+                    if actionMode == .smartBidirectional,
+                       FileManager.default.fileExists(atPath: readURL.path),
+                       let diskData = try? Data(contentsOf: readURL),
+                       !diskData.isEmpty {
+                        let diskHash = Self.sha256Hex(diskData)
+                        if diskHash != baselineHash {
+                            let opened = try CloudSyncCrypto.openEnvelopeData(diskData, apiKey: apiKey)
+                            let newerRemote = try decoder.decode(CloudSyncEnvelope.self, from: opened)
+                            let remerge = try self.mergeRemoteEnvelope(newerRemote, allowMassDeletions: allowMassDelete)
+                            summary = CloudSyncSummary(
+                                projectsCreated: summary.projectsCreated + remerge.projectsCreated,
+                                projectsUpdated: summary.projectsUpdated + remerge.projectsUpdated,
+                                entriesCreated: summary.entriesCreated + remerge.entriesCreated,
+                                entriesUpdated: summary.entriesUpdated + remerge.entriesUpdated,
+                                entriesDeleted: summary.entriesDeleted + remerge.entriesDeleted,
+                                mergedUsageUpdates: summary.mergedUsageUpdates + remerge.mergedUsageUpdates,
+                                mergedVersions: summary.mergedVersions + remerge.mergedVersions,
+                                conflictsPreservedInVersions: summary.conflictsPreservedInVersions + remerge.conflictsPreservedInVersions,
+                                orphansMigrated: summary.orphansMigrated + remerge.orphansMigrated,
+                                protectedEntriesCount: summary.protectedEntriesCount + remerge.protectedEntriesCount,
+                                protectedProjectsCount: summary.protectedProjectsCount + remerge.protectedProjectsCount,
+                                syncedAt: remerge.syncedAt
+                            )
+                            baselineHash = diskHash
+                        }
+                    }
+
+                    let mergedEnvelope = try self.buildLocalEnvelope(
+                        allowMassDelete: allowMassDelete,
+                        forceOverwrite: actionMode == .forcePushLocal
+                    )
+                    let encoded = try encoder.encode(mergedEnvelope)
+                    let sealed = try CloudSyncCrypto.sealEnvelopeData(encoded, apiKey: apiKey)
+                    try sealed.write(to: writeURL, options: .atomic)
+                    writeResult = .success(mergedEnvelope.entries.count + mergedEnvelope.projects.count)
+                } catch {
+                    writeResult = .failure(error)
                 }
-                let secondPass = try mergeRemoteEnvelope(serverMergedEnvelope, allowMassDeletions: allowMassDelete)
-                summary = CloudSyncSummary(
-                    projectsCreated: summary.projectsCreated + secondPass.projectsCreated,
-                    projectsUpdated: summary.projectsUpdated + secondPass.projectsUpdated,
-                    entriesCreated: summary.entriesCreated + secondPass.entriesCreated,
-                    entriesUpdated: summary.entriesUpdated + secondPass.entriesUpdated,
-                    mergedUsageUpdates: summary.mergedUsageUpdates + secondPass.mergedUsageUpdates,
-                    mergedVersions: summary.mergedVersions + secondPass.mergedVersions,
-                    conflictsPreservedInVersions: summary.conflictsPreservedInVersions + secondPass.conflictsPreservedInVersions,
-                    protectedEntriesCount: summary.protectedEntriesCount + secondPass.protectedEntriesCount,
-                    protectedProjectsCount: summary.protectedProjectsCount + secondPass.protectedProjectsCount,
-                    syncedAt: secondPass.syncedAt
-                )
-            } catch let syncErr as CloudSyncError {
-                throw syncErr
-            } catch {
-                throw CloudSyncError.invalidPayload(
-                    Self.friendlyPayloadErrorMessage(for: postData, underlyingError: error)
-                )
+            }
+            if let coordError {
+                throw CloudSyncError.networkFailure(coordError.localizedDescription)
+            }
+            pushedChangesCount = try writeResult.get()
+        } else if skippedReason == nil {
+            skippedReason = "本地无新变更，未写入"
+        }
+
+        let afterWriteCursor = try readLocalSyncCursorState()
+        let noConcurrentEditDuringWrite = (afterWriteCursor.localSeq == postMergeCursor.localSeq)
+        let direction: CloudSyncDirection = {
+            if actionMode == .forcePushLocal { return .forcedLocalOverwrite }
+            if actionMode == .pullOnly { return .pulledOnly }
+            if pushedChangesCount == 0 && !summary.hasAnyLocalMutation { return .alignedNoChange }
+            if pushedChangesCount == 0 { return .pulledOnly }
+            if !summary.hasAnyLocalMutation { return .pushedOnly }
+            return .bidirectional
+        }()
+
+        let report = try buildAndPersistReport(
+            isAutoSync: isAutoSync,
+            actionMode: actionMode,
+            direction: direction,
+            channelKind: "local-file",
+            deviceId: devId,
+            remoteRevision: nil,
+            summary: summary,
+            pushedChangesCount: pushedChangesCount,
+            skippedPushReason: skippedReason,
+            targetKey: targetKey,
+            advanceSyncCursorToSeq: (shouldWriteFile && noConcurrentEditDuringWrite) ? postMergeCursor.localSeq : (shouldWriteFile ? nil : postMergeCursor.localSeq),
+            advanceSyncContentFP: (shouldWriteFile && noConcurrentEditDuringWrite) ? postMergeCursor.currentContentFP : (shouldWriteFile ? nil : postMergeCursor.currentContentFP),
+            advanceSyncStateFP: (shouldWriteFile && noConcurrentEditDuringWrite) ? postMergeCursor.currentStateFP : nil,
+            clearUsageDirty: shouldWriteFile && noConcurrentEditDuringWrite,
+            clearPendingMassDelete: allowMassDelete && shouldWriteFile
+        )
+
+        return CloudSyncSummary(
+            projectsCreated: summary.projectsCreated,
+            projectsUpdated: summary.projectsUpdated,
+            entriesCreated: summary.entriesCreated,
+            entriesUpdated: summary.entriesUpdated,
+            entriesDeleted: summary.entriesDeleted,
+            mergedUsageUpdates: summary.mergedUsageUpdates,
+            mergedVersions: summary.mergedVersions,
+            conflictsPreservedInVersions: summary.conflictsPreservedInVersions,
+            orphansMigrated: summary.orphansMigrated,
+            protectedEntriesCount: summary.protectedEntriesCount,
+            protectedProjectsCount: summary.protectedProjectsCount,
+            pushedChangesCount: pushedChangesCount,
+            remoteRevision: nil,
+            actionMode: actionMode,
+            direction: direction,
+            report: report,
+            syncedAt: summary.syncedAt
+        )
+    }
+
+    private func syncViaHTTP(
+        url: URL,
+        apiKey: String,
+        actionMode: CloudSyncActionMode = .smartBidirectional,
+        allowMassDelete: Bool = false,
+        forceFullSync: Bool = false,
+        isAutoSync: Bool = false
+    ) async throws -> CloudSyncSummary {
+        let encoder = Self.makeEncoder()
+        let decoder = Self.makeDecoder()
+        let devId = try deviceId()
+        let targetKey = Self.syncTargetKey(url: url, apiKey: apiKey)
+        let preCursor = try readLocalSyncCursorState()
+        let hasLocalChangesBeforeSync = (preCursor.localSeq != preCursor.lastSyncedSeq)
+            || (preCursor.lastSyncedTargetKey != targetKey)
+            || (preCursor.lastSyncedContentFP == nil)
+            || (preCursor.currentContentFP != preCursor.lastSyncedContentFP)
+
+        var summary = CloudSyncSummary(
+            projectsCreated: 0,
+            projectsUpdated: 0,
+            entriesCreated: 0,
+            entriesUpdated: 0,
+            conflictsPreservedInVersions: 0,
+            actionMode: actionMode,
+            direction: .alignedNoChange,
+            syncedAt: Date()
+        )
+        var remoteRevision: Int? = (preCursor.lastSyncedTargetKey == targetKey) ? preCursor.lastSyncedRevision : nil
+        var remoteServerWasEmptyOr404 = false
+
+        if actionMode != .forcePushLocal {
+            let canUseFastPoll = !forceFullSync
+                && !allowMassDelete
+                && actionMode == .smartBidirectional
+                && preCursor.lastSyncedTargetKey == targetKey
+                && preCursor.lastSyncedRevision != nil
+                && !hasLocalChangesBeforeSync
+
+            let getURL: URL = {
+                guard canUseFastPoll,
+                      let rev = preCursor.lastSyncedRevision,
+                      var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+                    return url
+                }
+                var items = comps.queryItems ?? []
+                items.removeAll { $0.name == "since_revision" }
+                items.append(URLQueryItem(name: "since_revision", value: String(rev)))
+                comps.queryItems = items
+                return comps.url ?? url
+            }()
+
+            // 1. Pull remote envelope (GET)
+            var getRequest = URLRequest(url: getURL, timeoutInterval: 15)
+            getRequest.httpMethod = "GET"
+            getRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+            if !apiKey.isEmpty {
+                getRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+                getRequest.setValue("aes-256-gcm+gzip", forHTTPHeaderField: "X-PromptPanel-Cipher")
+            }
+
+            let (getData, getResponse) = try await performAsyncRequest(getRequest)
+            if let httpResponse = getResponse as? HTTPURLResponse {
+                if httpResponse.statusCode == 401 {
+                    throw CloudSyncError.networkFailure("Token 鉴权未通过 (HTTP 401)，请确认已填写不少于 12 位的专属 Token")
+                }
+                if !(200..<300).contains(httpResponse.statusCode) && httpResponse.statusCode != 404 {
+                    throw CloudSyncError.networkFailure(
+                        Self.friendlyHTTPErrorMessage(statusCode: httpResponse.statusCode, responseData: getData)
+                    )
+                }
+            }
+
+            if let httpResponse = getResponse as? HTTPURLResponse,
+               (200..<300).contains(httpResponse.statusCode),
+               !getData.isEmpty {
+                do {
+                    let openedGetData = try CloudSyncCrypto.openEnvelopeData(getData, apiKey: apiKey)
+                    let remoteEnvelope = try decoder.decode(CloudSyncEnvelope.self, from: openedGetData)
+                    remoteRevision = remoteEnvelope.serverRevision ?? remoteEnvelope.revision ?? remoteRevision
+                    if canUseFastPoll && remoteEnvelope.unchanged == true {
+                        let cursorNow = try readLocalSyncCursorState()
+                        let editedDuringPoll = (cursorNow.localSeq != preCursor.localSeq) || (cursorNow.currentContentFP != preCursor.currentContentFP)
+                        let shouldPushUsageNow = !isAutoSync && (preCursor.usageDirty || cursorNow.usageDirty)
+                        if !editedDuringPoll && !shouldPushUsageNow {
+                            let report = try buildAndPersistReport(
+                                isAutoSync: isAutoSync,
+                                actionMode: actionMode,
+                                direction: .alignedNoChange,
+                                channelKind: "https",
+                                deviceId: devId,
+                                remoteRevision: remoteRevision,
+                                summary: summary,
+                                pushedChangesCount: 0,
+                                skippedPushReason: "云端与本地均无新变更",
+                                targetKey: targetKey,
+                                advanceSyncCursorToSeq: cursorNow.localSeq,
+                                advanceSyncContentFP: cursorNow.currentContentFP,
+                                advanceSyncStateFP: cursorNow.currentStateFP,
+                                clearUsageDirty: false,
+                                clearPendingMassDelete: false
+                            )
+                            return CloudSyncSummary(
+                                projectsCreated: 0,
+                                projectsUpdated: 0,
+                                entriesCreated: 0,
+                                entriesUpdated: 0,
+                                conflictsPreservedInVersions: 0,
+                                remoteRevision: remoteRevision,
+                                actionMode: actionMode,
+                                direction: .alignedNoChange,
+                                report: report,
+                                syncedAt: report.syncedAt
+                            )
+                        }
+                    } else {
+                        summary = try mergeRemoteEnvelope(remoteEnvelope, allowMassDeletions: allowMassDelete)
+                    }
+                } catch let syncErr as CloudSyncError {
+                    throw syncErr
+                } catch {
+                    throw CloudSyncError.invalidPayload(
+                        Self.friendlyPayloadErrorMessage(for: getData, underlyingError: error)
+                    )
+                }
+            } else {
+                remoteServerWasEmptyOr404 = true
+                summary = try mergeRemoteEnvelope(buildLocalEnvelope(), allowMassDeletions: allowMassDelete)
             }
         }
 
-        let finalSummary = summary
-        let finalRemoteRevision = remoteRevision
-        let postMergeFingerprint = try computeLocalStateFingerprint()
-        try await dbQueue.write { db in
-            let protectionSuffix = finalSummary.totalProtectedCount > 0
-                ? "，防丢拦截保护 \(finalSummary.protectedEntriesCount) 条/\(finalSummary.protectedProjectsCount) 组"
-                : ""
-            let summaryText = "上次同步：\(Self.summaryFormatter.string(from: finalSummary.syncedAt))（项目 +\(finalSummary.projectsCreated)/更\(finalSummary.projectsUpdated)，词条 +\(finalSummary.entriesCreated)/更\(finalSummary.entriesUpdated)，冲突版本保护 \(finalSummary.conflictsPreservedInVersions)\(protectionSuffix)）"
-            try db.execute(
-                sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('last_sync_summary', ?, ?)",
-                arguments: [summaryText, finalSummary.syncedAt]
-            )
-            try db.execute(
-                sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('last_synced_target_key', ?, ?)",
-                arguments: [targetKey, finalSummary.syncedAt]
-            )
-            try db.execute(
-                sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('last_synced_fingerprint', ?, ?)",
-                arguments: [postMergeFingerprint, finalSummary.syncedAt]
-            )
-            if let finalRemoteRevision {
-                try db.execute(
-                    sql: "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('last_synced_revision', ?, ?)",
-                    arguments: [String(finalRemoteRevision), finalSummary.syncedAt]
+        let postMergeCursor = try readLocalSyncCursorState()
+        let needsHealPush = (summary.totalProtectedCount > 0) || (summary.orphansMigrated > 0)
+        let hadConcurrentEditDuringGet = (postMergeCursor.localSeq != preCursor.localSeq)
+        let shouldPush: Bool = {
+            if actionMode == .pullOnly { return false }
+            if actionMode == .forcePushLocal { return true }
+            return hasLocalChangesBeforeSync
+                || hadConcurrentEditDuringGet
+                || needsHealPush
+                || allowMassDelete
+                || remoteServerWasEmptyOr404
+                || remoteRevision == nil
+                || (!isAutoSync && (preCursor.usageDirty || postMergeCursor.usageDirty))
+        }()
+
+        var pushedChangesCount = 0
+        var skippedPushReason: String? = actionMode == .pullOnly ? "仅拉取模式，未推送本地" : nil
+        var seqCapturedBeforePost = postMergeCursor.localSeq
+        var contentFPCapturedBeforePost = postMergeCursor.currentContentFP
+        var stateFPCapturedBeforePost = postMergeCursor.currentStateFP
+
+        if shouldPush {
+            // 2. Conditional Push (POST) with strictConflict + 409 Pull-Merge-Retry loop (max 2 retries)
+            for attempt in 0..<3 {
+                let beforePostCursor = try readLocalSyncCursorState()
+                seqCapturedBeforePost = beforePostCursor.localSeq
+                contentFPCapturedBeforePost = beforePostCursor.currentContentFP
+                stateFPCapturedBeforePost = beforePostCursor.currentStateFP
+
+                let mergedEnvelope = try buildLocalEnvelope(
+                    allowMassDelete: allowMassDelete,
+                    expectedRevision: remoteRevision,
+                    strictConflict: actionMode == .smartBidirectional && remoteRevision != nil,
+                    forceOverwrite: actionMode == .forcePushLocal
                 )
+                var postRequest = URLRequest(url: url, timeoutInterval: 15)
+                postRequest.httpMethod = "POST"
+                postRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                postRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+                if let rev = remoteRevision, actionMode == .smartBidirectional {
+                    postRequest.setValue("\"rev-\(rev)\"", forHTTPHeaderField: "If-Match")
+                }
+                if !apiKey.isEmpty {
+                    postRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+                    postRequest.setValue("aes-256-gcm+gzip", forHTTPHeaderField: "X-PromptPanel-Cipher")
+                }
+                let rawPostBody = try encoder.encode(mergedEnvelope)
+                postRequest.httpBody = try CloudSyncCrypto.sealEnvelopeData(rawPostBody, apiKey: apiKey)
+
+                let (postData, postResponse) = try await performAsyncRequest(postRequest)
+                let statusCode = (postResponse as? HTTPURLResponse)?.statusCode ?? 0
+
+                if statusCode == 409 && attempt < 2 && actionMode == .smartBidirectional {
+                    if !postData.isEmpty {
+                        let openedConflict = try CloudSyncCrypto.openEnvelopeData(postData, apiKey: apiKey)
+                        let conflictEnv = try decoder.decode(CloudSyncEnvelope.self, from: openedConflict)
+                        remoteRevision = conflictEnv.serverRevision ?? conflictEnv.revision ?? remoteRevision
+                        let conflictPass = try mergeRemoteEnvelope(conflictEnv, allowMassDeletions: allowMassDelete)
+                        summary = Self.combineSummaries(summary, conflictPass)
+                    }
+                    continue
+                }
+
+                guard (200..<300).contains(statusCode) else {
+                    throw CloudSyncError.networkFailure(
+                        Self.friendlyHTTPErrorMessage(statusCode: statusCode, responseData: postData)
+                    )
+                }
+
+                pushedChangesCount = max(1, beforePostCursor.localSeq - beforePostCursor.lastSyncedSeq)
+                if !postData.isEmpty {
+                    do {
+                        let openedPostData = try CloudSyncCrypto.openEnvelopeData(postData, apiKey: apiKey)
+                        let serverMergedEnvelope = try decoder.decode(CloudSyncEnvelope.self, from: openedPostData)
+                        if let rev = serverMergedEnvelope.serverRevision ?? serverMergedEnvelope.revision {
+                            remoteRevision = rev
+                        }
+                        if actionMode != .forcePushLocal {
+                            let secondPass = try mergeRemoteEnvelope(serverMergedEnvelope, allowMassDeletions: allowMassDelete)
+                            summary = Self.combineSummaries(summary, secondPass)
+                        }
+                    } catch let syncErr as CloudSyncError {
+                        throw syncErr
+                    } catch {
+                        throw CloudSyncError.invalidPayload(
+                            Self.friendlyPayloadErrorMessage(for: postData, underlyingError: error)
+                        )
+                    }
+                }
+                break
             }
-            if allowMassDelete {
-                try db.execute(sql: "DELETE FROM sync_metadata WHERE key = 'pending_allow_mass_delete'")
-            }
+        } else if skippedPushReason == nil {
+            skippedPushReason = "本地无新变更，未推送"
         }
 
-        return summary
+        let afterSyncCursor = try readLocalSyncCursorState()
+        let noConcurrentEditDuringPost = (afterSyncCursor.localSeq == seqCapturedBeforePost)
+            && (afterSyncCursor.currentContentFP == contentFPCapturedBeforePost || !shouldPush)
+
+        let advanceSeq: Int? = {
+            if !shouldPush {
+                return (actionMode == .pullOnly) ? nil : afterSyncCursor.localSeq
+            }
+            return noConcurrentEditDuringPost ? seqCapturedBeforePost : nil
+        }()
+        let advanceContentFP: String? = {
+            if !shouldPush {
+                return (actionMode == .pullOnly) ? nil : afterSyncCursor.currentContentFP
+            }
+            return noConcurrentEditDuringPost ? afterSyncCursor.currentContentFP : nil
+        }()
+        let advanceStateFP: String? = (shouldPush && noConcurrentEditDuringPost) ? afterSyncCursor.currentStateFP : (shouldPush ? nil : stateFPCapturedBeforePost)
+
+        let direction: CloudSyncDirection = {
+            if actionMode == .forcePushLocal { return .forcedLocalOverwrite }
+            if actionMode == .pullOnly { return .pulledOnly }
+            if pushedChangesCount == 0 && !summary.hasAnyLocalMutation { return .alignedNoChange }
+            if pushedChangesCount == 0 { return .pulledOnly }
+            if !summary.hasAnyLocalMutation { return .pushedOnly }
+            return .bidirectional
+        }()
+
+        let report = try buildAndPersistReport(
+            isAutoSync: isAutoSync,
+            actionMode: actionMode,
+            direction: direction,
+            channelKind: "https",
+            deviceId: devId,
+            remoteRevision: remoteRevision,
+            summary: summary,
+            pushedChangesCount: pushedChangesCount,
+            skippedPushReason: skippedPushReason,
+            targetKey: targetKey,
+            advanceSyncCursorToSeq: advanceSeq,
+            advanceSyncContentFP: advanceContentFP,
+            advanceSyncStateFP: advanceStateFP,
+            clearUsageDirty: shouldPush && noConcurrentEditDuringPost,
+            clearPendingMassDelete: allowMassDelete && shouldPush
+        )
+
+        return CloudSyncSummary(
+            projectsCreated: summary.projectsCreated,
+            projectsUpdated: summary.projectsUpdated,
+            entriesCreated: summary.entriesCreated,
+            entriesUpdated: summary.entriesUpdated,
+            entriesDeleted: summary.entriesDeleted,
+            mergedUsageUpdates: summary.mergedUsageUpdates,
+            mergedVersions: summary.mergedVersions,
+            conflictsPreservedInVersions: summary.conflictsPreservedInVersions,
+            orphansMigrated: summary.orphansMigrated,
+            protectedEntriesCount: summary.protectedEntriesCount,
+            protectedProjectsCount: summary.protectedProjectsCount,
+            pushedChangesCount: pushedChangesCount,
+            remoteRevision: remoteRevision,
+            actionMode: actionMode,
+            direction: direction,
+            report: report,
+            syncedAt: summary.syncedAt
+        )
+    }
+
+    private static func combineSummaries(_ lhs: CloudSyncSummary, _ rhs: CloudSyncSummary) -> CloudSyncSummary {
+        CloudSyncSummary(
+            projectsCreated: lhs.projectsCreated + rhs.projectsCreated,
+            projectsUpdated: lhs.projectsUpdated + rhs.projectsUpdated,
+            entriesCreated: lhs.entriesCreated + rhs.entriesCreated,
+            entriesUpdated: lhs.entriesUpdated + rhs.entriesUpdated,
+            entriesDeleted: lhs.entriesDeleted + rhs.entriesDeleted,
+            mergedUsageUpdates: lhs.mergedUsageUpdates + rhs.mergedUsageUpdates,
+            mergedVersions: lhs.mergedVersions + rhs.mergedVersions,
+            conflictsPreservedInVersions: lhs.conflictsPreservedInVersions + rhs.conflictsPreservedInVersions,
+            orphansMigrated: lhs.orphansMigrated + rhs.orphansMigrated,
+            protectedEntriesCount: lhs.protectedEntriesCount + rhs.protectedEntriesCount,
+            protectedProjectsCount: lhs.protectedProjectsCount + rhs.protectedProjectsCount,
+            pushedChangesCount: max(lhs.pushedChangesCount, rhs.pushedChangesCount),
+            remoteRevision: rhs.remoteRevision ?? lhs.remoteRevision,
+            actionMode: lhs.actionMode,
+            direction: lhs.direction,
+            report: rhs.report ?? lhs.report,
+            syncedAt: rhs.syncedAt
+        )
     }
 
     private func performAsyncRequest(_ request: URLRequest, maxAttempts: Int = 2) async throws -> (Data, URLResponse) {

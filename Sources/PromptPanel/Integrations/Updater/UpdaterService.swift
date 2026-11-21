@@ -102,7 +102,7 @@ final class UpdaterService: NSObject, ObservableObject {
     private let feedDelegate: FeedDelegate?
     private let updaterController: SPUStandardUpdaterController?
     private var canCheckObservation: NSKeyValueObservation?
-    private var periodicTimer: Timer?
+    private nonisolated(unsafe) var periodicTimer: Timer?
     private var isStarted = false
     private(set) var isUpdateFlowInFlight = false
     private var stagedCandidate: ReleaseCandidate?
@@ -135,6 +135,22 @@ final class UpdaterService: NSObject, ObservableObject {
             }
         } else {
             self.canCheckForUpdates = true
+        }
+    }
+
+    deinit {
+        guard let timer = periodicTimer else { return }
+        periodicTimer = nil
+        if Thread.isMainThread {
+            timer.invalidate()
+        } else {
+            struct UncheckedTimerBox: @unchecked Sendable {
+                let timer: Timer
+            }
+            let box = UncheckedTimerBox(timer: timer)
+            DispatchQueue.main.async {
+                box.timer.invalidate()
+            }
         }
     }
 

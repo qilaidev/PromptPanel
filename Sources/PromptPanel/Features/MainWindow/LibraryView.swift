@@ -5,6 +5,10 @@ struct LibraryView: View {
     @ObservedObject var viewModel: MainWindowViewModel
     @FocusState private var isEntrySearchFocused: Bool
     private var isQuickJotFocusedState = SwiftUI.State<Bool>(initialValue: false)
+    private var sidebarWidthState = SwiftUI.State<CGFloat>(initialValue: 198)
+    private var entriesWidthState = SwiftUI.State<CGFloat>(initialValue: 318)
+    private var sidebarDragStartState = SwiftUI.State<CGFloat?>(initialValue: nil)
+    private var entriesDragStartState = SwiftUI.State<CGFloat?>(initialValue: nil)
 
     init(viewModel: MainWindowViewModel) {
         self.viewModel = viewModel
@@ -15,30 +19,53 @@ struct LibraryView: View {
         nonmutating set { isQuickJotFocusedState.wrappedValue = newValue }
     }
 
+    private var sidebarWidth: CGFloat {
+        get { sidebarWidthState.wrappedValue }
+        nonmutating set { sidebarWidthState.wrappedValue = newValue }
+    }
+
+    private var entriesWidth: CGFloat {
+        get { entriesWidthState.wrappedValue }
+        nonmutating set { entriesWidthState.wrappedValue = newValue }
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             projectsColumn
-                .frame(width: 196)
-                .background(Constants.VisualStyle.sidebar)
+                .frame(width: sidebarWidth)
+                .background(
+                    ZStack {
+                        VisualEffectMaterialView(
+                            material: .sidebar,
+                            blendingMode: .withinWindow,
+                            state: .followsWindowActiveState
+                        )
+                        Constants.VisualStyle.sidebar.opacity(0.65)
+                    }
+                )
 
-            verticalDivider
+            ResizableColumnDivider(
+                width: sidebarWidthState.projectedValue,
+                dragStartWidth: sidebarDragStartState.projectedValue,
+                range: 168...272,
+                defaultWidth: 198
+            )
 
             entriesColumn
-                .frame(width: 312)
+                .frame(width: entriesWidth)
                 .background(Constants.VisualStyle.surface)
 
-            verticalDivider
+            ResizableColumnDivider(
+                width: entriesWidthState.projectedValue,
+                dragStartWidth: entriesDragStartState.projectedValue,
+                range: 268...440,
+                defaultWidth: 318
+            )
 
             PreviewPane(viewModel: viewModel, inlineSession: viewModel.inlineSession)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Constants.VisualStyle.surfaceRaised)
         }
-    }
-
-    private var verticalDivider: some View {
-        Rectangle()
-            .fill(Constants.VisualStyle.divider)
-            .frame(width: Constants.Layout.hairline)
     }
 
     private var horizontalDivider: some View {
@@ -250,8 +277,7 @@ struct LibraryView: View {
             Divider()
 
             Button("删除…", role: .destructive) {
-                viewModel.selectedProjectId = project.id
-                viewModel.requestDeleteSelectedProject()
+                viewModel.requestDeleteProject(project)
             }
         }
     }
@@ -479,17 +505,7 @@ struct LibraryView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, isQuickJotExpanded ? 6 : 0)
         .frame(minHeight: Constants.Layout.regularControlHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Constants.VisualStyle.inputFill)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(
-                    isQuickJotExpanded ? Constants.VisualStyle.accentBorder : Constants.VisualStyle.border,
-                    lineWidth: Constants.Layout.hairline
-                )
-        )
+        .focusableInputSurface(isFocused: isQuickJotExpanded, cornerRadius: 6)
         .animation(.easeInOut(duration: 0.14), value: isQuickJotExpanded)
     }
 
@@ -518,14 +534,7 @@ struct LibraryView: View {
         }
         .padding(.horizontal, 8)
         .frame(height: 28)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Constants.VisualStyle.inputFill)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
-        )
+        .focusableInputSurface(isFocused: isEntrySearchFocused, cornerRadius: 6)
         .onChange(of: viewModel.searchFocusToken) { _, _ in
             isEntrySearchFocused = true
         }
@@ -587,21 +596,83 @@ struct LibraryView: View {
     }
 
     private var countSortRow: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
-                Text("\(viewModel.displayedEntries.count) 条")
-                    .font(.ui(.caption, weight: .medium, mono: true))
-                    .foregroundStyle(Constants.VisualStyle.textSecondary)
+        HStack(spacing: 6) {
+            Text("\(viewModel.displayedEntries.count) 条")
+                .font(.ui(.caption, weight: .medium, mono: true))
+                .foregroundStyle(Constants.VisualStyle.textSecondary)
 
-                Spacer(minLength: 0)
+            if showsCompletedControls {
+                Menu {
+                    Button {
+                        viewModel.hideCompletedEntries.toggle()
+                    } label: {
+                        Label(
+                            viewModel.hideCompletedEntries ? "显示已完成项 (\(viewModel.completedEntryCount))" : "隐藏已完成项 (\(viewModel.completedEntryCount))",
+                            systemImage: viewModel.hideCompletedEntries ? "eye" : "eye.slash"
+                        )
+                    }
+                    if viewModel.completedEntryCount > 0 {
+                        Divider()
+                        Button(role: .destructive) {
+                            _ = viewModel.clearCompletedEntriesInVisibleScope()
+                        } label: {
+                            Label("清理已完成 (\(viewModel.completedEntryCount))", systemImage: "trash")
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: viewModel.hideCompletedEntries ? "eye.slash.fill" : "checklist")
+                            .font(.icon(.micro, weight: .medium))
+                        Text("\(viewModel.completedEntryCount)")
+                            .font(.ui(.micro, weight: .medium, mono: true))
+                    }
+                    .foregroundStyle(
+                        viewModel.hideCompletedEntries
+                            ? Constants.VisualStyle.accent
+                            : Constants.VisualStyle.textTertiary
+                    )
+                    .padding(.horizontal, 6)
+                    .frame(height: 22)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(viewModel.hideCompletedEntries ? Constants.VisualStyle.accentDim : Constants.VisualStyle.tintSubtle)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .strokeBorder(
+                                viewModel.hideCompletedEntries ? Constants.VisualStyle.accentBorder : Constants.VisualStyle.border,
+                                lineWidth: Constants.Layout.hairline
+                            )
+                    )
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("管理或清理已完成事项")
+            }
 
+            Spacer(minLength: 0)
+
+            Menu {
+                ForEach(MainWindowViewModel.EntrySortMode.allCases) { mode in
+                    Button {
+                        viewModel.entrySortMode = mode
+                    } label: {
+                        if viewModel.entrySortMode == mode {
+                            Label(mode.title, systemImage: "checkmark")
+                        } else {
+                            Text(mode.title)
+                        }
+                    }
+                }
+            } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.up.arrow.down")
                         .font(.icon(.micro, weight: .medium))
                     Text(viewModel.entrySortMode.title)
                         .font(.ui(.caption, weight: .medium))
                     Image(systemName: "chevron.down")
-                        .font(.icon(.micro))
+                        .font(.icon(.nano, weight: .semibold))
                         .foregroundStyle(Constants.VisualStyle.textTertiary)
                 }
                 .foregroundStyle(Constants.VisualStyle.textSecondary)
@@ -611,175 +682,78 @@ struct LibraryView: View {
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
                         .fill(Constants.VisualStyle.tintSubtle)
                 )
+                .hoverHighlight(cornerRadius: 5)
                 .overlay(
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
                         .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
                 )
-                .overlay {
-                    Menu {
-                        ForEach(MainWindowViewModel.EntrySortMode.allCases) { mode in
-                            Button(mode.title) {
-                                viewModel.entrySortMode = mode
-                            }
-                        }
-                    } label: {
-                        Color.clear
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .opacity(0.02)
-                }
-                .clipped()
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("切换排序方式")
 
-                HStack(spacing: 4) {
+            HStack(spacing: 4) {
+                PPActionButton("新建", systemImage: "plus", variant: .primary, size: .compact) {
+                    viewModel.startCreateEntry()
+                }
+                .help("新建词条 (⌘N)")
+
+                Menu {
                     Button {
                         viewModel.startCreateEntry()
                     } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "plus")
-                                .font(.icon(.micro, weight: .bold))
-                            Text("新建")
-                                .font(.ui(.caption, weight: .medium))
-                        }
-                        .foregroundStyle(Constants.VisualStyle.accent)
-                        .padding(.horizontal, 8)
-                        .frame(height: 22)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                .fill(Constants.VisualStyle.accentDim)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                .strokeBorder(Constants.VisualStyle.accent.opacity(0.32), lineWidth: Constants.Layout.hairline)
-                        )
+                        Label("新建词条 (⌘N)", systemImage: "square.and.pencil")
                     }
-                    .buttonStyle(.plain)
-                    .help("新建词条 (⌘N)")
 
+                    Button {
+                        viewModel.startCreateEntry(preferredType: .todo)
+                    } label: {
+                        Label("新建待办事项", systemImage: "checklist")
+                    }
+
+                    let targetId = viewModel.selectedProjectId == MainWindowViewModel.allProjectsSelection
+                        ? viewModel.currentProjectId
+                        : viewModel.selectedProjectId
+
+                    Button {
+                        viewModel.createQuickEntryFromClipboard(intoProjectId: targetId, type: .prompt)
+                    } label: {
+                        Label("从剪贴板直接存为提示词", systemImage: "doc.on.clipboard")
+                    }
+
+                    if let inbox = viewModel.inboxProject {
+                        Divider()
+                        Button {
+                            viewModel.createQuickEntryFromClipboard(intoProjectId: inbox.id, type: .todo)
+                        } label: {
+                            Label("从剪贴板存为待办事项", systemImage: "checklist")
+                        }
+                        Button {
+                            viewModel.createQuickEntryFromClipboard(intoProjectId: inbox.id, type: .note)
+                        } label: {
+                            Label("从剪贴板存为临时记录", systemImage: "note.text")
+                        }
+                    }
+                } label: {
                     Image(systemName: "doc.on.clipboard")
-                        .font(.icon(.micro, weight: .medium))
+                        .font(.icon(.small, weight: .medium))
                         .foregroundStyle(Constants.VisualStyle.textSecondary)
-                        .frame(width: 24, height: 22)
+                        .frame(width: 24, height: Constants.Layout.compactControlHeight)
                         .background(
-                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
                                 .fill(Constants.VisualStyle.tintSubtle)
                         )
+                        .hoverHighlight(cornerRadius: 6)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
                                 .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
                         )
-                        .overlay {
-                            Menu {
-                                Button {
-                                    viewModel.startCreateEntry()
-                                } label: {
-                                    Label("新建词条 (⌘N)", systemImage: "square.and.pencil")
-                                }
-
-                                Button {
-                                    viewModel.startCreateEntry(preferredType: .todo)
-                                } label: {
-                                    Label("新建待办事项", systemImage: "checklist")
-                                }
-
-                                let targetId = viewModel.selectedProjectId == MainWindowViewModel.allProjectsSelection
-                                    ? viewModel.currentProjectId
-                                    : viewModel.selectedProjectId
-
-                                Button {
-                                    viewModel.createQuickEntryFromClipboard(intoProjectId: targetId, type: .prompt)
-                                } label: {
-                                    Label("从剪贴板直接存为提示词", systemImage: "doc.on.clipboard")
-                                }
-
-                                if let inbox = viewModel.inboxProject {
-                                    Divider()
-                                    Button {
-                                        viewModel.createQuickEntryFromClipboard(intoProjectId: inbox.id, type: .todo)
-                                    } label: {
-                                        Label("从剪贴板存为待办事项", systemImage: "checklist")
-                                    }
-                                    Button {
-                                        viewModel.createQuickEntryFromClipboard(intoProjectId: inbox.id, type: .note)
-                                    } label: {
-                                        Label("从剪贴板存为临时记录", systemImage: "note.text")
-                                    }
-                                }
-                            } label: {
-                                Color.clear
-                            }
-                            .menuStyle(.borderlessButton)
-                            .menuIndicator(.hidden)
-                            .opacity(0.02)
-                        }
-                        .clipped()
-                        .help("从系统剪贴板快速新建词条或待办")
                 }
-            }
-
-            if showsCompletedControls {
-                HStack(spacing: 6) {
-                    Button {
-                        viewModel.hideCompletedEntries.toggle()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: viewModel.hideCompletedEntries ? "eye.slash.fill" : "eye")
-                                .font(.icon(.micro, weight: .medium))
-                            Text("隐藏已完成 (\(viewModel.completedEntryCount))")
-                                .font(.ui(.micro, weight: .medium))
-                        }
-                        .foregroundStyle(
-                            viewModel.hideCompletedEntries
-                                ? Constants.VisualStyle.accent
-                                : Constants.VisualStyle.textSecondary
-                        )
-                        .padding(.horizontal, 7)
-                        .frame(height: 20)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .fill(
-                                    viewModel.hideCompletedEntries
-                                        ? Constants.VisualStyle.accentDim
-                                        : Constants.VisualStyle.tintSubtle
-                                )
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .strokeBorder(
-                                    viewModel.hideCompletedEntries
-                                        ? Constants.VisualStyle.accentBorder
-                                        : Constants.VisualStyle.border,
-                                    lineWidth: Constants.Layout.hairline
-                                )
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .help(viewModel.hideCompletedEntries ? "点击重新显示已完成项" : "仅展示未完成的待办与记录")
-
-                    Spacer(minLength: 4)
-
-                    if viewModel.completedEntryCount > 0 {
-                        Button {
-                            _ = viewModel.clearCompletedEntriesInVisibleScope()
-                        } label: {
-                            HStack(spacing: 3) {
-                                Image(systemName: "trash")
-                                    .font(.icon(.micro))
-                                Text("清理已完成")
-                                    .font(.ui(.micro, weight: .medium))
-                            }
-                            .foregroundStyle(Constants.VisualStyle.textTertiary)
-                            .padding(.horizontal, 6)
-                            .frame(height: 20)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                    .fill(Constants.VisualStyle.tintSubtle)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .help("清理当前范围内已勾选完成的记录")
-                    }
-                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("从系统剪贴板快速新建词条或待办")
             }
         }
         .padding(.horizontal, 10)
@@ -817,6 +791,7 @@ struct LibraryView: View {
                                     viewModel.togglePin(entry)
                                 }
                             )
+                            .draggable(entry.id)
                             .contextMenu {
                                 Button("复制内容 (⇧⌘C)") {
                                     viewModel.selectedEntryId = entry.id
@@ -868,17 +843,36 @@ struct LibraryView: View {
         }
     }
 
+    private var hasActiveFilters: Bool {
+        !viewModel.entrySearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || viewModel.entryKindFilter != nil
+            || viewModel.entryTagFilter != nil
+    }
+
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "tray")
+        VStack(spacing: Design.Space.md) {
+            Image(systemName: hasActiveFilters ? "magnifyingglass" : "tray")
                 .font(.icon(.large, weight: .light))
                 .foregroundStyle(Constants.VisualStyle.textTertiary)
-            Text(viewModel.entrySearchText.isEmpty ? "当前分组暂无内容" : "无匹配内容")
-                .font(.ui(.body))
+
+            Text(hasActiveFilters ? "没有符合当前筛选条件的内容" : "当前分组暂无内容")
+                .font(.ui(.body, weight: .medium))
                 .foregroundStyle(Constants.VisualStyle.textSecondary)
                 .multilineTextAlignment(.center)
+
+            HStack(spacing: Design.Space.sm) {
+                if hasActiveFilters {
+                    PPActionButton("清空筛选条件", systemImage: "xmark.circle", variant: .secondary, size: .compact) {
+                        viewModel.entrySearchText = ""
+                        viewModel.clearEntryFilters()
+                    }
+                }
+                PPActionButton("新建词条", systemImage: "plus", shortcut: "⌘N", variant: .primary, size: .compact) {
+                    viewModel.startCreateEntry()
+                }
+            }
         }
-        .frame(maxWidth: .infinity, minHeight: 160)
+        .frame(maxWidth: .infinity, minHeight: 180)
         .padding(20)
     }
 }
@@ -981,9 +975,6 @@ private struct SidebarGroupRow: View {
     private var rowBorderColor: Color {
         if isDropTargeted {
             return Constants.VisualStyle.accent
-        }
-        if isSelected {
-            return Constants.VisualStyle.accent.opacity(0.28)
         }
         return Color.clear
     }
@@ -1180,19 +1171,19 @@ private struct QuickJotInputField: NSViewRepresentable {
             if textView.hasMarkedText() {
                 return false
             }
+            let flags = (NSApp.currentEvent?.modifierFlags ?? []).intersection([.command, .shift, .option, .control])
             switch commandSelector {
-            case #selector(NSResponder.insertNewline(_:)):
-                let isShift = NSApp.currentEvent?.modifierFlags.contains(.shift) == true
-                if isShift {
-                    onSubmitTodo()
-                } else {
-                    onSubmitNote()
-                }
-                return true
-            case #selector(NSResponder.insertLineBreak(_:)),
+            case #selector(NSResponder.insertNewline(_:)),
+                 #selector(NSResponder.insertLineBreak(_:)),
                  #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
-                onSubmitTodo()
-                return true
+                if flags == [.option] {
+                    onSubmitTodo()
+                    return true
+                } else if flags.isEmpty {
+                    onSubmitNote()
+                    return true
+                }
+                return false
             case #selector(NSResponder.cancelOperation(_:)):
                 if !text.isEmpty {
                     text = ""
@@ -1230,10 +1221,7 @@ enum EntryDateFormat {
     }()
 
     static func lastUsed(_ date: Date?) -> String {
-        guard let date else {
-            return "未使用"
-        }
-        return relative.localizedString(for: date, relativeTo: Date())
+        PPRelativeTimeFormatter.relativeString(from: date)
     }
 
     static func shortDay(_ date: Date) -> String {
@@ -1340,31 +1328,38 @@ private struct EntryListRow: View {
 
                         Spacer(minLength: 4)
 
-                        if entry.useCount > 0 || showsTypeBadge {
-                            HStack(spacing: 6) {
-                                if entry.useCount > 0 {
-                                    Text("\(entry.useCount)次")
-                                        .font(.ui(.micro, weight: .medium, mono: true))
-                                        .foregroundStyle(entry.useCount >= 25 ? level.color : Constants.VisualStyle.textTertiary)
-                                        .fixedSize()
-                                }
+                        ZStack(alignment: .trailing) {
+                            if entry.useCount > 0 || showsTypeBadge {
+                                HStack(spacing: 6) {
+                                    if entry.useCount > 0 {
+                                        Text("\(entry.useCount)次")
+                                            .font(.ui(.micro, weight: .medium, mono: true))
+                                            .foregroundStyle(entry.useCount >= 25 ? level.color : Constants.VisualStyle.textTertiary)
+                                            .fixedSize()
+                                    }
 
-                                if showsTypeBadge {
-                                    Text(type.displayName)
-                                        .font(.ui(.micro))
-                                        .foregroundStyle(Constants.VisualStyle.textSecondary)
-                                        .padding(.horizontal, 4)
-                                        .padding(.vertical, 1)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                                .fill(Constants.VisualStyle.tintSubtle)
-                                        )
-                                        .fixedSize()
+                                    if showsTypeBadge {
+                                        Text(type.displayName)
+                                            .font(.ui(.micro))
+                                            .foregroundStyle(Constants.VisualStyle.textSecondary)
+                                            .padding(.horizontal, 4)
+                                            .padding(.vertical, 1)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                                    .fill(Constants.VisualStyle.tintSubtle)
+                                            )
+                                            .fixedSize()
+                                    }
                                 }
+                                .frame(minWidth: showsTypeBadge ? 44 : nil, alignment: .trailing)
+                                .opacity(isHovered ? 0 : 1)
                             }
-                            .frame(minWidth: showsTypeBadge ? 44 : nil, alignment: .trailing)
-                            .opacity(isHovered ? 0 : 1)
+
+                            if isHovered {
+                                rowHoverActionStrip
+                            }
                         }
+                        .fixedSize()
                     }
 
                     Text(entry.previewLine)
@@ -1375,7 +1370,7 @@ private struct EntryListRow: View {
 
                     // Explicit Time & Usage Row
                     HStack(spacing: 4) {
-                        Text(entry.lastUsedAt != nil ? EntryDateFormat.lastUsed(entry.lastUsedAt) : "未使用")
+                        Text(PPRelativeTimeFormatter.relativeString(from: entry.lastUsedAt))
                             .fixedSize()
 
                         Text("·")
@@ -1417,54 +1412,53 @@ private struct EntryListRow: View {
                     .frame(width: 2.5)
             }
         }
-        .overlay(alignment: .topTrailing) {
-            if isHovered {
-                HStack(spacing: 4) {
-                    Button(action: onCopy) {
-                        Image(systemName: "doc.on.doc")
-                            .font(.icon(.micro, weight: .semibold))
-                            .foregroundStyle(Constants.VisualStyle.textSecondary)
-                            .frame(width: 20, height: 20)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                    .fill(Constants.VisualStyle.surfaceRaised)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                    .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .help("复制内容")
-
-                    Button(action: onTogglePin) {
-                        Image(systemName: entry.isPinned ? "pin.slash" : "pin")
-                            .font(.icon(.micro, weight: .semibold))
-                            .foregroundStyle(entry.isPinned ? Constants.VisualStyle.warn : Constants.VisualStyle.textSecondary)
-                            .frame(width: 20, height: 20)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                    .fill(entry.isPinned ? Constants.VisualStyle.warnDim : Constants.VisualStyle.surfaceRaised)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                    .strokeBorder(
-                                        entry.isPinned ? Constants.VisualStyle.warn.opacity(0.35) : Constants.VisualStyle.border,
-                                        lineWidth: Constants.Layout.hairline
-                                    )
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .help(entry.isPinned ? "取消置顶" : "置顶")
-                }
-                .padding(.top, 7)
-                .padding(.trailing, 10)
-            }
-        }
         .onHover { hovering in
             if isHovered != hovering {
                 isHovered = hovering
             }
+        }
+    }
+
+    private var rowHoverActionStrip: some View {
+        HStack(spacing: 4) {
+            Button(action: onCopy) {
+                Image(systemName: "doc.on.doc")
+                    .font(.icon(.micro, weight: .semibold))
+                    .foregroundStyle(Constants.VisualStyle.textSecondary)
+                    .frame(width: 20, height: 20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(Constants.VisualStyle.surfaceRaised)
+                    )
+                    .hoverHighlight(cornerRadius: 4)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .strokeBorder(Constants.VisualStyle.border, lineWidth: Constants.Layout.hairline)
+                    )
+            }
+            .buttonStyle(PPInteractiveButtonStyle(cornerRadius: 4))
+            .help("复制内容")
+
+            Button(action: onTogglePin) {
+                Image(systemName: entry.isPinned ? "pin.slash" : "pin")
+                    .font(.icon(.micro, weight: .semibold))
+                    .foregroundStyle(entry.isPinned ? Constants.VisualStyle.warn : Constants.VisualStyle.textSecondary)
+                    .frame(width: 20, height: 20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(entry.isPinned ? Constants.VisualStyle.warnDim : Constants.VisualStyle.surfaceRaised)
+                    )
+                    .hoverHighlight(cornerRadius: 4, isEnabled: !entry.isPinned)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .strokeBorder(
+                                entry.isPinned ? Constants.VisualStyle.warn.opacity(0.35) : Constants.VisualStyle.border,
+                                lineWidth: Constants.Layout.hairline
+                            )
+                    )
+            }
+            .buttonStyle(PPInteractiveButtonStyle(cornerRadius: 4))
+            .help(entry.isPinned ? "取消置顶" : "置顶")
         }
     }
 }
@@ -1496,13 +1490,27 @@ private struct PreviewPane: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: Design.Space.md) {
             Image(systemName: "doc.text")
                 .font(.icon(.hero, weight: .light))
                 .foregroundStyle(Constants.VisualStyle.textTertiary)
             Text("选择一条内容查看或编辑")
-                .font(.ui(.title))
+                .font(.ui(.title, weight: .medium))
                 .foregroundStyle(Constants.VisualStyle.textSecondary)
+            HStack(spacing: Design.Space.md) {
+                HStack(spacing: 4) {
+                    KbdLabel(text: "⌘N")
+                    Text("新建词条")
+                        .font(.ui(.caption))
+                        .foregroundStyle(Constants.VisualStyle.textTertiary)
+                }
+                HStack(spacing: 4) {
+                    KbdLabel(text: "⌘F")
+                    Text("搜索词库")
+                        .font(.ui(.caption))
+                        .foregroundStyle(Constants.VisualStyle.textTertiary)
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -1518,95 +1526,83 @@ private struct PreviewPane: View {
                 HStack(spacing: 6) {
                     // Left visual group: quiet breadcrumb pills (分组 ∨ / 类型 ∨)
                     HStack(spacing: 4) {
-                        // Group / Category Breadcrumb Pill Menu
-                        HStack(spacing: 4) {
-                            Image(systemName: "folder")
-                                .font(.icon(.micro, weight: .semibold))
-                                .foregroundStyle(Constants.VisualStyle.accent)
-                            Text(viewModel.projectName(for: inlineSession.projectId))
-                                .font(.ui(.caption, weight: .medium))
-                                .foregroundStyle(Constants.VisualStyle.text)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                            Image(systemName: "chevron.down")
-                                .font(.icon(.micro))
-                                .foregroundStyle(Constants.VisualStyle.textTertiary)
-                        }
-                        .padding(.horizontal, 8)
-                        .frame(height: 24)
-                        .fixedSize()
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(Constants.VisualStyle.tintSubtle)
-                        )
-                        .hoverHighlight(cornerRadius: 6)
-                        .overlay {
-                            Menu {
-                                ForEach(viewModel.projects.filter { !$0.isArchived || $0.id == inlineSession.projectId }) { project in
-                                    Button {
-                                        viewModel.updateEntryProject(entry, toProjectId: project.id)
-                                    } label: {
-                                        Label(project.name, systemImage: project.effectiveIconName)
-                                    }
+                        Menu {
+                            ForEach(viewModel.projects.filter { !$0.isArchived || $0.id == inlineSession.projectId }) { project in
+                                Button {
+                                    viewModel.updateEntryProject(entry, toProjectId: project.id)
+                                } label: {
+                                    Label(project.name, systemImage: project.effectiveIconName)
                                 }
-                            } label: {
-                                Color.clear
                             }
-                            .menuStyle(.borderlessButton)
-                            .menuIndicator(.hidden)
-                            .opacity(0.02)
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "folder")
+                                    .font(.icon(.micro, weight: .semibold))
+                                    .foregroundStyle(Constants.VisualStyle.accent)
+                                Text(viewModel.projectName(for: inlineSession.projectId))
+                                    .font(.ui(.caption, weight: .medium))
+                                    .foregroundStyle(Constants.VisualStyle.text)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                Image(systemName: "chevron.down")
+                                    .font(.icon(.nano, weight: .semibold))
+                                    .foregroundStyle(Constants.VisualStyle.textTertiary)
+                            }
+                            .padding(.horizontal, 8)
+                            .frame(maxWidth: 148, minHeight: 24, maxHeight: 24)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(Constants.VisualStyle.tintSubtle)
+                            )
+                            .hoverHighlight(cornerRadius: 6)
                         }
-                        .clipped()
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .layoutPriority(-1)
                         .help("归属分组")
 
                         Text("/")
                             .font(.ui(.caption))
                             .foregroundStyle(Constants.VisualStyle.textQuaternary)
 
-                        // Entry Type Breadcrumb Pill Menu
-                        HStack(spacing: 4) {
-                            Image(systemName: currentKind.symbolName)
-                                .font(.icon(.micro, weight: .semibold))
-                                .foregroundStyle(currentKind.accentColor)
-                            Text(currentKind.displayName)
-                                .font(.ui(.caption, weight: .medium))
-                                .foregroundStyle(Constants.VisualStyle.text)
-                                .lineLimit(1)
-                            Image(systemName: "chevron.down")
-                                .font(.icon(.micro))
-                                .foregroundStyle(Constants.VisualStyle.textTertiary)
-                        }
-                        .padding(.horizontal, 8)
-                        .frame(height: 24)
-                        .fixedSize()
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(Constants.VisualStyle.tintSubtle)
-                        )
-                        .hoverHighlight(cornerRadius: 6)
-                        .overlay {
-                            Menu {
-                                ForEach(Constants.EntryType.allCases, id: \.rawValue) { kind in
-                                    Button {
-                                        viewModel.updateEntryType(entry, toType: kind.rawValue)
-                                    } label: {
-                                        Label(kind.displayName, systemImage: kind.symbolName)
-                                    }
+                        Menu {
+                            ForEach(Constants.EntryType.allCases, id: \.rawValue) { kind in
+                                Button {
+                                    viewModel.updateEntryType(entry, toType: kind.rawValue)
+                                } label: {
+                                    Label(kind.displayName, systemImage: kind.symbolName)
                                 }
-                            } label: {
-                                Color.clear
                             }
-                            .menuStyle(.borderlessButton)
-                            .menuIndicator(.hidden)
-                            .opacity(0.02)
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: currentKind.symbolName)
+                                    .font(.icon(.micro, weight: .semibold))
+                                    .foregroundStyle(currentKind.accentColor)
+                                Text(currentKind.displayName)
+                                    .font(.ui(.caption, weight: .medium))
+                                    .foregroundStyle(Constants.VisualStyle.text)
+                                    .lineLimit(1)
+                                Image(systemName: "chevron.down")
+                                    .font(.icon(.nano, weight: .semibold))
+                                    .foregroundStyle(Constants.VisualStyle.textTertiary)
+                            }
+                            .padding(.horizontal, 8)
+                            .frame(height: 24)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(Constants.VisualStyle.tintSubtle)
+                            )
+                            .hoverHighlight(cornerRadius: 6)
                         }
-                        .clipped()
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
                         .help("词条类型")
                     }
 
                     Spacer(minLength: 4)
 
-                    // Right visual group: compact icon actions, history pill, primary 复制 CTA
+                    // Right visual group: compact icon actions, history pill, overflow menu, primary 复制 CTA
                     HStack(spacing: 4) {
                         Button {
                             viewModel.toggleEntryCompleted(entry)
@@ -1619,10 +1615,10 @@ private struct PreviewPane: View {
                                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                                         .fill(inlineSession.isCompleted ? Constants.VisualStyle.successDim : Color.clear)
                                 )
-                                .hoverHighlight(cornerRadius: 6)
+                                .hoverHighlight(cornerRadius: 6, isEnabled: !inlineSession.isCompleted)
                                 .roundedHitTarget(cornerRadius: 6)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(PPInteractiveButtonStyle(cornerRadius: 6))
                         .help(inlineSession.isCompleted ? "标记为未完成" : "标记为已完成")
 
                         Button {
@@ -1636,13 +1632,12 @@ private struct PreviewPane: View {
                                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                                         .fill(inlineSession.isPinned ? Constants.VisualStyle.warnDim : Color.clear)
                                 )
-                                .hoverHighlight(cornerRadius: 6)
+                                .hoverHighlight(cornerRadius: 6, isEnabled: !inlineSession.isPinned)
                                 .roundedHitTarget(cornerRadius: 6)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(PPInteractiveButtonStyle(cornerRadius: 6))
                         .help(inlineSession.isPinned ? "取消置顶" : "置顶此词条")
 
-                        // Version History Popover Pill
                         Button {
                             viewModel.isShowingVersionPopover.toggle()
                         } label: {
@@ -1662,12 +1657,13 @@ private struct PreviewPane: View {
                             .hoverHighlight(cornerRadius: 6)
                             .roundedHitTarget(cornerRadius: 6)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(PPInteractiveButtonStyle(cornerRadius: 6))
                         .fixedSize()
                         .help("版本历史（共 \(max(viewModel.selectedEntryVersions.count, 1)) 个版本）")
                         .popover(isPresented: $viewModel.isShowingVersionPopover, arrowEdge: .bottom) {
                             VersionHistoryPopover(
                                 versions: viewModel.selectedEntryVersions,
+                                currentTitle: entry.title,
                                 currentContent: entry.content,
                                 onCopyVersion: { version in
                                     NSPasteboard.general.clearContents()
@@ -1681,63 +1677,72 @@ private struct PreviewPane: View {
                             )
                         }
 
-                        // Clone to another project menu
-                        Image(systemName: "plus.square.on.square")
-                            .font(.icon(.small, weight: .semibold))
-                            .foregroundStyle(Constants.VisualStyle.textSecondary)
-                            .frame(width: 24, height: 24)
-                            .hoverHighlight(cornerRadius: 6)
-                            .overlay {
-                                Menu {
-                                    Section("项目") {
-                                        ForEach(viewModel.activeProjects.filter { $0.id != entry.projectId }) { target in
+                        Menu {
+                            let cloneTargets = viewModel.targetProjects(excluding: entry.projectId)
+                            Menu("克隆到…") {
+                                let inboxTargets = cloneTargets.filter { $0.groupKind == .inbox }
+                                let categoryTargets = cloneTargets.filter { $0.groupKind == .category }
+                                let projectTargets = cloneTargets.filter { $0.groupKind == .project }
+
+                                if !inboxTargets.isEmpty {
+                                    Section("速记与待办") {
+                                        ForEach(inboxTargets) { target in
                                             Button(target.name) {
                                                 viewModel.cloneEntry(entry, toProjectId: target.id)
                                             }
                                         }
                                     }
-                                    Section("常用类型") {
-                                        ForEach(viewModel.categoryProjects.filter { $0.id != entry.projectId }) { target in
-                                            Button(target.name) {
-                                                viewModel.cloneEntry(entry, toProjectId: target.id)
-                                            }
-                                        }
-                                    }
-                                } label: {
-                                    Color.clear
                                 }
-                                .menuStyle(.borderlessButton)
-                                .menuIndicator(.hidden)
-                                .opacity(0.02)
+                                if !projectTargets.isEmpty {
+                                    Section("项目") {
+                                        ForEach(projectTargets) { target in
+                                            Button(target.name) {
+                                                viewModel.cloneEntry(entry, toProjectId: target.id)
+                                            }
+                                        }
+                                    }
+                                }
+                                if !categoryTargets.isEmpty {
+                                    Section("常用类型") {
+                                        ForEach(categoryTargets) { target in
+                                            Button(target.name) {
+                                                viewModel.cloneEntry(entry, toProjectId: target.id)
+                                            }
+                                        }
+                                    }
+                                }
                             }
-                            .clipped()
-                            .roundedHitTarget(cornerRadius: 6)
-                            .help("克隆到其他分组")
+                            .disabled(cloneTargets.isEmpty)
 
-                        PreviewDeleteIconButton {
-                            viewModel.requestDeleteEntry(entry)
-                        }
-                        .help("删除此词条")
+                            Button("在弹窗中编辑…") {
+                                viewModel.startEditEntry(entry)
+                            }
 
-                        Button {
-                            viewModel.copyEntryContent(entry)
+                            Divider()
+
+                            Button("删除此词条", role: .destructive) {
+                                viewModel.requestDeleteEntry(entry)
+                            }
                         } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "doc.on.doc")
-                                    .font(.icon(.micro, weight: .semibold))
-                                Text("复制")
-                                    .font(.ui(.caption, weight: .semibold))
-                            }
-                            .foregroundStyle(Color.white)
-                            .padding(.horizontal, 9)
-                            .frame(height: 24)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .fill(Constants.VisualStyle.accentSolid)
-                            )
+                            Image(systemName: "ellipsis")
+                                .font(.icon(.small, weight: .semibold))
+                                .foregroundStyle(Constants.VisualStyle.textSecondary)
+                                .frame(width: 24, height: 24)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .fill(Constants.VisualStyle.tintSubtle)
+                                )
+                                .hoverHighlight(cornerRadius: 6)
+                                .roundedHitTarget(cornerRadius: 6)
                         }
-                        .buttonStyle(.plain)
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
                         .fixedSize()
+                        .help("更多操作（克隆、删除）")
+
+                        PPActionButton("复制", systemImage: "doc.on.doc", variant: .primary, size: .compact) {
+                            viewModel.copyEntryContent(entry)
+                        }
                         .padding(.leading, 2)
                         .help("复制词条内容 (⇧⌘C)")
                     }
@@ -1751,7 +1756,7 @@ private struct PreviewPane: View {
                     Text("·")
                     Text(
                         entry.lastUsedAt != nil
-                            ? "使用 \(EntryDateFormat.lastUsed(entry.lastUsedAt)) (\(entry.useCount)次)"
+                            ? "使用 \(PPRelativeTimeFormatter.relativeString(from: entry.lastUsedAt)) (\(entry.useCount)次)"
                             : "未使用"
                     )
                     if let sourceId = entry.sourceEntryId, !sourceId.isEmpty {
@@ -1777,7 +1782,7 @@ private struct PreviewPane: View {
             VStack(alignment: .leading, spacing: 8) {
                 TextField("输入标题（留空自动取首行）…", text: $inlineSession.title)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.ui(.display, weight: .semibold))
                     .foregroundStyle(Constants.VisualStyle.text)
 
                 HStack(spacing: 6) {
@@ -1802,25 +1807,16 @@ private struct PreviewPane: View {
                 .fill(Constants.VisualStyle.divider)
                 .frame(height: Constants.Layout.hairline)
 
-            // Inline Editable Content Area
+            // Inline Editable Content Area (11pt + NSTextView's 5pt lineFragmentPadding == 16pt alignment)
             TextEditor(text: $inlineSession.content)
-                .font(.system(size: 13.5))
+                .font(.ui(.title, mono: currentKind == .code))
                 .foregroundStyle(Constants.VisualStyle.text)
                 .lineSpacing(4)
                 .scrollContentBackground(.hidden)
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 11)
                 .padding(.vertical, 10)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Constants.VisualStyle.surfaceRaised)
-                .background(
-                    Button("") {
-                        _ = viewModel.commitInlineChanges(for: entry)
-                    }
-                    .keyboardShortcut("s", modifiers: [.command])
-                    .opacity(0)
-                    .frame(width: 0, height: 0)
-                    .allowsHitTesting(false)
-                )
         }
     }
 
@@ -1832,7 +1828,7 @@ private struct PreviewPane: View {
                 Circle()
                     .fill(Constants.VisualStyle.accent)
                     .frame(width: 5, height: 5)
-                Text("正在保存…")
+                Text("保存中…")
                     .foregroundStyle(Constants.VisualStyle.textSecondary)
             }
         case .pending:
@@ -1841,14 +1837,14 @@ private struct PreviewPane: View {
             } label: {
                 HStack(spacing: 4) {
                     Circle()
-                        .fill(Constants.VisualStyle.accent)
+                        .fill(Constants.VisualStyle.warn)
                         .frame(width: 5, height: 5)
-                    Text("正在保存…")
+                    Text("待保存 (⌘S)")
                         .foregroundStyle(Constants.VisualStyle.textSecondary)
                 }
             }
             .buttonStyle(.plain)
-            .help("正在自动保存，点击或按 ⌘S 立即保存")
+            .help("有未落盘修改，点击或按 ⌘S 立即保存")
         case .invalid:
             HStack(spacing: 4) {
                 Image(systemName: "exclamationmark.circle")
@@ -1870,14 +1866,14 @@ private struct PreviewPane: View {
                 } label: {
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(Constants.VisualStyle.accent)
+                            .fill(Constants.VisualStyle.warn)
                             .frame(width: 5, height: 5)
-                        Text("正在保存…")
+                        Text("待保存 (⌘S)")
                             .foregroundStyle(Constants.VisualStyle.textSecondary)
                     }
                 }
                 .buttonStyle(.plain)
-                .help("按 ⌘S 立即保存")
+                .help("点击或按 ⌘S 立即保存")
             }
         }
     }
@@ -1923,6 +1919,7 @@ private struct PreviewDeleteIconButton: View {
 
 private struct VersionHistoryPopover: View {
     let versions: [EntryVersion]
+    let currentTitle: String
     let currentContent: String
     let onCopyVersion: (EntryVersion) -> Void
     let onRestoreVersion: (EntryVersion) -> Void
@@ -1990,12 +1987,12 @@ private struct VersionHistoryPopover: View {
 
                                 HStack {
                                     Spacer()
-                                    SettingsPillButton("复制") {
+                                    PPActionButton("复制", variant: .secondary, size: .compact) {
                                         onCopyVersion(version)
                                     }
 
-                                    if version.content != currentContent {
-                                        SettingsPillButton("恢复此版本", tone: .primary) {
+                                    if version.content != currentContent || version.title != currentTitle {
+                                        PPActionButton("恢复此版本", variant: .primary, size: .compact) {
                                             onRestoreVersion(version)
                                         }
                                     } else {
@@ -2022,6 +2019,76 @@ private struct VersionHistoryPopover: View {
         }
         .frame(width: 420, height: 380)
         .background(Constants.VisualStyle.surface)
+    }
+}
+
+private struct ResizableColumnDivider: View {
+    @Binding var width: CGFloat
+    @Binding var dragStartWidth: CGFloat?
+    let range: ClosedRange<CGFloat>
+    let defaultWidth: CGFloat
+
+    private var _isHovered = SwiftUI.State(initialValue: false)
+    private var _isDragging = SwiftUI.State(initialValue: false)
+
+    private var isHovered: Bool {
+        get { _isHovered.wrappedValue }
+        nonmutating set { _isHovered.wrappedValue = newValue }
+    }
+
+    private var isDragging: Bool {
+        get { _isDragging.wrappedValue }
+        nonmutating set { _isDragging.wrappedValue = newValue }
+    }
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(isDragging || isHovered ? Constants.VisualStyle.accentBorder : Constants.VisualStyle.divider)
+                .frame(width: isDragging || isHovered ? 1.5 : Constants.Layout.hairline)
+        }
+        .frame(width: 7)
+        .frame(maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            if isHovered != hovering {
+                isHovered = hovering
+                if hovering {
+                    NSCursor.resizeLeftRight.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+        }
+        .onDisappear {
+            if isHovered {
+                isHovered = false
+                NSCursor.pop()
+            }
+        }
+        .onTapGesture(count: 2) {
+            withAnimation(.easeOut(duration: 0.14)) {
+                width = defaultWidth
+            }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { value in
+                    if dragStartWidth == nil {
+                        dragStartWidth = width
+                    }
+                    isDragging = true
+                    let base = dragStartWidth ?? width
+                    let next = min(max(base + value.translation.width, range.lowerBound), range.upperBound)
+                    if abs(next - width) >= 0.5 {
+                        width = next
+                    }
+                }
+                .onEnded { _ in
+                    dragStartWidth = nil
+                    isDragging = false
+                }
+        )
     }
 }
 

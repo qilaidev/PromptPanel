@@ -143,6 +143,18 @@ final class QuickPanelViewModel: ObservableObject {
             if entries != filtered {
                 entries = filtered
             }
+            let effectiveFallback = rawSearchReturnedGlobalFallback && !entries.isEmpty
+            if isShowingGlobalFallback != effectiveFallback {
+                isShowingGlobalFallback = effectiveFallback
+            }
+            if rawSearchReturnedGlobalFallback, entries.isEmpty, !unfilteredEntries.isEmpty, activeKindFilter != .all {
+                setTransientStatus(
+                    "当前类型筛选无匹配，请切回「全部」查看 \(unfilteredEntries.count) 条跨项目匹配结果",
+                    tone: .info
+                )
+            } else if rawSearchReturnedGlobalFallback, !entries.isEmpty {
+                clearTransientStatus(reapplyBase: true)
+            }
             if selectedIndex != 0 {
                 selectedIndex = 0
             }
@@ -158,7 +170,14 @@ final class QuickPanelViewModel: ObservableObject {
         }
     }
     private var kindFilterCounts: [KindFilter: Int] = [:]
-    @Published private(set) var entries: [Entry] = []
+    @Published private(set) var entries: [Entry] = [] {
+        didSet {
+            rebuildEntryIndexById()
+        }
+    }
+    /// O(1) lookup of visible row index by entry ID, rebuilt only when `entries` changes.
+    private(set) var entryIndexById: [String: Int] = [:]
+    private var rawSearchReturnedGlobalFallback: Bool = false
     @Published private(set) var projects: [Project] = []
     @Published private(set) var projectNamesById: [String: String] = [:]
     @Published private(set) var isShowingGlobalFallback: Bool = false
@@ -294,9 +313,6 @@ final class QuickPanelViewModel: ObservableObject {
 
     func prepareForPresentation() {
         permissionService.refresh()
-        if projects.isEmpty {
-            loadProjects(preserveAllProjectsScope: true)
-        }
         clearTransientStatus(reapplyBase: false)
         applyBaseStatus()
         if !query.isEmpty {
@@ -319,14 +335,15 @@ final class QuickPanelViewModel: ObservableObject {
             selectedIndex = 0
         }
         scrollSelectionRevision += 1
-        if currentProjectId != appState.effectiveProjectId {
+        let preserveAllScope = (currentProjectId == Self.allProjectsScopeId)
+        if !preserveAllScope, currentProjectId != appState.effectiveProjectId {
             currentProjectId = appState.effectiveProjectId
         }
         isExecutionReady = false
         deferredExecutionRequest = nil
         focusToken += 1
         refreshClipboardState()
-        loadProjects(preserveAllProjectsScope: false)
+        loadProjects(preserveAllProjectsScope: preserveAllScope)
         scheduleEntriesRefresh(delayMs: 0, reason: .scopeChanged)
     }
 
@@ -577,6 +594,13 @@ final class QuickPanelViewModel: ObservableObject {
                 self.scheduleEntriesRefresh(delayMs: 0, reason: .dataChanged)
             }
             .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .entryUsageDidChange)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.scheduleEntriesRefresh(delayMs: 0, reason: .dataChanged)
+            }
+            .store(in: &cancellables)
     }
 
     private func loadProjects(preserveAllProjectsScope: Bool = true) {
@@ -822,6 +846,19 @@ final class QuickPanelViewModel: ObservableObject {
         }
     }
 
+    private func rebuildEntryIndexById() {
+        var mapping: [String: Int] = [:]
+        mapping.reserveCapacity(entries.count)
+        for (index, entry) in entries.enumerated() where mapping[entry.id] == nil {
+            mapping[entry.id] = index
+        }
+        entryIndexById = mapping
+    }
+
+    func displayIndex(forEntryId id: String) -> Int? {
+        entryIndexById[id]
+    }
+
     private func rebuildKindFilterCounts() {
         var counts: [KindFilter: Int] = [
             .all: unfilteredEntries.count,
@@ -903,10 +940,6 @@ final class QuickPanelViewModel: ObservableObject {
         let searchService = self.searchService
         let searchQueue = self.searchQueue
 
-        if effectiveCurrentProjectId != Self.allProjectsScopeId,
-           appState.currentProjectId != effectiveCurrentProjectId {
-            appState.currentProjectId = effectiveCurrentProjectId
-        }
         if reason == .scopeChanged {
             isScopeSearchInFlight = true
             deferredExecutionRequest = nil
@@ -956,9 +989,7 @@ final class QuickPanelViewModel: ObservableObject {
                         if self.isLoadingEntries {
                             self.isLoadingEntries = false
                         }
-                        if self.isShowingGlobalFallback != isGlobalFallback {
-                            self.isShowingGlobalFallback = isGlobalFallback
-                        }
+                        self.rawSearchReturnedGlobalFallback = isGlobalFallback
                         let previousSelectionId = self.selectedEntry?.id
                         if !Self.entriesMetadataMatches(self.unfilteredEntries, sortedEntries) {
                             self.unfilteredEntries = sortedEntries
@@ -966,6 +997,10 @@ final class QuickPanelViewModel: ObservableObject {
                         let visibleEntries = Self.filterEntries(sortedEntries, by: self.activeKindFilter)
                         if !Self.entriesMetadataMatches(self.entries, visibleEntries) {
                             self.entries = visibleEntries
+                        }
+                        let effectiveGlobalFallback = isGlobalFallback && !visibleEntries.isEmpty
+                        if self.isShowingGlobalFallback != effectiveGlobalFallback {
+                            self.isShowingGlobalFallback = effectiveGlobalFallback
                         }
                         if visibleEntries.isEmpty || reason == .scopeChanged {
                             if self.selectedIndex != 0 {
@@ -986,7 +1021,14 @@ final class QuickPanelViewModel: ObservableObject {
                         if visibleEntries.isEmpty, self.isPreviewPresented {
                             self.isPreviewPresented = false
                         }
-                        self.applyBaseStatus()
+                        if isGlobalFallback, visibleEntries.isEmpty, !sortedEntries.isEmpty, self.activeKindFilter != .all {
+                            self.setTransientStatus(
+                                "当前类型筛选无匹配，请切回「全部」查看 \(sortedEntries.count) 条跨项目匹配结果",
+                                tone: .info
+                            )
+                        } else {
+                            self.applyBaseStatus()
+                        }
                         if let pendingExecution, !visibleEntries.isEmpty {
                             switch pendingExecution.target {
                             case .selected:
@@ -1008,6 +1050,7 @@ final class QuickPanelViewModel: ObservableObject {
                     case .failure(let error):
                         PPLogger.search.error("Panel search failed: \(error.localizedDescription)")
                         self.isLoadingEntries = false
+                        self.rawSearchReturnedGlobalFallback = false
                         self.isShowingGlobalFallback = false
                         self.unfilteredEntries = []
                         self.entries = []
@@ -1281,8 +1324,28 @@ final class QuickPanelViewModel: ObservableObject {
     private static let escapeKeyCode: UInt16 = 53
     private static let returnKeyCode: UInt16 = 36
     private static let keypadEnterKeyCode: UInt16 = 76
+    private static let commandDigitByKeyCode: [UInt16: Int] = [
+        18: 1, 83: 1,
+        19: 2, 84: 2,
+        20: 3, 85: 3,
+        21: 4, 86: 4,
+        23: 5, 87: 5,
+        22: 6, 88: 6,
+        26: 7, 89: 7,
+        28: 8, 91: 8,
+        25: 9, 92: 9,
+    ]
+    private static let commandActionByKeyCode: [UInt16: PanelKeyCommand] = [
+        8: .copySelection,    // C
+        35: .togglePin,       // P
+        16: .togglePreview,   // Y
+        45: .quickCreateEntry,// N
+        43: .openPreferences, // ,
+    ]
 
     /// Pure mapping from a key event to a panel command.
+    /// Uses hardware `keyCode` first with exact modifier sets (so non-Latin/CJK IMEs stay reliable
+    /// and Ctrl+C is never confused with Cmd+C), falling back to `charactersIgnoringModifiers` when `keyCode == .max`.
     static func panelKeyCommand(
         keyCode: UInt16 = .max,
         modifierFlags: NSEvent.ModifierFlags,
@@ -1309,6 +1372,16 @@ final class QuickPanelViewModel: ObservableObject {
         guard flags == [.command] else {
             return nil
         }
+
+        if keyCode != .max {
+            if let digit = commandDigitByKeyCode[keyCode] {
+                return .executeEntry(number: digit)
+            }
+            if let command = commandActionByKeyCode[keyCode] {
+                return command
+            }
+        }
+
         guard let characters = charactersIgnoringModifiers?.lowercased(), characters.count == 1 else {
             return nil
         }
@@ -1418,22 +1491,23 @@ final class QuickPanelViewModel: ObservableObject {
     }
 
     /// Copy the selected entry to clipboard without attempting paste. Used by ⌘C.
+    /// Expands placeholders (`{{clipboard}}`, `{{date}}`), logs `.clipboardOnly`,
+    /// and respects `appState.isPanelPinned` instead of forcing the pinned panel closed.
     func copySelectionOnly() {
         guard !isScopeSearchInFlight, let entry = selectedEntry else { return }
-        let success = clipboardService.writeText(entry.content)
+        let executionProjectId = currentProjectId == Self.allProjectsScopeId ? entry.projectId : currentProjectId
+        let success = executeService.resolveAndCopyEntry(
+            entry,
+            currentProjectId: executionProjectId,
+            triggerSource: .keyboardSubmit
+        )
         if success {
-            if let entryRepository {
-                do {
-                    try entryRepository.recordExecution(id: entry.id)
-                    NotificationCenter.default.post(name: .entriesDidChange, object: nil)
-                } catch {
-                    PPLogger.execute.error("Failed to record usage on copy: \(error.localizedDescription)")
-                }
-            }
             isPreviewPresented = false
-            setStatus("已复制到剪贴板：\(entry.title)", tone: .info)
+            setTransientStatus("已复制到剪贴板：\(entry.title)", tone: .info)
             executeService.onShowNotification?("已复制：\(entry.title)", true)
-            onClosePanel()
+            if !appState.isPanelPinned {
+                onClosePanel()
+            }
         } else {
             setStatus("复制到剪贴板失败，请重试。", tone: .error)
             executeService.onShowNotification?("复制到剪贴板失败，请重试。", false)
