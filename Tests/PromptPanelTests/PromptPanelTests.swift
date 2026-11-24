@@ -2963,6 +2963,10 @@ struct PromptPanelSwiftTestingSuite {
     @Test func cloudSyncActionModesReportAndTrashRestore() async throws {
         try await CoreTestSuite.verifyCloudSyncActionModesReportAndTrashRestoreAsync()
     }
+
+    @Test func secretStorePersistenceAccessDeniedSafetyAndMirrorSubpath() throws {
+        try CoreTestSuite.verifySecretStorePersistenceAccessDeniedSafetyAndMirrorSubpath()
+    }
 }
 #endif
 
@@ -3866,5 +3870,139 @@ extension CoreTestSuite {
             try check(try syncService.pendingSyncState().localSeq > seqBeforeRestore)
             try check(try entryRepo.searchAll(query: "", tag: "synctag").map(\.id) == [localEntry.id])
         }
+    }
+
+    private final class StubAccessDeniedSecretStore: CloudSyncSecretStoring, @unchecked Sendable {
+        var deleteCallCount = 0
+        var savedSecrets: [String] = []
+        var status: CloudSyncSecretLoadStatus
+
+        init(status: CloudSyncSecretLoadStatus) {
+            self.status = status
+        }
+
+        func loadSecret() throws -> String? {
+            if case .loaded(let value) = status { return value }
+            return nil
+        }
+
+        func loadSecretStatus() throws -> CloudSyncSecretLoadStatus {
+            status
+        }
+
+        func saveSecret(_ secret: String) throws {
+            savedSecrets.append(secret)
+            status = .loaded(secret)
+        }
+
+        func deleteSecret() throws {
+            deleteCallCount += 1
+            status = .missing
+        }
+    }
+
+    static func verifySecretStorePersistenceAccessDeniedSafetyAndMirrorSubpath() throws {
+        // 1. EncryptedFileCloudSyncSecretStore encrypts at rest, enforces 0600, and round-trips across instances.
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PromptPanelSecretStore-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let secretURL = tempDir.appendingPathComponent(".cloudsync.secret")
+        let token = "pp_live_secret_file_roundtrip_2026_v1"
+
+        let writerStore = EncryptedFileCloudSyncSecretStore(fileURL: secretURL, keyMaterial: "test-machine-uuid|tester")
+        try check(try writerStore.loadSecretStatus() == .missing)
+        try writerStore.saveSecret(token)
+        let rawOnDisk = try String(contentsOf: secretURL, encoding: .utf8)
+        try check(!rawOnDisk.contains(token), "Encrypted secret file must never store plaintext token")
+        let perms = (try FileManager.default.attributesOfItem(atPath: secretURL.path)[.posixPermissions] as? NSNumber)?.intValue
+        try check(perms == Constants.secureFilePermissions, "Secret file permissions must be 0600")
+
+        let readerStore = EncryptedFileCloudSyncSecretStore(fileURL: secretURL, keyMaterial: "test-machine-uuid|tester")
+        try check(try readerStore.loadSecretStatus() == .loaded(token))
+
+        // 2. CodeSignAwareCloudSyncSecretStore (ad-hoc mode) migrates readable legacy Keychain item to file,
+        //    and surfaces .accessDenied rather than silently reporting .missing when Keychain ACL denies access.
+        let deniedKeychain = StubAccessDeniedSecretStore(status: .accessDenied)
+        let emptyFileURL = tempDir.appendingPathComponent(".cloudsync-denied.secret")
+        let emptyFileStore = EncryptedFileCloudSyncSecretStore(fileURL: emptyFileURL, keyMaterial: "test-machine-uuid|tester")
+        let adHocDenied = CodeSignAwareCloudSyncSecretStore(
+            prefersKeychain: false,
+            keychainStore: deniedKeychain,
+            fileStore: emptyFileStore
+        )
+        try check(try adHocDenied.loadSecretStatus() == .accessDenied)
+
+        let readableKeychain = StubAccessDeniedSecretStore(status: .loaded(token))
+        let migratedFileURL = tempDir.appendingPathComponent(".cloudsync-migrated.secret")
+        let migratedFileStore = EncryptedFileCloudSyncSecretStore(fileURL: migratedFileURL, keyMaterial: "test-machine-uuid|tester")
+        let adHocMigrate = CodeSignAwareCloudSyncSecretStore(
+            prefersKeychain: false,
+            keychainStore: readableKeychain,
+            fileStore: migratedFileStore
+        )
+        try check(try adHocMigrate.loadSecretStatus() == .loaded(token))
+        try check(try migratedFileStore.loadSecretStatus() == .loaded(token), "Readable legacy Keychain token must migrate into encrypted file store")
+
+        // 3. MainWindowViewModel must NOT wipe a Keychain-locked token when saving unrelated sync settings.
+        try withTempDatabase { manager, _ in
+            let lockedStore = StubAccessDeniedSecretStore(status: .accessDenied)
+            let settingsRepo = SettingsRepository(dbQueue: manager.dbQueue, secretStore: lockedStore)
+            try settingsRepo.set(Constants.SettingsKey.cloudSyncApiKey, value: SettingsRepository.keychainStoredMarker)
+            try settingsRepo.setCloudSyncEndpoint("https://sync.example.com/v1/sync")
+            try settingsRepo.setCloudSyncEnabled(true)
+
+            let appState = AppState()
+            let projectRepo = ProjectRepository(dbQueue: manager.dbQueue)
+            let entryRepo = EntryRepository(dbQueue: manager.dbQueue)
+            let logRepo = LogRepository(dbQueue: manager.dbQueue)
+            let maintenance = StorageMaintenanceService(dbQueue: manager.dbQueue, logRepository: logRepo, databaseURL: manager.databaseURL)
+            let syncService = CloudSyncService(dbQueue: manager.dbQueue, storageMaintenanceService: maintenance)
+            let vm = MainWindowViewModel(
+                appState: appState,
+                projectRepository: projectRepo,
+                entryRepository: entryRepo,
+                settingsRepository: settingsRepo,
+                logRepository: logRepo,
+                permissionService: PermissionService(),
+                loginItemService: LoginItemService(),
+                storageMaintenanceService: maintenance,
+                cloudSyncService: syncService,
+                updaterService: UpdaterService(configurationState: .init(feedURL: nil, publicKey: nil, expectedTeamIdentifier: nil)),
+                launchRecoveryReport: nil
+            )
+
+            try check(vm.isCloudSyncSecretAccessDenied, "ViewModel must flag Keychain accessDenied state")
+            try check(vm.isSyncAuthPaused, "Auto sync must pause when Keychain denies access")
+
+            // Saving settings without entering a new token must NOT delete the locked credential.
+            vm.saveCloudSyncSettings(showBanner: false)
+            try check(lockedStore.deleteCallCount == 0, "Saving settings while secret is accessDenied must never delete the stored credential")
+            try check(try settingsRepo.get(Constants.SettingsKey.cloudSyncApiKey) == SettingsRepository.keychainStoredMarker)
+
+            // Entering a new token clears the accessDenied guard and saves into the secret store.
+            vm.cloudSyncApiKey = "pp_live_recovered_token_2026_99"
+            vm.saveCloudSyncSettings(showBanner: false)
+            try check(!vm.isCloudSyncSecretAccessDenied)
+            try check(lockedStore.savedSecrets.last == "pp_live_recovered_token_2026_99")
+
+            // Cleartext non-loopback HTTP endpoint must immediately surface client-side validation error.
+            vm.cloudSyncEndpoint = "http://192.168.1.9:18787/v1/sync"
+            try check(vm.cloudSyncEndpointValidationError != nil)
+            vm.cloudSyncEndpoint = "https://sync.example.com/promptpanel-sync/v1/sync"
+            try check(vm.cloudSyncEndpointValidationError == nil)
+        }
+
+        // 4. UpdaterService reverse-proxy subpath resolution must preserve subpath prefix on mirrorPath downloads.
+        let rootUpdateURL = URL(string: "https://sync.example.com/v1/update")!
+        try check(
+            UpdaterService.resolvedMirrorDownloadURL(fromUpdateURL: rootUpdateURL, mirrorPath: "/v1/update/download/macos.zip")?.absoluteString
+                == "https://sync.example.com/v1/update/download/macos.zip"
+        )
+        let subpathUpdateURL = URL(string: "https://sync.example.com/promptpanel-sync/v1/update?force=1")!
+        try check(
+            UpdaterService.resolvedMirrorDownloadURL(fromUpdateURL: subpathUpdateURL, mirrorPath: "/v1/update/download/macos.zip")?.absoluteString
+                == "https://sync.example.com/promptpanel-sync/v1/update/download/macos.zip",
+            "Mirror download URL must preserve reverse-proxy subpath prefix"
+        )
     }
 }

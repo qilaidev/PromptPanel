@@ -155,7 +155,7 @@ struct MainWindowView: View {
                 viewModel.entryPendingDeletion = nil
             }
         } message: { entry in
-            Text("“\(entry.title)” 删除后无法恢复。")
+            Text("“\(entry.title)” 删除后可在「设置 → 云端同步 → 高级操作 → 最近 30 天已删除」中按条恢复。")
         }
     }
 

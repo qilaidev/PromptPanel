@@ -660,6 +660,39 @@ final class UpdaterService: NSObject, ObservableObject {
         return try await fetchFromGitHub()
     }
 
+    nonisolated static func resolvedMirrorDownloadURL(
+        fromUpdateURL mirrorURL: URL,
+        mirrorPath: String
+    ) -> URL? {
+        let trimmedPath = mirrorPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty,
+              var baseComps = URLComponents(url: mirrorURL, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        let normalizedMirrorPath = trimmedPath.hasPrefix("/") ? trimmedPath : "/" + trimmedPath
+        var currentPath = baseComps.path
+        while currentPath.count > 1 && currentPath.hasSuffix("/") {
+            currentPath.removeLast()
+        }
+        let prefix: String
+        if currentPath.hasSuffix("/v1/update") {
+            prefix = String(currentPath.dropLast("/v1/update".count))
+        } else if let range = currentPath.range(of: "/v1/update/") {
+            prefix = String(currentPath[..<range.lowerBound])
+        } else {
+            prefix = ""
+        }
+        let fullPath = (!prefix.isEmpty && !normalizedMirrorPath.hasPrefix(prefix + "/"))
+            ? prefix + normalizedMirrorPath
+            : normalizedMirrorPath
+        baseComps.path = fullPath
+        baseComps.query = nil
+        guard let candidateURL = baseComps.url, isAllowedUpdateURL(candidateURL) else {
+            return nil
+        }
+        return candidateURL
+    }
+
     nonisolated private static func fetchFromMirror(mirrorURL: URL) async throws -> ReleaseCandidate {
         let data = try await performGET(url: mirrorURL, timeout: 8.0)
         if CloudSyncService.looksLikeHTMLPayload(data) {
@@ -676,15 +709,8 @@ final class UpdaterService: NSObject, ObservableObject {
         let githubURL = (zipDict["githubUrl"] as? String)
             .flatMap(URL.init(string:))
             .flatMap { isAllowedUpdateURL($0) ? $0 : nil }
-        var mirrorZipURL: URL?
-        if let mirrorPath = zipDict["mirrorPath"] as? String, !mirrorPath.isEmpty,
-           var baseComps = URLComponents(url: mirrorURL, resolvingAgainstBaseURL: false) {
-            baseComps.path = mirrorPath
-            baseComps.query = nil
-            if let candidateURL = baseComps.url, isAllowedUpdateURL(candidateURL) {
-                mirrorZipURL = candidateURL
-            }
-        }
+        let mirrorZipURL = (zipDict["mirrorPath"] as? String)
+            .flatMap { resolvedMirrorDownloadURL(fromUpdateURL: mirrorURL, mirrorPath: $0) }
         guard let primary = mirrorZipURL ?? githubURL else {
             throw NSError(domain: "UpdaterService", code: 11, userInfo: [NSLocalizedDescriptionKey: "未找到安全的 HTTPS macOS 更新包地址"])
         }

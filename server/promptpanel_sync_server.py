@@ -45,7 +45,7 @@ try:
 except ImportError as _crypto_exc:  # pragma: no cover
     AESGCM = None  # type: ignore[assignment,misc]
 
-SERVER_VERSION = "2.3.0"
+SERVER_VERSION = "2.3.1"
 SCHEMA_VERSION = 2
 MAX_NAMESPACE_LOCK_CACHE = 1024
 HKDF_SALT_V2 = b"PromptPanel-HKDF-Salt-v2"
@@ -83,6 +83,10 @@ MAX_TENANTS = _parse_env_int("PP_SYNC_MAX_TENANTS", 64, minimum=1, maximum=10000
 AUTH_FAIL_WINDOW_SEC = _parse_env_int("PP_SYNC_AUTH_FAIL_WINDOW_SEC", 60, minimum=1, maximum=86400)
 AUTH_FAIL_MAX = _parse_env_int("PP_SYNC_AUTH_FAIL_MAX", 20, minimum=1, maximum=10000)
 CORS_ORIGIN = os.environ.get("PP_SYNC_CORS_ORIGIN", "").strip()
+raw_trusted_proxies = os.environ.get("PP_SYNC_TRUSTED_PROXIES", "").strip()
+TRUSTED_PROXIES: set[str] = {"127.0.0.1", "::1"} | {
+    p.strip() for p in raw_trusted_proxies.split(",") if p.strip()
+}
 GITHUB_RELEASE_REPO = os.environ.get("PP_SYNC_GITHUB_REPO", "qilaidev/PromptPanel").strip() or "qilaidev/PromptPanel"
 UPDATE_CACHE_TTL_SEC = _parse_env_int("PP_SYNC_UPDATE_CACHE_TTL_SEC", 300, minimum=10, maximum=86400)
 
@@ -1697,11 +1701,24 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
     server_version = f"PromptPanelSync/{SERVER_VERSION}"
     timeout = 15
 
+    def _resolve_client_ip(self) -> str:
+        peer_ip = self.client_address[0] if self.client_address else "unknown"
+        if peer_ip in TRUSTED_PROXIES and hasattr(self, "headers") and self.headers:
+            real_ip = (self.headers.get("X-Real-IP") or "").strip()
+            if real_ip:
+                return real_ip
+            xff = (self.headers.get("X-Forwarded-For") or "").strip()
+            if xff:
+                first_hop = xff.split(",")[0].strip()
+                if first_hop:
+                    return first_hop
+        return peer_ip
+
     def log_message(self, fmt: str, *args: Any) -> None:
         record = {
             "timestamp": utc_now_iso(),
             "service": "promptpanel-sync-server",
-            "client": self.address_string(),
+            "client": self._resolve_client_ip(),
             "message": fmt % args,
         }
         sys.stderr.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -1713,7 +1730,7 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Vary", "Origin")
 
     def _authenticate_sync_request(self) -> tuple[str | None, bytes | None]:
-        client_ip = self.client_address[0] if self.client_address else "unknown"
+        client_ip = self._resolve_client_ip()
         if _is_auth_rate_limited(client_ip):
             _record_metric("syncErrorsTotal")
             self._send_json(
@@ -2133,6 +2150,25 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
         )
 
 
+class PromptPanelThreadingHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        _, exc_val, _ = sys.exc_info()
+        if isinstance(exc_val, (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, TimeoutError)):
+            client_host = client_address[0] if isinstance(client_address, tuple) and client_address else str(client_address)
+            record = {
+                "timestamp": utc_now_iso(),
+                "service": "promptpanel-sync-server",
+                "client": client_host,
+                "message": f"client disconnected: {type(exc_val).__name__}",
+            }
+            sys.stderr.write(json.dumps(record, ensure_ascii=False) + "\n")
+            return
+        super().handle_error(request, client_address)
+
+
 def main() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     (DATA_DIR / "namespaces").mkdir(parents=True, exist_ok=True)
@@ -2141,7 +2177,7 @@ def main() -> None:
         sys.stderr.write(f"FATAL:PP_SYNC_DATA_DIR={DATA_DIR} is not writable\n")
         sys.exit(1)
 
-    server = ThreadingHTTPServer((HOST, PORT), SyncRequestHandler)
+    server = PromptPanelThreadingHTTPServer((HOST, PORT), SyncRequestHandler)
     shutdown_initiated = threading.Event()
 
     def _handle_shutdown_signal(signum: int, _frame: Any) -> None:

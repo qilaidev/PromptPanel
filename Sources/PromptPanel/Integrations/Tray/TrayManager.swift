@@ -5,6 +5,7 @@ import Cocoa
 final class TrayManager {
 
     private var statusItem: NSStatusItem?
+    private var syncStatusItem: NSMenuItem?
     private var checkUpdateItem: NSMenuItem?
     private let onToggleQuickPanel: () -> Void
     private let onQuickNoteFromClipboard: () -> Void
@@ -70,6 +71,11 @@ final class TrayManager {
         settingsItem.target = self
         menu.addItem(settingsItem)
 
+        let syncItem = NSMenuItem(title: "云端同步：未配置", action: #selector(handleOpenSettings), keyEquivalent: "")
+        syncItem.target = self
+        menu.addItem(syncItem)
+        self.syncStatusItem = syncItem
+
         let updateItem = NSMenuItem(title: "检查更新…", action: #selector(handleCheckUpdates), keyEquivalent: "")
         updateItem.target = self
         menu.addItem(updateItem)
@@ -87,6 +93,31 @@ final class TrayManager {
 
     func updateCheckMenuItemTitle(_ title: String) {
         checkUpdateItem?.title = title
+    }
+
+    func updateCloudSyncState(_ state: SyncBadgeState) {
+        let title: String
+        switch state {
+        case .unconfigured:
+            title = "云端同步：未配置"
+        case .syncing:
+            title = "云端同步：同步中…"
+        case .autoSynced(let rev):
+            title = rev.map { "云端同步：已同步 (r\($0))" } ?? "云端同步：自动同步已就绪"
+        case .autoPending(let count):
+            title = count.map { "云端同步：\($0) 项待上传" } ?? "云端同步：有待上传变更"
+        case .manualIdle(let rev, let hasPending):
+            if hasPending {
+                title = "云端同步：手动模式（有待推送）"
+            } else if let rev, rev > 0 {
+                title = "云端同步：手动模式 (r\(rev))"
+            } else {
+                title = "云端同步：手动模式"
+            }
+        case .error:
+            title = "⚠ 云端同步异常（点击查看）"
+        }
+        syncStatusItem?.title = title
     }
 
     @objc private func handleTogglePanel() {

@@ -424,7 +424,9 @@ final class MainWindowViewModel: ObservableObject {
     @Published private(set) var cloudRemoteRevision: Int? = nil
     @Published private(set) var recentSoftDeletedEntries: [SoftDeletedEntryItem] = []
     @Published private(set) var isSyncAuthPaused: Bool = false
-    private var lastSyncErrorMessage: String? = nil
+    @Published private(set) var isCloudSyncSecretAccessDenied: Bool = false
+    @Published private(set) var lastSyncErrorMessage: String? = nil
+    var onSyncBadgeStateChanged: ((SyncBadgeState) -> Void)?
     private var pendingAutoCloudSyncWorkItem: DispatchWorkItem?
     private var pendingCloudSyncSettingsPersistWorkItem: DispatchWorkItem?
     private var autoCloudSyncPollTimer: DispatchSourceTimer?
@@ -1862,7 +1864,22 @@ final class MainWindowViewModel: ObservableObject {
         defer { isHydratingCloudSyncState = false }
         cloudSyncEnabled = (try? settingsRepository.isCloudSyncEnabled()) ?? false
         cloudSyncEndpoint = (try? settingsRepository.getCloudSyncEndpoint()) ?? ""
-        cloudSyncApiKey = (try? settingsRepository.getCloudSyncApiKey()) ?? ""
+        let apiKeyStatus = (try? settingsRepository.getCloudSyncApiKeyStatus()) ?? .missing
+        switch apiKeyStatus {
+        case .loaded(let secret):
+            cloudSyncApiKey = secret
+            isCloudSyncSecretAccessDenied = false
+        case .missing:
+            cloudSyncApiKey = ""
+            isCloudSyncSecretAccessDenied = false
+        case .accessDenied:
+            cloudSyncApiKey = ""
+            isCloudSyncSecretAccessDenied = true
+            isSyncAuthPaused = true
+            cloudSyncConnectionHealthy = false
+            lastSyncErrorMessage = "应用升级后系统钥匙串拒绝自动读取旧 Token，请重新粘贴访问令牌并保存"
+            cloudSyncConnectionStatus = "凭据需重新确认"
+        }
         if let status = try? cloudSyncService?.lastSyncStatus(), !status.isEmpty {
             cloudSyncLastStatus = status
         }
@@ -1881,8 +1898,30 @@ final class MainWindowViewModel: ObservableObject {
             cloudSyncConnectionHealthy = nil
             isSyncAuthPaused = false
             lastSyncErrorMessage = nil
+        } else if !isCloudSyncSecretAccessDenied, let endpointError = cloudSyncEndpointValidationError {
+            cloudSyncConnectionHealthy = false
+            lastSyncErrorMessage = endpointError
+            cloudSyncConnectionStatus = "同步地址不受安全策略允许"
         }
         recomputeSyncBadgeState()
+    }
+
+    /// Immediate client-side validation for configured remote sync URLs so users never suffer
+    /// silent multi-day sync stalls on disallowed cleartext `http://` remote endpoints.
+    var cloudSyncEndpointValidationError: String? {
+        let trimmed = cloudSyncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let lower = trimmed.lowercased()
+        guard lower.hasPrefix("http://") || lower.hasPrefix("https://") else {
+            return nil
+        }
+        guard let url = URL(string: trimmed) else {
+            return "无效的同步地址：\(trimmed)"
+        }
+        guard CloudSyncService.isAllowedRemoteHTTPURL(url) else {
+            return "为保护同步数据与 Token 安全，远程同步仅允许 https:// 地址（仅本机回环允许 http://localhost 或 http://127.0.0.1）"
+        }
+        return nil
     }
 
     private func recomputeSyncBadgeState() {
@@ -1892,6 +1931,10 @@ final class MainWindowViewModel: ObservableObject {
             nextState = .unconfigured
         } else if isCloudSyncInFlight {
             nextState = .syncing
+        } else if isCloudSyncSecretAccessDenied {
+            nextState = .error(lastSyncErrorMessage ?? "系统钥匙串拒绝读取旧 Token，请重新保存访问令牌")
+        } else if let endpointError = cloudSyncEndpointValidationError {
+            nextState = .error(endpointError)
         } else if isSyncAuthPaused {
             nextState = .error(lastSyncErrorMessage ?? "Token 鉴权失败，请检查同步凭据")
         } else if cloudSyncConnectionHealthy == false, let errorMsg = lastSyncErrorMessage {
@@ -1907,6 +1950,7 @@ final class MainWindowViewModel: ObservableObject {
         }
         if syncBadgeState != nextState {
             syncBadgeState = nextState
+            onSyncBadgeStateChanged?(nextState)
         }
     }
 
@@ -1935,14 +1979,14 @@ final class MainWindowViewModel: ObservableObject {
 
     func setCloudSyncEnabled(_ isEnabled: Bool) {
         cloudSyncEnabled = isEnabled
-        if isEnabled {
+        if isEnabled, !isCloudSyncSecretAccessDenied {
             isSyncAuthPaused = false
             lastSyncErrorMessage = nil
         }
         saveCloudSyncSettings(showBanner: true)
         updateAutoCloudSyncPollTimer()
         recomputeSyncBadgeState()
-        if isEnabled {
+        if isEnabled, !isCloudSyncSecretAccessDenied {
             triggerOpportunisticCloudSyncIfNeeded(force: true)
         }
     }
@@ -1950,11 +1994,32 @@ final class MainWindowViewModel: ObservableObject {
     func saveCloudSyncSettings(showBanner: Bool = true) {
         pendingCloudSyncSettingsPersistWorkItem?.cancel()
         pendingCloudSyncSettingsPersistWorkItem = nil
+        let trimmedApiKey = cloudSyncApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
             try settingsRepository.setCloudSyncEnabled(cloudSyncEnabled)
             try settingsRepository.setCloudSyncEndpoint(cloudSyncEndpoint)
-            try settingsRepository.setCloudSyncApiKey(cloudSyncApiKey)
+            // Never wipe a Keychain-locked legacy credential when the user saves unrelated
+            // settings (e.g. toggling auto-sync or editing the URL) while the field appears blank.
+            if !(isCloudSyncSecretAccessDenied && trimmedApiKey.isEmpty) {
+                try settingsRepository.setCloudSyncApiKey(trimmedApiKey)
+                if !trimmedApiKey.isEmpty {
+                    isCloudSyncSecretAccessDenied = false
+                    isSyncAuthPaused = false
+                }
+            }
+            if !isCloudSyncSecretAccessDenied {
+                if let endpointError = cloudSyncEndpointValidationError {
+                    cloudSyncConnectionHealthy = false
+                    lastSyncErrorMessage = endpointError
+                    cloudSyncConnectionStatus = "同步地址不受安全策略允许"
+                } else if lastSyncErrorMessage != nil && cloudSyncConnectionStatus == "同步地址不受安全策略允许" {
+                    cloudSyncConnectionHealthy = nil
+                    lastSyncErrorMessage = nil
+                    cloudSyncConnectionStatus = "未检测"
+                }
+            }
             updateAutoCloudSyncPollTimer()
+            recomputeSyncBadgeState()
             if showBanner {
                 bannerMessage = "云端同步配置已保存。"
             }
@@ -2049,6 +2114,16 @@ final class MainWindowViewModel: ObservableObject {
             bannerMessage = "云端同步服务未初始化。"
             return
         }
+        let trimmedApiKey = cloudSyncApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isCloudSyncSecretAccessDenied && trimmedApiKey.isEmpty {
+            let msg = "应用升级后系统钥匙串拒绝自动读取旧 Token，请重新粘贴访问令牌并保存后再测试连接。"
+            cloudSyncConnectionHealthy = false
+            lastSyncErrorMessage = msg
+            cloudSyncConnectionStatus = "凭据需重新确认"
+            bannerMessage = msg
+            recomputeSyncBadgeState()
+            return
+        }
         isSyncAuthPaused = false
         lastSyncErrorMessage = nil
         saveCloudSyncSettings()
@@ -2119,6 +2194,17 @@ final class MainWindowViewModel: ObservableObject {
         }
         pendingAutoCloudSyncWorkItem?.cancel()
         pendingAutoCloudSyncWorkItem = nil
+        let trimmedApiKey = cloudSyncApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isCloudSyncSecretAccessDenied && trimmedApiKey.isEmpty {
+            let msg = "应用升级后系统钥匙串拒绝自动读取旧 Token，请重新粘贴访问令牌并保存后再执行同步。"
+            cloudSyncConnectionHealthy = false
+            isSyncAuthPaused = true
+            lastSyncErrorMessage = msg
+            cloudSyncConnectionStatus = "凭据需重新确认"
+            bannerMessage = msg
+            recomputeSyncBadgeState()
+            return
+        }
         isSyncAuthPaused = false
         lastSyncErrorMessage = nil
         saveCloudSyncSettings(showBanner: false)

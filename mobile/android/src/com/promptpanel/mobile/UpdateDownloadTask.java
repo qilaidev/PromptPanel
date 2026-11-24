@@ -170,12 +170,7 @@ public class UpdateDownloadTask implements Runnable {
                     String sha = apkObj.optString("sha256", "").trim().toLowerCase(Locale.US);
                     String ghUrl = apkObj.optString("githubUrl", "").trim();
                     String mirrorPath = apkObj.optString("mirrorPath", "").trim();
-                    String mirrorApkUrl = "";
-                    if (!mirrorPath.isEmpty()) {
-                        URL base = new URL(mirrorUpdateUrl);
-                        URL resolved = new URL(base.getProtocol(), base.getHost(), base.getPort(), mirrorPath);
-                        mirrorApkUrl = resolved.toString();
-                    }
+                    String mirrorApkUrl = resolveMirrorDownloadUrl(mirrorUpdateUrl, mirrorPath);
                     String primary = !mirrorApkUrl.isEmpty() ? mirrorApkUrl : ghUrl;
                     if (!primary.isEmpty()) {
                         JSONObject out = new JSONObject();
@@ -319,6 +314,37 @@ public class UpdateDownloadTask implements Runnable {
             return new URL(parsed.getProtocol(), parsed.getHost(), parsed.getPort(), file).toString();
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    static String resolveMirrorDownloadUrl(String mirrorUpdateUrl, String mirrorPath) {
+        if (mirrorUpdateUrl == null || mirrorPath == null) return "";
+        String cleanPath = mirrorPath.trim();
+        if (cleanPath.isEmpty()) return "";
+        if (!cleanPath.startsWith("/")) {
+            cleanPath = "/" + cleanPath;
+        }
+        try {
+            URL base = new URL(mirrorUpdateUrl);
+            String basePath = base.getPath() != null ? base.getPath() : "";
+            while (basePath.length() > 1 && basePath.endsWith("/")) {
+                basePath = basePath.substring(0, basePath.length() - 1);
+            }
+            String prefix = "";
+            if (basePath.endsWith("/v1/update")) {
+                prefix = basePath.substring(0, basePath.length() - "/v1/update".length());
+            } else {
+                int idx = basePath.indexOf("/v1/update/");
+                if (idx >= 0) {
+                    prefix = basePath.substring(0, idx);
+                }
+            }
+            String fullPath = (!prefix.isEmpty() && !cleanPath.startsWith(prefix + "/"))
+                    ? prefix + cleanPath
+                    : cleanPath;
+            return new URL(base.getProtocol(), base.getHost(), base.getPort(), fullPath).toString();
+        } catch (Exception e) {
+            return "";
         }
     }
 

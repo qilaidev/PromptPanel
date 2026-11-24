@@ -269,6 +269,31 @@ private enum SettingsHealthStrip {
 
     @MainActor
     static func resolvePrimaryIssue(viewModel: MainWindowViewModel) -> Issue? {
+        if viewModel.isCloudSyncSecretAccessDenied {
+            return Issue(
+                message: "云端同步令牌未能自动读取（升级后钥匙串权限变更），请前往「偏好 → 云端同步」重新粘贴 Token 并保存",
+                systemImage: "key.slash.fill",
+                color: Constants.VisualStyle.danger,
+                background: Constants.VisualStyle.dangerDim
+            )
+        }
+        if let endpointError = viewModel.cloudSyncEndpointValidationError {
+            return Issue(
+                message: "云端同步已中断：\(endpointError)",
+                systemImage: "exclamationmark.icloud.fill",
+                color: Constants.VisualStyle.danger,
+                background: Constants.VisualStyle.dangerDim
+            )
+        }
+        if viewModel.isSyncAuthPaused || (viewModel.cloudSyncConnectionHealthy == false && viewModel.lastSyncErrorMessage != nil) {
+            let detail = viewModel.lastSyncErrorMessage ?? "云端同步连接异常，请检查同步地址与访问令牌"
+            return Issue(
+                message: "云端同步异常：\(detail)",
+                systemImage: "exclamationmark.icloud.fill",
+                color: Constants.VisualStyle.danger,
+                background: Constants.VisualStyle.dangerDim
+            )
+        }
         if viewModel.hasAccessibilityPermission == false {
             return Issue(
                 message: "未开启辅助功能权限，当前仅支持复制到剪贴板",
@@ -1352,6 +1377,26 @@ private struct CloudSyncSection: View {
                         commitCloudSyncConfig()
                     }
 
+                if let endpointError = viewModel.cloudSyncEndpointValidationError {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.icon(.micro))
+                            .foregroundStyle(Constants.VisualStyle.danger)
+                            .padding(.top, 1)
+                        Text(endpointError)
+                            .font(.ui(.caption))
+                            .foregroundStyle(Constants.VisualStyle.danger)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Constants.VisualStyle.dangerDim)
+                    )
+                }
+
                 HStack(alignment: .center) {
                     Text("访问令牌 (Token)")
                         .font(.ui(.caption, weight: .medium))
@@ -1517,10 +1562,14 @@ private struct CloudSyncSection: View {
                 .foregroundStyle(Constants.VisualStyle.danger)
                 .padding(.top, 1)
             VStack(alignment: .leading, spacing: 2) {
-                Text("云端同步鉴权异常，后台自动同步已暂停")
+                Text(viewModel.isCloudSyncSecretAccessDenied ? "升级后需重新确认同步令牌，后台自动同步已暂停" : "云端同步鉴权异常，后台自动同步已暂停")
                     .font(.ui(.body, weight: .semibold))
                     .foregroundStyle(Constants.VisualStyle.danger)
-                Text("请核对访问令牌 (Token) 或同步地址并保存配置，然后点击“测试连接”或“立即双向同步”手动重试。")
+                Text(
+                    viewModel.isCloudSyncSecretAccessDenied
+                        ? "由于当前构建为无团队证书签名，升级后系统钥匙串拒绝静默读取旧 Token。重新粘贴一次访问令牌并保存后，后续升级将使用本机加密凭据文件持久保存。"
+                        : "请核对访问令牌 (Token) 或同步地址并保存配置，然后点击“测试连接”或“立即双向同步”手动重试。"
+                )
                     .font(.ui(.caption))
                     .foregroundStyle(Constants.VisualStyle.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)

@@ -4,6 +4,23 @@ All notable changes to PromptPanel are tracked here.
 
 The format is based on Keep a Changelog, and this project uses Conventional Commits for commit messages.
 
+## [1.8.1] - 2026-11-24
+
+稳定性与多设备同步专项优化（`1.8.1+19`）：根治开源无团队签名构建跨版本升级后的钥匙串令牌丢失隐患，打通菜单栏与设置页全链路同步异常可观测性，并修复跨端反向代理子路径更新与服务端扫描噪音。
+
+### Fixed & Improved
+
+- **签名感知加密凭据存储与防误删保护（`SettingsRepository` / `MainWindowViewModel` / `SettingsView`）。**
+  - 引入 `CloudSyncSecretLoadStatus`（`.loaded` / `.missing` / `.accessDenied`），彻底消除 `KeychainCloudSyncSecretStore` 遇 `errSecInteractionNotAllowed` 时静默返回空令牌的隐患。
+  - 新增 `EncryptedFileCloudSyncSecretStore`（POSIX `0600`、`AES-256-GCM`、`HKDF-SHA256` 绑定本机 `IOPlatformUUID` 与用户名，存放于 `promptpanel.db` 外部，绝不进入数据库备份、导出或诊断包）与 `CodeSignAwareCloudSyncSecretStore`：Developer ID 签名优先使用系统钥匙串，开源自构建 / ad-hoc 签名优先使用本机加密凭据文件并自动迁移旧钥匙串令牌，后续版本升级不再因 CDHash 变化丢失令牌或弹出系统授权框。
+  - 当旧钥匙串令牌被系统拒绝读取时，保存其他同步配置绝不清空既有凭据，并在界面与健康条中明确指引重新确认。
+- **全链路同步异常可观测性与交互修正（`MainWindowViewModel` / `SettingsView` / `TrayManager` / `AppDelegate` / `MainWindowView`）。**
+  - 菜单栏托盘新增实时「云端同步」状态项（正常/待上传/同步中/异常），点击直达同步设置；设置页顶部健康条接入云同步异常与非法远程 `http://` 端点拦截提醒，地址输入框下方即时展示协议校验提示，避免后台静默断连。
+  - 修正主窗口词条删除确认弹窗文案，明确提示可在 30 天回收站按条恢复。
+- **跨端反向代理子路径下载修复与同步服务端 `v2.3.1` 加固（`UpdaterService` / `UpdateDownloadTask.java` / `server/promptpanel_sync_server.py`）。**
+  - 修复 macOS 与 Android 端通过带子路径的反向代理（如 `https://example.com/promptpanel-sync/v1/sync`）拉取镜像更新包时丢弃子路径前缀导致 404 的问题。
+  - 同步服务端升级至 `v2.3.1`：新增 `PromptPanelThreadingHTTPServer` 将外网断连/扫描异常折叠为单行结构化 JSON 日志并启用 `allow_reuse_address`；新增 `PP_SYNC_TRUSTED_PROXIES` 可信反代白名单解析 `X-Real-IP` / `X-Forwarded-For`，保障多设备经 HTTPS 反代接入时的真实来源日志与独立鉴权限流。
+
 ## [1.8.0] - 2026-11-21
 
 PromptPanel 全新基线版本（`1.8.0+18`）：围绕**多设备智能双向同步与清晰可观测 UI**、**`Ctrl+C` 与快捷键全局/局部防护**、**词条与分类逻辑一致性重构**、**`entry_tags` 索引与全链路性能优化**，以及 **macOS 原生视觉与毛玻璃/自适应 HUD 精修**完成系统性升级。
@@ -32,4 +49,5 @@ PromptPanel 全新基线版本（`1.8.0+18`）：围绕**多设备智能双向�
   - **表面材质、对比度与设计原语**：拉开 Light 模式 `bg` / `surface` / `surfaceRaised` 层级与辅助文字对比度，收敛 `EntryLevel` 彩虹染色；`QuickPanelView` 接入 `.hudWindow` 毛玻璃、`LibraryView` 侧栏接入 `.sidebar` 毛玻璃并支持左右分栏拖拽调宽；主窗口与参考窗口启用透明一体化标题栏消除色差断层；统一 `PPActionButton`、`PPInteractiveButtonStyle`、`.focusableInputSurface` 与分主题 `.themedShadow`。
   - **组件降噪与细节打磨**：清理 `LibraryView` 中 5 处透明 `Menu` 遮罩 Hack 并补齐行拖拽 `.draggable(entry.id)`、修复 hover 操作条文字遮挡及待保存状态文案；`QuickPanelView` 仅在指针悬停时显示行快捷操作（保留键盘选中行元信息）、放宽行高至 `28pt / 32pt`、修复预览标签溢出与底栏提示；`ToastService` 改为顶部居中自适应尺寸毛玻璃 HUD（带淡入淡出动画）；`TrayManager` 补充 SF Symbol 兼容回退。
 
+[1.8.1]: https://github.com/qilaidev/PromptPanel/releases/tag/v1.8.1
 [1.8.0]: https://github.com/qilaidev/PromptPanel/releases/tag/v1.8.0

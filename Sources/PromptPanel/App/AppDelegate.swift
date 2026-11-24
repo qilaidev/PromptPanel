@@ -566,6 +566,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         )
         trayManager.setup()
+        trayManager.updateCloudSyncState(mainWindowViewModel.syncBadgeState)
+        mainWindowViewModel.onSyncBadgeStateChanged = { [weak self] state in
+            self?.trayManager?.updateCloudSyncState(state)
+        }
         setupMainMenu()
 
         // Keep NSWindow / NSPanel chrome in sync with the user's theme.

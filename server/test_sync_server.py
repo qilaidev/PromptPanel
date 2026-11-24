@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import sqlite3
+import sys
 import tempfile
 import threading
 import unittest
@@ -730,6 +732,31 @@ class SyncServerHTTPTests(unittest.TestCase):
         assert env_rebase is not None
         self.assertTrue(env_rebase.get("rebased"))
         self.assertEqual(env_rebase["serverRevision"], 4)
+
+    def test_trusted_proxy_client_ip_and_quiet_disconnect_error(self) -> None:
+        # Trusted loopback proxy respects X-Real-IP / X-Forwarded-For for independent rate limiting.
+        srv.AUTH_FAIL_MAX = 2
+        c1, _, _ = self._request("GET", "/v1/sync", token="bad", headers={"X-Real-IP": "198.51.100.10"})
+        c2, _, _ = self._request("GET", "/v1/sync", token="bad", headers={"X-Real-IP": "198.51.100.10"})
+        c3, _, _ = self._request("GET", "/v1/sync", token="bad", headers={"X-Real-IP": "198.51.100.10"})
+        # Different client behind the same trusted proxy must not be rate-limited by the first client.
+        c_other, _, _ = self._request("GET", "/v1/sync", token="bad", headers={"X-Real-IP": "198.51.100.20"})
+        self.assertEqual((c1, c2, c3, c_other), (401, 429, 429, 401))
+
+        # PromptPanelThreadingHTTPServer.handle_error folds ConnectionResetError into single-line JSON.
+        buf = io.StringIO()
+        old_stderr = sys.stderr
+        try:
+            sys.stderr = buf
+            try:
+                raise ConnectionResetError(104, "Connection reset by peer")
+            except ConnectionResetError:
+                srv.PromptPanelThreadingHTTPServer.handle_error(self.server, None, ("203.0.113.5", 44444))  # type: ignore[arg-type]
+        finally:
+            sys.stderr = old_stderr
+        logged = json.loads(buf.getvalue().strip())
+        self.assertEqual(logged["client"], "203.0.113.5")
+        self.assertIn("ConnectionResetError", logged["message"])
 
 
 if __name__ == "__main__":
